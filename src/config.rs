@@ -7,22 +7,12 @@ pub const CONFIG_FILE: &str = "config.toml";
 pub const BRIDGE_CONFIG_FILE: &str = "bridge.json";
 pub const BRIDGE_SCRIPT_FILE: &str = "securecrt_bridge.py";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub bridge: BridgeConfig,
     pub policy: PolicyConfig,
     pub audit: AuditConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            bridge: BridgeConfig::default(),
-            policy: PolicyConfig::default(),
-            audit: AuditConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

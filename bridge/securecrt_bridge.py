@@ -1,6 +1,6 @@
 # $language = "Python3"
 # $interface = "1.0"
-#
+
 # securecrt-mcp in-process bridge
 #
 # IMPORTANT: This file must be run by SecureCRT (Script > Run...).
@@ -12,7 +12,7 @@ from pathlib import Path
 
 APP_DIR = Path.home() / ".securecrt-mcp"
 CONFIG_PATH = APP_DIR / "bridge.json"
-BRIDGE_VERSION = "0.1.0"
+BRIDGE_VERSION = "0.1.1"
 
 
 def load_config():
