@@ -38,13 +38,25 @@ cargo build --locked --release
 
 首次安装用 `init` 替代 `upgrade`。不要为了修复普通问题使用 `init --force`：它会在备份后重置配置、旋转 Token。
 
-在 SecureCRT 选择 **Script → Run**，运行 `paths` 输出的 `securecrt_bridge.py`。提示框出现后点击 OK，才开始处理请求。随后执行：
+先执行 `.\target\release\securecrt-mcp.exe paths` 获取脚本路径。在 SecureCRT 选择 **Script → Run**，运行输出的 `securecrt_bridge.py`。提示框出现后点击 OK，才开始处理请求。随后执行：
 
 ```powershell
 .\target\release\securecrt-mcp.exe doctor
 ```
 
 macOS/Linux 对应二进制为 `./target/release/securecrt-mcp`，其余子命令相同。默认数据目录是用户主目录下 `.securecrt-mcp`；可用绝对路径环境变量 `SECURECRT_MCP_HOME` 指定独立目录。适配器读取**自身所在目录**的 `bridge.json`，不要分开放置。
+
+## 已验证的 Windows 流程
+
+2026-09-20 在 Windows x64、SecureCRT 9.0.0 x64、内嵌 Python 3.8.10 上完成了协议 2 的真实桌面验收：
+
+- `doctor` 报告 Bridge `0.2.0-preview.1`、协议 2，且运行时检查通过。
+- `securecrt_list_sessions` 返回两个已登录 SSH 会话的短期租约；后续操作只使用租约，不使用旧版 `tab:1`。
+- `securecrt_read_screen` 返回当前提示符和一次性 `screen_token`。
+- 在确认空闲 POSIX Shell 后，`hostname` 通过 `mode = "posix"` 提交，状态变为 `completed`，输出与目标会话一致。
+- `rm -rf` 在 Rust 策略层被标记为 `rejected`，没有发送到 SecureCRT。
+
+这组结果只证明当前 Windows/SecureCRT 组合的实测路径，不代表其他 SecureCRT 版本、终端类型或 Codex 客户端已经完成审批验收。发生超时、取消或 `unknown` 时，不要自动重试；先读原始屏幕并人工确认空闲。
 
 ## Codex 审批不是自动获得的
 
