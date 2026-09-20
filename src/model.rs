@@ -52,7 +52,9 @@ pub struct ExecuteParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct JobParams { pub command_id: String }
+pub struct JobParams {
+    pub command_id: String,
+}
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
