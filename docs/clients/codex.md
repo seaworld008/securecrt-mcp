@@ -1,107 +1,25 @@
-# Codex 接入（中文默认）
+# Codex 接入与审批拒绝验收
 
-英文版：[codex.en.md](codex.en.md)
+先完成 [升级说明](../migration-0.2.md)。执行 `securecrt-mcp codex-config` 打印准确的二进制路径及增量 TOML；手动合并到现有配置，不覆盖其他 MCP/模型/插件设置。
 
-本文是 Windows + SecureCRT + Codex 的完整接入步骤。MCP Server 通过 stdio 启动，Bridge 必须由 SecureCRT 自己运行。
+生成配置将 `default_tools_approval_mode` 设为 `prompt`；仅会话状态、读屏、命令状态和分页输出设为 `approve`。执行、原始输入、中断和清除未决保护保持人工确认。配置项必须由实际安装的客户端支持；不认识键时应升级或按该版本文档配置，而不是静默取消审批。
 
-## 一次性安装
+官方参考（2026-09-20 检查）：https://developers.openai.com/codex/mcp/ 。客户端配置、组织策略和运行方式会影响审批行为；MCP annotations 不会替代客户端的安全执行器。
 
-1. 安装 Rust 1.88 或更新版本，并确认 `cargo --version` 可用。
-2. 安装 SecureCRT。SecureCRT 9.0 在 Windows 上需要兼容的 Python 3 运行时；遇到 `Unable to load the Python scripting engine` 时安装 Python 3.8 x64。
-3. 在仓库根目录编译并初始化：
+## “拒绝后零发送”人工验收
 
-```powershell
-cargo build --release
-.\target\release\securecrt-mcp.exe init
-```
+在非生产会话清晰显示的空闲 Shell 中，先读屏确认目标。要求 AI 提交无害且易辨认的 `printf securecrt-approval-check`，在客户端弹出的执行审批中选择**拒绝**。预期：SecureCRT 中没有该命令的输入回显，没有该操作的 `dispatch_attempt`（只读工具的调用不算命令发送），服务器侧没有执行。不要让 AI 自动重试。
 
-初始化文件位于：
+重新发起一个新的操作 ID，这次选择允许。预期：看到一次命令输入、一个 command_id、一个 dispatch_attempt 和最终状态。再复查 Token/句柄过期与错误参数应在实际发送前拒绝。
 
-```text
-C:\Users\<用户名>\.securecrt-mcp\config.toml
-C:\Users\<用户名>\.securecrt-mcp\bridge.json
-C:\Users\<用户名>\.securecrt-mcp\securecrt_bridge.py
-```
+如果没有弹窗或拒绝后仍发送，立即停止 MCP，只在 observe 模式继续诊断；记录客户端版本、脱敏配置和工具元数据。不能宣称“交给 Codex”就必然安全。当前仓库的 CI 只验证生成配置与元数据，不伪造你的客户端 GUI 验收。
 
-`bridge.json` 包含本机随机 token，不要提交到 Git、聊天或工单。
-
-## 每次启动
-
-1. 打开 SecureCRT，在**同一个窗口**连接需要使用的服务器。
-2. 如果刚安装或升级了 Python，完全退出并重新打开 SecureCRT，使它重新加载 Python 引擎。
-3. 在 SecureCRT 选择 `Script -> Run...`，运行 `C:\Users\<用户名>\.securecrt-mcp\securecrt_bridge.py`。
-4. 保持脚本运行。看到 Bridge 提示框后点击确认，不要选择 `Script -> Cancel`。
-5. 验证：
-
-```powershell
-.\target\release\securecrt-mcp.exe doctor
-```
-
-预期输出包含：
+## 使用提示
 
 ```text
-bridge: OK
-"securecrt_tabs": 2
+读取明确的测试会话，确认主机和空闲 POSIX Shell。
+请求我批准 uname -a，使用 mode=posix。
+提交后查询 command_id 和分页输出；未知结果、超时和中断后停止，不重试、不自动清除未决状态。
 ```
 
-Bridge 只访问运行脚本的 SecureCRT 窗口。会话选择器来自 `securecrt_list_sessions`，例如 `tab:1`、`tab:2`；关闭或重排 Tab 后应重新列出会话。
-
-## Codex 配置
-
-编辑 `%USERPROFILE%\.codex\config.toml`，加入：
-
-```toml
-[mcp_servers.securecrt]
-command = "C:\\Tools\\securecrt-mcp.exe"
-args = ["serve"]
-startup_timeout_sec = 30.0
-```
-
-如果使用仓库构建产物，`command` 改为绝对路径，例如：
-
-```toml
-command = "E:\\AI-codex\\053-securecrt-mcp\\target\\release\\securecrt-mcp.exe"
-```
-
-修改配置后重启 Codex。MCP Server 由 Codex 按需启动，不需要手工单独运行 `serve`。
-
-## 推荐提示词
-
-只读巡检：
-
-```text
-先调用 securecrt_list_sessions，确认当前会话和 tab id。
-读取每个会话的屏幕内容，然后执行 hostname、uptime、df -h、free -h、ss -lntp。
-只做观察和分析，不重启服务、不修改配置、不删除文件。
-```
-
-Kubernetes：
-
-```text
-在 k8s master 会话上执行 kubectl get nodes -o wide、kubectl get namespaces、kubectl get deployments -A。
-检查异常 Pod 时再使用 describe 和 logs；不要执行 delete、apply、patch 或 rollout restart。
-```
-
-## 文件 CRUD 测试
-
-默认 `policy.mode = "unrestricted"` 会把普通文件命令原样交给 Codex 和远端账号判断；MCP 只硬过滤少量高破坏性命令。测试仍应使用唯一临时文件，不要对业务文件、备份、`.ssh`、数据库或容器数据目录操作。若需要 MCP 自身的只读防护，可改为 `mode = "safe"`，再配置精确 `custom_allow_patterns`：
-
-```toml
-[policy]
-mode = "unrestricted"
-custom_allow_patterns = [
-  '^touch /root/\\.securecrt-mcp-crud-test-YYYYMMDD$',
-  '^echo securecrt-mcp-crud-v2 > /root/\\.securecrt-mcp-crud-test-YYYYMMDD$',
-  '^unlink /root/\\.securecrt-mcp-crud-test-YYYYMMDD$'
-]
-```
-
-验证顺序是 `ls` 确认不存在、`touch` 创建、`cat` 读取、`echo ... >` 修改、再次 `cat` 验证、`unlink` 删除、最后 `ls` 确认不存在。不要对真实业务文件、备份、`.ssh`、数据库或容器数据目录做测试。
-
-## 故障排查
-
-- `doctor` 超时：确认 SecureCRT 中 Bridge 脚本仍在运行，并检查 `127.0.0.1:27855` 是否被其他进程占用。
-- Python 引擎错误：安装 Python 3.8 x64 后完全重启 SecureCRT。
-- 会话数量为 0：确认脚本运行在包含已登录 Tab 的 SecureCRT 窗口。
-- 命令被拦截：检查是否命中了少量硬危险规则；其他权限确认由 Codex 和远端账号/RBAC 负责。
-- 输出不完整：增加 `settle_ms`，或传入命令完成后一定会出现的 `wait_for` 文本。
+只读输出也可能包含秘密。访问终端即授予相应数据读取能力，客户端的传输、记录和模型处理方式需要独立评估。

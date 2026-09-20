@@ -7,3 +7,8 @@ Thumbs.db
 *.swp
 *.swo
 .env
+.local-evidence/
+__pycache__/
+*.pyc
+/dist/
+*.bak

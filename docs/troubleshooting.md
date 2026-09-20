@@ -1,68 +1,19 @@
 # Troubleshooting
 
-## `securecrt-mcp doctor` cannot connect
+**Protocol/version mismatch:** run `upgrade`, cancel the old script in SecureCRT, then run the installed script again. A file updated on disk does not replace an already running Python script. `doctor --offline` checks files; `doctor` checks the real runtime. Do not use force reset for ordinary mismatch repair.
 
-Confirm the bridge script is running inside SecureCRT:
+**Python engine fails to load:** consult VanDyke's compatibility documentation for your SecureCRT version and architecture. The external `python --version` may not match SecureCRT's embedded runtime. Version 9.0 Windows historically required a compatible Python 3.8 installation; that is not a recommendation to deploy an unsupported runtime indefinitely. Do not add Python packages to solve protocol errors; the adapter uses the standard library.
 
-```text
-Script -> Run... -> ~/.securecrt-mcp/securecrt_bridge.py
-```
+**stale_session:** the lease expired, a disconnect/config change was observed, or its retained native Tab no longer exists. Re-list and inspect; never substitute the current occupant of an old index. Tab captions and configured hosts do not prove nested SSH targets.
 
-Check that another process is not already listening on port `27855`.
+**stale_screen / prompt_mismatch:** read the screen again, inspect current input context and use its new Token. Do not automatically acknowledge prompts or fill credentials. Concurrent human typing and asynchronous terminal output can deliberately invalidate freshness.
 
-Windows:
+**busy / unresolved:** a native capture is active or its remote outcome is uncertain. Inspect the tracked command, explicitly interrupt only if appropriate, then inspect and acknowledge idle. No automatic Ctrl+C/retry is performed. If the original Tab is gone, inspect remote state manually before restarting the adapter.
 
-```powershell
-Get-NetTCPConnection -LocalPort 27855 -ErrorAction SilentlyContinue
-```
+**capture_may_be_incomplete / truncated:** pagination only retrieves retained captured text, not unlimited history. Native timeout slices, TUI rendering and binary output are not guaranteed lossless. Reduce command output, avoid follow/TUI modes, or use an independently approved log-file workflow. Never pretend the visible screen is full command output.
 
-macOS/Linux:
+**Audit unavailable:** check the configured parent directory, file permissions and disk space. Enabled auditing fails closed before sends. A post-send warning is not proof the command failed to run.
 
-```bash
-lsof -nP -iTCP:27855 -sTCP:LISTEN
-```
+**Windows build says executable in use:** exit the MCP client holding the old binary before building/replacing it. Leave authenticated SSH tabs intact.
 
-## Bridge says authentication failed
-
-The Rust process and Python bridge are reading different `bridge.json` files, or one file was replaced while the other process remained running.
-
-1. Stop the SecureCRT bridge with **Script -> Cancel**.
-2. Run `securecrt-mcp init --force`.
-3. Restart the bridge.
-4. Run `securecrt-mcp doctor`.
-
-Be aware that `--force` replaces local policy configuration with defaults.
-
-## Python3 script does not start in SecureCRT
-
-The bridge header requests `Python3`. Confirm your SecureCRT version and Python 3 scripting configuration. SecureCRT 9.x documents Python 3 automation support; on Windows a compatible external Python 3 installation may be required depending on your SecureCRT setup.
-
-## A command is blocked
-
-This is usually expected in `safe` mode. Check the message and audit log.
-
-Prefer adding a narrow anchored regex to `custom_allow_patterns`, for example:
-
-```toml
-custom_allow_patterns = [
-  '^/usr/local/bin/my-readonly-healthcheck(?:\\s+--[a-z-]+)*$'
-]
-```
-
-Avoid broad expressions such as `.*` for production sessions.
-
-## Output is incomplete
-
-The default command capture is a visible-screen snapshot after `settle_ms`. For slow commands, increase `settle_ms` or supply `wait_for` with predictable prompt/marker text.
-
-For example, a client can call `securecrt_execute_command` with a larger timeout and a `wait_for` value known to occur after command completion.
-
-## Duplicate tab captions
-
-Use the stable selector returned for the current tab listing, for example:
-
-```text
-tab:3
-```
-
-Tab indices can change when tabs are closed or reordered, so list sessions again before a sensitive action.
+**Multiple SecureCRT windows:** automatic discovery is not implemented. Use separate absolute `SECURECRT_MCP_HOME` directories, distinct localhost ports and separately installed scripts; keep each MCP client entry explicitly associated with its instance. Do not launch identical fixed-port adapters and assume they aggregate sessions.

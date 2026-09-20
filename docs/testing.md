@@ -1,48 +1,22 @@
-# Validation and compatibility
+# Validation evidence and remaining desktop acceptance
 
-`securecrt-mcp` touches two independent runtimes: the Rust MCP server and SecureCRT's in-process Python scripting engine. Treat both as part of the compatibility matrix.
+Version: **0.2.0-preview.1**. This document distinguishes test layers; green CI is not a SecureCRT compatibility certification.
 
-## Automated validation
+## Automated gates
 
-GitHub Actions is configured to run on every push to `main` and every pull request:
+- Rust 1.88 format/check/Clippy (`-D warnings`)/unit tests with Cargo.lock on Linux, macOS and Windows.
+- Compiled binary driven through real MCP stdio and a local fake bridge: handshake, tool discovery/annotations, policy and parameter denial, operation deduplication, UTF-8 pagination, busy state, explicit cancellation, timeout without implicit Ctrl+C, protocol/oversized-frame rejection, audit failure before send, upgrade preservation and generated Codex config.
+- Python fake-crt tests cover retained Tab references, reordering, closure/reconnection observation, metadata/freshness/expiry checks, native cleanup, bounded polling, explicit interruption and request authentication/deadlines.
+- Version/protocol/documentation link checks. Adapter syntax/tests also run with Python 3.8; general test utilities use Python 3.12.
 
-| Check | Linux | Windows | macOS |
-|---|---:|---:|---:|
-| `cargo fmt --check` | ✅ CI | ✅ CI | ✅ CI |
-| `cargo check --all-targets --all-features` | ✅ CI | ✅ CI | ✅ CI |
-| `cargo clippy` | ✅ CI | ✅ CI | ✅ CI |
-| `cargo test` | ✅ CI | ✅ CI | ✅ CI |
-| Python bridge syntax | ✅ CI | — | — |
+The initial red run of the native-adapter regression suite failed against the old adapter; the implemented adapter passes the suite. Rust cannot be compiled in the offline authoring container and must be checked through GitHub Actions. Do not replace this distinction with a local compilation claim.
 
-The Python bridge itself has no third-party Python dependency.
+## Manual acceptance still required
 
-## Runtime validation matrix
+Record exact OS, architecture, SecureCRT version, **embedded** Python version, client version and commit tested. The earlier 0.1.1 Windows two-session report does not automatically validate this protocol-2 implementation.
 
-The repository starts at v0.1 as an early preview. Before declaring a platform fully verified, test all of the following against an actual SecureCRT installation:
+Test on each intended desktop: native Get2/CurrentRow/CurrentColumn/ReadString availability; tab object lifetime during reorder/close; reconnect detection; actual ReadString timeout/partial-output behavior; a no-newline command; POSIX cd/export persistence; prompt-mode boundary; large output; cancellation latency; UI responsiveness; script cancellation cleanup; protocol mismatch/upgrade; rejected approval causing zero remote input.
 
-1. `securecrt-mcp init`
-2. `Script -> Run... -> securecrt_bridge.py`
-3. `securecrt-mcp doctor`
-4. session enumeration
-5. screen capture
-6. focus switching
-7. safe read-only command execution
-8. `wait_for` capture
-9. Ctrl+C interruption
-10. blocked destructive commands
+For optional POSIX probes, use disposable shells and harmless commands (`uname -a`, `printf hello`, `pwd`). Do not execute destructive examples from policy tests: those tests compare strings only. AI-readable terminal output is untrusted.
 
-Track real-world platform/version results in issues and update this document as evidence accumulates.
-
-## Local release gate
-
-Before tagging a release, run:
-
-```bash
-cargo fmt --all -- --check
-cargo check --all-targets --all-features
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all-targets --all-features
-python3 -m py_compile bridge/securecrt_bridge.py
-```
-
-A release should not be promoted from preview solely because the code compiles. It should also be exercised against at least one real SecureCRT session and, for claims of cross-platform verification, against the corresponding operating systems.
+Client approval: review [Codex acceptance](clients/codex.md). Generated TOML and tool metadata are tested, but a real human rejection cannot be attested without exercising that client. Do not mark that manual step complete from a mock.
