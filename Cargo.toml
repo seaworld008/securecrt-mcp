@@ -1,0 +1,38 @@
+[package]
+name = "securecrt-mcp"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "A security-conscious MCP server for controlling existing SecureCRT sessions through an in-process bridge."
+license = "MIT"
+repository = "https://github.com/seaworld008/securecrt-mcp"
+homepage = "https://github.com/seaworld008/securecrt-mcp"
+readme = "README.md"
+keywords = ["mcp", "securecrt", "ssh", "sre", "automation"]
+categories = ["command-line-utilities", "network-programming"]
+
+[dependencies]
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
+clap = { version = "4.5", features = ["derive"] }
+regex = "1"
+rmcp = { version = "3.4.0", features = ["server", "transport-io"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+toml = "0.9"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1", features = ["v4"] }
+
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "warn"

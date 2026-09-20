@@ -1,0 +1,45 @@
+name: Bug report
+description: Report a reproducible securecrt-mcp problem
+title: "bug: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Do not put passwords, private keys, tokens, or production secrets in an issue."
+  - type: input
+    id: version
+    attributes:
+      label: securecrt-mcp version
+    validations:
+      required: true
+  - type: input
+    id: securecrt
+    attributes:
+      label: SecureCRT version
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options: [Windows, macOS, Linux]
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What happened and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs/output
+      render: text
