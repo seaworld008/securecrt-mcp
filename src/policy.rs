@@ -177,7 +177,7 @@ const SAFE_PATTERNS: &[&str] = &[
     r"(?i)^\s*helm\s+(list|status|history|get|show|version)\b[^;&|><`$]*$",
     r"(?i)^\s*helm\s+repo\s+list\b[^;&|><`$]*$",
     r"(?i)^\s*git\s+(status|log|diff|show|branch|remote\s+-v)\b[^;&|><`$]*$",
-    r"(?i)^\s*mysql\b[^;&|><`$]*\s-e\s+[\"']?\s*(show|select|explain|desc|describe)\b[^;&|><`$]*$",
+    r#"(?i)^\s*mysql\b[^;&|><`$]*\s-e\s+["']?\s*(show|select|explain|desc|describe)\b[^;&|><`$]*$"#,
     r"(?i)^\s*redis-cli\b[^;&|><`$]*\s+(ping|info|dbsize|role|client\s+list|slowlog\s+get|memory\s+stats|scan|get|mget|ttl|pttl|type|exists)\b[^;&|><`$]*$",
 ];
 
