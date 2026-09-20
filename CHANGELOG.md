@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented here.
 
+## [0.1.2] - 2026-09-20
+
+### Changed
+
+- `unrestricted` is now the default policy so normal commands and scripts are passed through for Codex approval and remote account/RBAC enforcement.
+- The local hard-deny set remains intentionally small and focused on high-impact disk, reboot, service, Kubernetes, Helm, container, firewall, and account changes.
+- Optional `custom_deny_patterns` examples document extra local blocking without imposing it on every user.
+- Verified ordinary command passthrough and pre-send blocking through the live MCP stdio server.
+
 ## [0.1.1] - 2026-09-20
 
 ### Added

@@ -52,7 +52,7 @@ pub struct PolicyConfig {
 impl Default for PolicyConfig {
     fn default() -> Self {
         Self {
-            mode: "safe".to_owned(),
+            mode: "unrestricted".to_owned(),
             allow_raw_send: false,
             allow_interrupt: true,
             custom_allow_patterns: Vec::new(),

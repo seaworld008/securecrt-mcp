@@ -18,9 +18,9 @@ The SecureCRT bridge is configured for `127.0.0.1` and rejects non-loopback conf
 
 Every Rust-to-bridge request must contain the token.
 
-### Safe policy mode
+### Default policy mode
 
-The default `safe` mode allows a deliberately narrow set of read-oriented SRE commands. Unknown commands are denied rather than guessed safe.
+The default `unrestricted` mode preserves ordinary commands and scripts so the MCP does not duplicate Codex's approval model. A small hard-deny set still blocks high-impact operations before text is sent to SecureCRT. The remote account, RBAC, and Codex approval remain authoritative.
 
 ### Raw text disabled
 
@@ -49,7 +49,7 @@ A remote server, log line, README, issue, or terminal output may contain text th
 
 ### Shell composition bypass
 
-In safe mode the project rejects common composition primitives such as `;`, `&&`, `||`, pipes, redirections, command substitution, and multiline input. This is intentionally restrictive because an allowed read command can otherwise be chained into a write command.
+In safe mode the project rejects common composition primitives such as `;`, `&&`, `||`, pipes, redirections, command substitution, and multiline input. The default unrestricted mode intentionally leaves ordinary composition to Codex and the remote shell; only the hard-deny patterns are enforced locally.
 
 ### Credential duplication
 
@@ -75,11 +75,25 @@ Only your custom allow patterns are accepted. Useful for tightly controlled oper
 
 ### unrestricted
 
-Allows commands that do not match the hard deny set. This is not equivalent to a secure sandbox. Do not use it as a default on production sessions.
+Allows commands that do not match the small hard deny set. This is not equivalent to a secure sandbox; keep Codex approval, least-privilege accounts, and server-side controls enabled.
+
+Optional deny rules
+
+The following patterns are intentionally not enabled by default. Add only the rules that fit the environment to `custom_deny_patterns` when package changes, Git writes, downloads, privilege escalation, or database mutations need an extra local guard:
+
+```toml
+custom_deny_patterns = [
+  '(?i)^\s*(sudo|su)\b',
+  '(?i)^\s*(apt|apt-get|yum|dnf|pip|npm|cargo)\s+(install|remove|update|upgrade)\b',
+  '(?i)^\s*git\s+(push|reset|clean|rebase|checkout|switch)\b',
+  '(?i)^\s*(curl|wget|aria2c)\b',
+  '(?i)^\s*(mysql|psql|sqlite3)\b.*\b(insert|update|delete|drop|alter|truncate)\b'
+]
+```
 
 ## Production recommendations
 
-- Start with `observe`, then move to `safe` after validation.
+- The default is `unrestricted` for Codex-controlled use; choose `safe` or `observe` when a stricter rollout is required.
 - Keep `allow_raw_send = false`.
 - Add narrow custom allow patterns for known internal diagnostic scripts instead of broad shell access.
 - Keep the bridge on `127.0.0.1`.

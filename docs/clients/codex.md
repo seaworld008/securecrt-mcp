@@ -84,11 +84,11 @@ Kubernetes：
 
 ## 文件 CRUD 测试
 
-默认 `policy.mode = "safe"` 不允许文件写入和删除。需要测试时，只增加针对唯一临时文件的精确规则，测试后立即将 `custom_allow_patterns` 恢复为 `[]`：
+默认 `policy.mode = "unrestricted"` 会把普通文件命令原样交给 Codex 和远端账号判断；MCP 只硬过滤少量高破坏性命令。测试仍应使用唯一临时文件，不要对业务文件、备份、`.ssh`、数据库或容器数据目录操作。若需要 MCP 自身的只读防护，可改为 `mode = "safe"`，再配置精确 `custom_allow_patterns`：
 
 ```toml
 [policy]
-mode = "safe"
+mode = "unrestricted"
 custom_allow_patterns = [
   '^touch /root/\\.securecrt-mcp-crud-test-YYYYMMDD$',
   '^echo securecrt-mcp-crud-v2 > /root/\\.securecrt-mcp-crud-test-YYYYMMDD$',
@@ -103,5 +103,5 @@ custom_allow_patterns = [
 - `doctor` 超时：确认 SecureCRT 中 Bridge 脚本仍在运行，并检查 `127.0.0.1:27855` 是否被其他进程占用。
 - Python 引擎错误：安装 Python 3.8 x64 后完全重启 SecureCRT。
 - 会话数量为 0：确认脚本运行在包含已登录 Tab 的 SecureCRT 窗口。
-- 命令被拦截：这是本地策略的预期行为；优先使用只读命令，不要切换到 `unrestricted` 绕过策略。
+- 命令被拦截：检查是否命中了少量硬危险规则；其他权限确认由 Codex 和远端账号/RBAC 负责。
 - 输出不完整：增加 `settle_ms`，或传入命令完成后一定会出现的 `wait_for` 文本。
