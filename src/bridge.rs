@@ -1,104 +1,43 @@
-use crate::{
-    config::{BridgeConfig, BridgeSecret},
-    model::{BridgeRequest, BridgeResponse},
-};
-use anyhow::{Context, Result, bail};
-use serde_json::Value;
-use std::{sync::Arc, time::Duration};
-use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    net::TcpStream,
-    time::timeout,
-};
+use crate::config::{BridgeConfig, BridgeSecret, MAX_FRAME, PROTOCOL};
+use anyhow::{Context, Result, ensure};
+use serde_json::{Value, json};
+use std::{sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}};
+use tokio::{io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader}, net::TcpStream, time::timeout};
 use uuid::Uuid;
 
 #[derive(Clone)]
-pub struct BridgeClient {
-    config: Arc<BridgeConfig>,
-    secret: Arc<BridgeSecret>,
-}
-
+pub struct BridgeClient { config: Arc<BridgeConfig>, secret: Arc<BridgeSecret> }
 impl BridgeClient {
     pub fn new(config: BridgeConfig, secret: BridgeSecret) -> Result<Self> {
-        if config.host != "127.0.0.1" {
-            bail!(
-                "bridge.host must be 127.0.0.1; refusing non-loopback or name-resolved endpoints"
-            );
-        }
-        if secret.host != config.host || secret.port != config.port {
-            bail!(
-                "bridge endpoint mismatch: config.toml says {}:{}, bridge.json says {}:{}; run `securecrt-mcp init --force` or make them consistent",
-                config.host,
-                config.port,
-                secret.host,
-                secret.port
-            );
-        }
-        Ok(Self {
-            config: Arc::new(config),
-            secret: Arc::new(secret),
-        })
+        ensure!(config.host == "127.0.0.1" && secret.host == config.host && secret.port == config.port,
+            "bridge endpoint mismatch; preserve config and repair bridge.json, do not reset policy");
+        Ok(Self { config: Arc::new(config), secret: Arc::new(secret) })
     }
-
     pub async fn call(&self, method: &str, params: Value) -> Result<Value> {
-        let address = format!("{}:{}", self.secret.host, self.secret.port);
-        let stream = timeout(
-            Duration::from_millis(self.config.connect_timeout_ms),
-            TcpStream::connect(&address),
-        )
-        .await
-        .with_context(|| format!("timed out connecting to SecureCRT bridge at {address}"))??;
-
-        let request = BridgeRequest {
-            id: Uuid::new_v4().to_string(),
-            token: self.secret.token.clone(),
-            method: method.to_owned(),
-            params,
-        };
-        let line = serde_json::to_vec(&request).context("failed to encode bridge request")?;
-        if line.len() > self.secret.max_request_bytes {
-            bail!("bridge request is larger than configured max_request_bytes");
-        }
-
-        let (read_half, mut write_half) = stream.into_split();
-        timeout(
-            Duration::from_millis(self.config.request_timeout_ms),
-            async {
-                write_half.write_all(&line).await?;
-                write_half.write_all(b"\n").await?;
-                write_half.flush().await
-            },
-        )
-        .await
-        .context("timed out writing to SecureCRT bridge")??;
-
-        let mut reader = BufReader::new(read_half);
-        let mut response_line = String::new();
-        let bytes = timeout(
-            Duration::from_millis(self.config.request_timeout_ms),
-            reader.read_line(&mut response_line),
-        )
-        .await
-        .context("timed out waiting for SecureCRT bridge response")??;
-
-        if bytes == 0 {
-            bail!("SecureCRT bridge closed the connection without a response");
-        }
-        if response_line.len() > self.secret.max_request_bytes {
-            bail!("SecureCRT bridge response is larger than configured max_request_bytes");
-        }
-
-        let response: BridgeResponse =
-            serde_json::from_str(&response_line).context("invalid JSON from SecureCRT bridge")?;
-        if response.id != request.id {
-            bail!("SecureCRT bridge response id did not match request id");
-        }
-        if !response.ok {
-            bail!(
-                "SecureCRT bridge error: {}",
-                response.error.unwrap_or_else(|| "unknown error".to_owned())
-            );
-        }
-        Ok(response.result)
+        let id = Uuid::new_v4().to_string();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
+        let request = json!({"protocol_version": PROTOCOL, "id": id, "token": self.secret.token,
+            "deadline_ms": now + self.config.request_timeout_ms, "method": method, "params": params});
+        let mut bytes = serde_json::to_vec(&request)?; bytes.push(b'\n');
+        let limit = MAX_FRAME.min(self.secret.max_request_bytes);
+        ensure!(bytes.len() <= limit, "request exceeds frame limit");
+        let result = timeout(Duration::from_millis(self.config.request_timeout_ms), async {
+            let address = format!("127.0.0.1:{}", self.config.port);
+            let mut stream = timeout(Duration::from_millis(self.config.connect_timeout_ms), TcpStream::connect(address))
+                .await.context("bridge connect timeout")??;
+            stream.write_all(&bytes).await?;
+            let mut reader = BufReader::new(stream.take((limit + 1) as u64));
+            let mut frame = Vec::new();
+            reader.read_until(b'\n', &mut frame).await?;
+            ensure!(frame.len() <= limit && frame.last() == Some(&b'\n'), "oversized or incomplete bridge frame");
+            let response: Value = serde_json::from_slice(&frame)?;
+            ensure!(response["protocol_version"].as_u64() == Some(PROTOCOL as u64),
+                "bridge protocol mismatch: run upgrade, stop Script > Cancel, then start the installed adapter");
+            ensure!(response["id"] == id, "bridge response ID mismatch");
+            ensure!(response["bridge_instance"].is_string(), "missing bridge identity");
+            ensure!(response["ok"].as_bool() == Some(true), "bridge rejected request: {}", response["error"]);
+            Ok::<Value, anyhow::Error>(response["result"].clone())
+        }).await;
+        result.context("bridge timeout: outcome may be unknown; NEVER automatically replay a command")?
     }
 }

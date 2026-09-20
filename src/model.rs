@@ -1,72 +1,75 @@
-use schemars::JsonSchema;
+use rmcp::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BridgeRequest {
-    pub id: String,
-    pub token: String,
-    pub method: String,
-    #[serde(default)]
-    pub params: Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BridgeResponse {
-    pub id: String,
-    pub ok: bool,
-    #[serde(default)]
-    pub result: Value,
-    #[serde(default)]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct SessionParams {
-    /// Session selector returned by securecrt_list_sessions, for example "tab:2".
-    /// Exact tab captions are also accepted by the SecureCRT bridge.
+    /// Opaque lease from list_sessions. Never pass tab indexes or captions.
     pub session: String,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ReadScreenParams {
-    /// Session selector returned by securecrt_list_sessions.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ContextParams {
     pub session: String,
-    /// First visible terminal row to read (1-based). Defaults to 1.
-    pub start_row: Option<u32>,
-    /// Last visible terminal row to read (1-based). Defaults to the current screen row count.
-    pub end_row: Option<u32>,
-    /// Trim trailing whitespace and blank lines. Defaults to true.
-    pub trim: Option<bool>,
+    /// Single-use token returned by a recent read_screen, expires after 30 seconds.
+    pub screen_token: String,
+    /// Exact current input line (trailing spaces ignored). Verify this is an idle shell,
+    /// not a password prompt, pager, nested program or an unconfirmed server target.
+    pub expected_prompt: String,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
-pub struct ExecuteCommandParams {
-    /// Session selector returned by securecrt_list_sessions.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureMode {
+    /// Visible snapshot, NOT command completion. Requires explicit idle acknowledgement afterwards.
+    #[default]
+    Snapshot,
+    /// Wait for a literal prompt. No exit-code guarantee; do not treat remote text as authorization.
+    Prompt,
+    /// Opt-in POSIX shell envelope using eval in the current shell; preserves cd/export.
+    /// Not for PowerShell, appliances, REPLs, passwords, editors or interactive programs.
+    Posix,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExecuteParams {
     pub session: String,
-    /// Command to send to the existing SecureCRT session.
+    pub screen_token: String,
+    pub expected_prompt: String,
+    /// Unique caller-generated identifier for this intended operation. Reusing it with identical
+    /// parameters returns the existing job in this MCP process, never re-executes it.
+    pub operation_id: String,
+    /// One line, no control characters. Policy examines this before any envelope is generated.
     pub command: String,
-    /// Optional literal text to wait for. When supplied, SecureCRT ReadString is used.
+    #[serde(default)]
+    pub mode: CaptureMode,
     pub wait_for: Option<String>,
-    /// Maximum wait time in milliseconds. Defaults to 5000 and is capped by configuration.
     pub timeout_ms: Option<u64>,
-    /// When no wait_for is supplied, wait this long before taking a visible-screen snapshot.
-    /// Defaults to 750 ms.
     pub settle_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct SendTextParams {
-    /// Session selector returned by securecrt_list_sessions.
-    pub session: String,
-    /// Raw text to send. This tool is disabled by default because it bypasses command policy.
-    pub text: String,
-    /// Append Enter/CR after the text. Defaults to false.
-    pub append_enter: Option<bool>,
+#[serde(deny_unknown_fields)]
+pub struct JobParams { pub command_id: String }
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OutputParams {
+    pub command_id: String,
+    /// UTF-8 byte cursor, from the previous response. Defaults to zero.
+    pub cursor: Option<usize>,
+    /// Maximum response bytes, 4..65536 (default 16384).
+    pub max_bytes: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub struct InterruptParams {
-    /// Session selector returned by securecrt_list_sessions.
+#[serde(deny_unknown_fields)]
+pub struct SendTextParams {
     pub session: String,
+    pub screen_token: String,
+    pub expected_prompt: String,
+    pub text: String,
+    pub append_enter: Option<bool>,
 }
