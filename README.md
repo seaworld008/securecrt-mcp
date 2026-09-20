@@ -248,16 +248,18 @@ Kubernetes 只读排查示例：
 
 不要用真实业务文件、历史备份、`.ssh`、数据库文件或容器数据目录做 CRUD 测试。所有命令尝试都会写入 `~/.securecrt-mcp/audit.jsonl`（默认不记录完整命令文本）。
 
-## 默认安全策略
+## 默认策略
 
 默认：
 
 ```toml
 [policy]
-mode = "safe"
+mode = "unrestricted"
 allow_raw_send = false
 allow_interrupt = true
 ```
+
+权限批准由 Codex 的权限模型和操作者确认负责；MCP 只做本地桥接、审计和少量关键危险命令硬过滤。普通命令或脚本尽量原样发送，不在 MCP 内重复实现 Codex 的审批流程。
 
 典型允许：
 
@@ -291,7 +293,7 @@ docker exec
 docker rm
 ```
 
-`safe` 模式还默认禁止：
+如果显式选择 `safe` 模式，还会额外禁止：
 
 ```text
 ;
@@ -304,7 +306,7 @@ docker rm
 $(...)
 ```
 
-这样可以避免 AI 通过 shell 组合语法绕过只读命令限制。
+这适合需要严格只读的场景；日常使用默认 `unrestricted`，由 Codex 的权限确认和远端账号/RBAC 控制风险。
 
 如果公司内部有固定只读脚本，可以通过 `custom_allow_patterns` 单独开放，而不是直接切到 unrestricted。
 
@@ -319,7 +321,7 @@ request_timeout_ms = 35000
 max_command_timeout_ms = 30000
 
 [policy]
-mode = "safe"
+mode = "unrestricted"
 allow_raw_send = false
 allow_interrupt = true
 custom_allow_patterns = []
@@ -334,9 +336,23 @@ include_command_text = false
 四种策略模式：
 
 - `observe`：只能查看，不能执行命令。
-- `safe`：内置 SRE 常用只读命令白名单。
+- `safe`：内置 SRE 常用只读命令白名单，并禁止 shell 组合语法。
 - `allowlist`：只允许你自己配置的正则规则。
-- `unrestricted`：除硬性 deny 规则外基本放开，不建议生产环境默认使用。
+- `unrestricted`：除少量硬性 deny 规则外原样发送命令；适合交给 Codex 做权限确认的日常使用。
+
+默认硬过滤只覆盖高破坏性的核心命令：磁盘/分区破坏、关机重启、`dd`、服务启停、Kubernetes/Helm 变更、容器删除或停启、防火墙修改和账号权限修改。包管理、Git 写操作、下载、SQL/Redis 变更、提权和文件写入等可选规则只在文档中列举，默认不启用，用户可按环境加入 `custom_deny_patterns`。最终批准仍由 Codex 和服务器本身的账号/RBAC 控制。
+
+可选危险规则示例（默认关闭，按需复制到 `[policy]`）：
+
+```toml
+custom_deny_patterns = [
+  '(?i)^\s*(sudo|su)\b',
+  '(?i)^\s*(apt|apt-get|yum|dnf|pip|npm|cargo)\s+(install|remove|update|upgrade)\b',
+  '(?i)^\s*git\s+(push|reset|clean|rebase|checkout|switch)\b',
+  '(?i)^\s*(curl|wget|aria2c)\b',
+  '(?i)^\s*(mysql|psql|sqlite3)\b.*\b(insert|update|delete|drop|alter|truncate)\b'
+]
+```
 
 ## 审计
 

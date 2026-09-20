@@ -166,7 +166,7 @@ and explain any unhealthy workloads. Do not make changes.
 
 ## Command safety model
 
-Default `policy.mode = "safe"` is intentionally conservative.
+Default `policy.mode = "unrestricted"` keeps ordinary commands and scripts intact so Codex can apply its own approval model. The MCP still blocks a small set of high-impact commands before anything is sent.
 
 Examples allowed by default include:
 
@@ -195,7 +195,7 @@ iptables -F
 docker exec ...
 ```
 
-Safe mode also blocks shell chaining, pipelines, redirection, command substitution, and multiline commands unless you intentionally add a custom allow rule. This is conservative by design.
+Safe mode remains available when a read-only allowlist is required; it blocks shell chaining, pipelines, redirection, command substitution, and multiline commands. The default unrestricted mode does not duplicate Codex approval logic.
 
 See [docs/security-model.md](docs/security-model.md) before using the project against production systems.
 
@@ -212,7 +212,7 @@ request_timeout_ms = 35000
 max_command_timeout_ms = 30000
 
 [policy]
-mode = "safe"
+mode = "unrestricted"
 allow_raw_send = false
 allow_interrupt = true
 custom_allow_patterns = []
@@ -229,7 +229,7 @@ Policy modes:
 - `observe`: list/read/focus only; command execution is disabled.
 - `safe`: built-in read-oriented allowlist plus custom allow patterns.
 - `allowlist`: only commands matching your `custom_allow_patterns`.
-- `unrestricted`: commands are allowed unless they match a hard deny rule. Use only in trusted environments.
+- `unrestricted`: commands are passed through unless they match a small hard deny set. Codex approval and remote account/RBAC remain authoritative.
 
 ## Output behavior
 
@@ -272,7 +272,7 @@ See:
 
 ## Security
 
-Treat an MCP client with access to your SecureCRT sessions as privileged automation. Review [SECURITY.md](SECURITY.md) and [docs/security-model.md](docs/security-model.md), especially before enabling `unrestricted` mode or raw text injection.
+Treat an MCP client with access to your SecureCRT sessions as privileged automation. Review [SECURITY.md](SECURITY.md) and [docs/security-model.md](docs/security-model.md), and keep Codex approval plus least-privilege remote accounts in place.
 
 Do not expose the bridge port beyond localhost. Do not commit `~/.securecrt-mcp/bridge.json` or audit logs to Git.
 

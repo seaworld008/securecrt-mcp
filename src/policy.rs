@@ -217,8 +217,13 @@ mod tests {
 
     #[test]
     fn safe_mode_denies_shell_chaining() {
+        let config = PolicyConfig {
+            mode: "safe".to_owned(),
+            ..PolicyConfig::default()
+        };
         assert_eq!(
-            engine()
+            PolicyEngine::new(&config)
+                .expect("policy")
                 .classify_command("kubectl get pods; rm -rf /tmp/x")
                 .decision,
             Decision::Deny
@@ -243,5 +248,25 @@ mod tests {
     #[test]
     fn raw_send_is_off_by_default() {
         assert!(!engine().raw_send_allowed());
+    }
+
+    #[test]
+    fn default_policy_passes_normal_scripts_but_blocks_core_dangers() {
+        assert_eq!(
+            engine()
+                .classify_command("echo securecrt-mcp > /tmp/check")
+                .decision,
+            Decision::Allow
+        );
+        assert_eq!(
+            engine().classify_command("rm -rf /tmp/check").decision,
+            Decision::Deny
+        );
+        assert_eq!(
+            engine()
+                .classify_command("systemctl restart nginx")
+                .decision,
+            Decision::Deny
+        );
     }
 }
