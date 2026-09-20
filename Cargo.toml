@@ -1,6 +1,6 @@
 [package]
 name = "securecrt-mcp"
-version = "0.1.2"
+version = "0.2.0-preview.1"
 edition = "2024"
 rust-version = "1.88"
 description = "A security-conscious MCP server for controlling existing SecureCRT sessions through an in-process bridge."
@@ -20,11 +20,11 @@ rmcp = { version = "3.4.0", features = ["server", "transport-io"] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 toml = "0.9"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["v4"] }
-
 
 [profile.release]
 lto = "thin"

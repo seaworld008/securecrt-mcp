@@ -1,51 +1,9 @@
 # Codex integration
 
-Chinese default guide: [codex.md](codex.md)
+Use `securecrt-mcp codex-config` to print additive TOML with the binary's real absolute path. Merge it into your existing configuration; never overwrite other model/plugin settings. All tools default to prompt; explicitly read-only tools have approve overrides.
 
-## Windows
+See the official MCP configuration documentation: https://developers.openai.com/codex/mcp/ . The installed client must support the keys. Tool annotations are hints, not proof of authorization.
 
-After placing `securecrt-mcp.exe` at a stable path, add a server entry to the Codex configuration:
+Before production, request a harmless unique command and **reject** it in the actual client's approval UI. Verify zero terminal input and no dispatch_attempt for that operation. Then use a new operation ID and explicitly allow it, verifying one dispatch. CI validates configuration/metadata but cannot attest a real client's human rejection.
 
-```toml
-[mcp_servers.securecrt]
-command = "C:\\Tools\\securecrt-mcp.exe"
-args = ["serve"]
-```
-
-## macOS / Linux
-
-```toml
-[mcp_servers.securecrt]
-command = "/usr/local/bin/securecrt-mcp"
-args = ["serve"]
-```
-
-## Before starting Codex
-
-1. Run `securecrt-mcp init` once.
-2. Open the SSH sessions you want to use in SecureCRT.
-3. In SecureCRT choose **Script > Run...** and run `~/.securecrt-mcp/securecrt_bridge.py`.
-4. Run `securecrt-mcp doctor`.
-5. Start/restart Codex so it loads the MCP server configuration.
-
-## Suggested operational prompts
-
-Read-only Kubernetes investigation:
-
-```text
-Use SecureCRT. List current sessions, find the k8s master tab, run read-only
-commands to investigate unhealthy pods in namespace jwxt-prod. You may use
-kubectl get, describe, logs and top. Do not make changes.
-```
-
-Host troubleshooting:
-
-```text
-On the SecureCRT tab named activity-h5admin, inspect CPU, memory, disk,
-network listeners and relevant service logs. Explain the likely bottleneck.
-Do not restart services or edit files.
-```
-
-## Safety
-
-Codex can request tools, but the `securecrt-mcp` policy engine remains authoritative. A prompt asking the model to bypass policy does not change local policy configuration.
+[Migration](../migration-0.2.md) · [Test layers](../testing.md)

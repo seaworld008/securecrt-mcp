@@ -1,49 +1,33 @@
 # Changelog
 
-All notable changes to this project will be documented here.
+## 0.2.0-preview.1 — 2026-09-20
 
-## [0.1.2] - 2026-09-20
-
-### Changed
-
-- `unrestricted` is now the default policy so normal commands and scripts are passed through for Codex approval and remote account/RBAC enforcement.
-- The local hard-deny set remains intentionally small and focused on high-impact disk, reboot, service, Kubernetes, Helm, container, firewall, and account changes.
-- Optional `custom_deny_patterns` examples document extra local blocking without imposing it on every user.
-- Verified ordinary command passthrough and pre-send blocking through the live MCP stdio server.
-
-## [0.1.1] - 2026-09-20
+### Breaking preview changes
+- Bridge protocol 2; upgrade and restart the embedded adapter together with the Rust binary.
+- Opaque session leases replace mutable tab indexes/captions for operations.
+- Execute requires a fresh screen token, explicit input context and operation ID; returns an asynchronous command ID.
+- Interrupt targets a tracked command; uncertain outcomes require explicit idle acknowledgement.
+- Custom allow rules match the full command. Safe mode is a narrow finite grammar, not command-prefix matching.
 
 ### Added
+- Rust execution lifecycle, POSIX marker parsing, prompt/snapshot modes, bounded UTF-8 output pagination.
+- Bounded native capture calls; explicit interruption, watchdog and no automatic remote replay.
+- Fail-closed pre-dispatch audit and visible post-dispatch audit warnings.
+- Expiring bounded wire requests, protocol identity and parameter validation.
+- Safe adapter upgrade/backups, offline/online doctor and additive Codex approval configuration generation.
+- Native-adapter regression tests, real MCP stdio/fake-bridge smoke tests, locked CI and gated checksum release workflow.
 
-- Chinese documentation is now the default README and Codex setup guide; English guides remain available as optional files.
-- Windows first-run guidance for SecureCRT Python 3.8, Bridge startup, Codex reload, read-only operations, and controlled file CRUD verification.
-- Runtime validation evidence for two connected SecureCRT SSH sessions.
+### Retained guarantees and limitations
+- Preserve 0.1.2 unrestricted default and existing user policy/token during normal upgrades.
+- No native Python extensions, new SSH connections, automatic client-approval claims or automatic server-target discovery.
+- Preview still requires actual SecureCRT and client rejection tests. A sampled API cannot detect every reconnect.
 
-### Fixed
+## 0.1.2 — 2026-09-20
+- Default policy changed to unrestricted with a small convenience hard-deny set; approval belongs to the client and remote authorization.
 
-- SecureCRT 9.0 Python bridge header compatibility by removing the standalone comment line after the required script headers.
+## 0.1.1 — 2026-09-20
+- Chinese-first guides and recorded Windows first-run / two SSH-session validation.
+- SecureCRT 9.0 script header compatibility fix.
 
-## [Unreleased]
-
-### Planned
-
-- Real-world SecureCRT integration validation across Windows, macOS, and Linux
-- release packaging
-- richer prompt/completion handling
-
-## [0.1.0] - 2026-09-20
-
-### Added
-
-- Rust MCP server using the official `rmcp` SDK
-- SecureCRT Python 3 in-process bridge
-- localhost token-authenticated bridge protocol
-- session listing and visible-screen reading
-- tab focusing
-- command execution with snapshot or `wait_for` capture
-- Ctrl+C interrupt
-- opt-in raw text sending
-- safe/read-oriented local command policy
-- local JSONL audit trail
-- CLI commands: `serve`, `init`, `doctor`, and `paths`
-- cross-platform CI and project documentation
+## 0.1.0 — 2026-09-20
+- Initial Rust stdio MCP server, in-process Python adapter, policy, audit and cross-platform CI.
