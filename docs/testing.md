@@ -13,6 +13,12 @@ The initial red run of the native-adapter regression suite failed against the ol
 
 ## Manual acceptance still required
 
+### Completed Windows evidence
+
+On 2026-09-20, commit `68cfb10` was exercised with SecureCRT 9.0.0 x64 on Windows x64 and embedded Python 3.8.10. The protocol-2 Bridge reported the expected version and capabilities; the live MCP server enumerated two connected SSH session leases, read a fresh screen token, completed `hostname` in explicit POSIX mode, and rejected `rm -rf` before dispatch. No production mutation was performed.
+
+This is evidence for that desktop/runtime combination, not a claim of cross-platform compatibility or interactive Codex approval. Keep the remaining matrix below open for each additional desktop and client.
+
 Record exact OS, architecture, SecureCRT version, **embedded** Python version, client version and commit tested. The earlier 0.1.1 Windows two-session report does not automatically validate this protocol-2 implementation.
 
 Test on each intended desktop: native Get2/CurrentRow/CurrentColumn/ReadString availability; tab object lifetime during reorder/close; reconnect detection; actual ReadString timeout/partial-output behavior; a no-newline command; POSIX cd/export persistence; prompt-mode boundary; large output; cancellation latency; UI responsiveness; script cancellation cleanup; protocol mismatch/upgrade; rejected approval causing zero remote input.

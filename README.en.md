@@ -21,7 +21,19 @@ cargo build --locked --release
 
 Use `init` for first installation. Windows uses `target\release\securecrt-mcp.exe`. Stop the old script and exit clients holding the binary before upgrading. `upgrade` preserves policy/token, backs up the replaced adapter, and uses the embedded version. `init --force` is an explicit reset/rotation with backups; not routine repair.
 
-Run the installed script using **SecureCRT → Script → Run**, dismiss its startup dialog, then run `doctor`. It reports the actual embedded Python/platform and bridge protocol, not an external Python executable. The standard config directory is `~/.securecrt-mcp`; `SECURECRT_MCP_HOME` may specify an absolute override. The script reads `bridge.json` beside itself.
+Run `./target/release/securecrt-mcp paths` to print the installed script path. Run that script using **SecureCRT → Script → Run**, dismiss its startup dialog, then run `doctor`. It reports the actual embedded Python/platform and bridge protocol, not an external Python executable. The standard config directory is `~/.securecrt-mcp`; `SECURECRT_MCP_HOME` may specify an absolute override. The script reads `bridge.json` beside itself.
+
+## Verified Windows flow
+
+On 2026-09-20, protocol 2 was exercised against Windows x64, SecureCRT 9.0.0 x64 and embedded Python 3.8.10:
+
+- `doctor` reported Bridge `0.2.0-preview.1`, protocol 2, and a healthy runtime connection.
+- `securecrt_list_sessions` returned two logged-in SSH session leases; subsequent operations used opaque leases rather than legacy `tab:1` selectors.
+- `securecrt_read_screen` returned the current prompt and a single-use `screen_token`.
+- After confirming an idle POSIX shell, `hostname` completed through `mode = "posix"` with the expected session output.
+- `rm -rf` was rejected by the Rust policy before it reached SecureCRT.
+
+This evidence covers the tested Windows/SecureCRT combination only. It is not a certification of other SecureCRT versions, terminal types, or client approval UIs. On timeout, cancellation or `unknown`, inspect the original screen and confirm idleness before any further action; do not replay automatically.
 
 `codex-config` prints additive TOML with all tools defaulting to `prompt`, and read-only exceptions. It never edits your client settings. Verify actual approval rejection in your installed Codex; annotations and documentation are not approval enforcement.
 
