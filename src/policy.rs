@@ -227,8 +227,10 @@ mod tests {
 
     #[test]
     fn explicit_custom_allow_can_permit_a_reviewed_pipeline() {
-        let mut config = PolicyConfig::default();
-        config.custom_allow_patterns = vec![r"^kubectl get pods -A \| grep Running$".to_owned()];
+        let config = PolicyConfig {
+            custom_allow_patterns: vec![r"^kubectl get pods -A \| grep Running$".to_owned()],
+            ..PolicyConfig::default()
+        };
         let policy = PolicyEngine::new(&config).expect("policy");
         assert_eq!(
             policy

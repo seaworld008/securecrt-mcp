@@ -1,6 +1,6 @@
 [package]
 name = "securecrt-mcp"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 rust-version = "1.88"
 description = "A security-conscious MCP server for controlling existing SecureCRT sessions through an in-process bridge."

@@ -1,5 +1,11 @@
 # securecrt-mcp
 
+[![CI](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/Rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
+
+英文版（可选）：[README.en.md](README.en.md)
+
 > 让 Codex、Claude 等 AI 通过 MCP **直接查看和操作 SecureCRT 中已经登录好的 SSH 会话**，而不是重新保存一套 SSH 密码/私钥。
 
 `securecrt-mcp` 是一个使用 Rust 编写的跨平台 MCP Server。它通过一个运行在 SecureCRT 进程内部的轻量 Python Bridge，访问 SecureCRT 已经打开的 Tab、读取终端屏幕并在经过本地安全策略检查后发送命令。
@@ -61,7 +67,7 @@ Codex / Claude / MCP Client
 
 ## 当前状态
 
-当前是 **v0.1.0 早期预览版本**。架构和核心实现已经就位，但在正式宣称各平台完整兼容前，仍应在真实 SecureCRT 环境逐项验证。验证矩阵见 [docs/testing.md](docs/testing.md)。
+当前是 **v0.1.1 早期预览版本**。架构和核心实现已经就位，但在正式宣称各平台完整兼容前，仍应在真实 SecureCRT 环境逐项验证。验证矩阵见 [docs/testing.md](docs/testing.md)。
 
 当前已经包含：
 
@@ -133,6 +139,8 @@ securecrt-mcp init
 
 ### 3. 在 SecureCRT 启动 Bridge
 
+Windows 上 SecureCRT 9.0 需要兼容的 Python 3 运行时。若出现 `Unable to load the Python scripting engine`，安装 Python 3.8 x64 后完全退出并重新打开 SecureCRT，再运行 Bridge。
+
 SecureCRT 中点击：
 
 ```text
@@ -189,6 +197,56 @@ args = ["serve"]
 检查 k8s-master01 上 jwxt-prod 命名空间所有 Pod，
 如果有异常继续查看 describe 和 logs，只排查，不执行变更。
 ```
+
+## Windows 首次使用完整流程
+
+在 Windows 上建议按下面顺序执行，避免把 Bridge 运行在错误的 SecureCRT 窗口中：
+
+1. 打开 SecureCRT，并在同一个窗口连接需要操作的服务器。
+2. 在仓库根目录执行 `cargo build --release`。
+3. 执行 `target\\release\\securecrt-mcp.exe init`。
+4. 在 SecureCRT 当前已登录窗口选择 `Script -> Run...`，运行 `C:\\Users\\<用户名>\\.securecrt-mcp\\securecrt_bridge.py`。
+5. 保持脚本运行，执行 `target\\release\\securecrt-mcp.exe doctor`，确认 `bridge: OK`。
+6. 将 `target\\release\\securecrt-mcp.exe` 加入 Codex 的 `config.toml`，然后重启 Codex，让它重新加载 MCP 配置。
+
+Bridge 只能看到**运行脚本的那个 SecureCRT 进程/窗口**中的 Tab。多个 SecureCRT 窗口需要分别运行 Bridge；同一窗口内的 Tab 会以 `tab:1`、`tab:2` 等稳定选择器返回。
+
+## 日常使用方式
+
+推荐先让 Codex 列出会话，再指定 `tab:<index>`，不要直接依赖易变的 Tab 标题：
+
+```text
+先调用 securecrt_list_sessions，确认当前两个会话及其 tab id。
+读取 tab:1 和 tab:2 的屏幕内容，然后只执行只读巡检：hostname、uptime、df -h、free -h、ss -lntp。
+不要重启服务、修改配置或删除文件。
+```
+
+Kubernetes 只读排查示例：
+
+```text
+使用 SecureCRT 的 k8s master 会话，执行 kubectl get nodes -o wide、kubectl get namespaces、kubectl get deployments -A 和异常 Pod 检查。
+如果发现异常，再执行对应的 describe 或 logs；不要执行变更。
+```
+
+`securecrt_execute_command` 每次只发送一条命令。默认会等待短暂时间后读取可见屏幕；慢命令可指定 `timeout_ms`、`settle_ms` 或已知提示符的 `wait_for`。
+
+## 文件操作验证与权限边界
+
+默认 `safe` 策略是只读的，`touch`、重定向写入、`rm` 等命令会被拦截。需要验证写文件时，只为一次性测试文件增加精确的 `custom_allow_patterns`，完成后立即恢复为空；不要为生产路径添加通配规则，也不要把策略切换为 `unrestricted` 来绕过检查。
+
+建议的验证顺序：
+
+```text
+1. ls -l /root/<唯一测试文件>                 # 确认不存在
+2. touch /root/<唯一测试文件>                 # 创建
+3. cat /root/<唯一测试文件>                   # 读取
+4. echo <测试内容> > /root/<唯一测试文件>      # 修改
+5. cat /root/<唯一测试文件>                   # 验证修改
+6. unlink /root/<唯一测试文件>                # 删除
+7. ls -l /root/<唯一测试文件>                 # 确认已删除
+```
+
+不要用真实业务文件、历史备份、`.ssh`、数据库文件或容器数据目录做 CRUD 测试。所有命令尝试都会写入 `~/.securecrt-mcp/audit.jsonl`（默认不记录完整命令文本）。
 
 ## 默认安全策略
 
@@ -333,7 +391,8 @@ python3 -m py_compile bridge/securecrt_bridge.py
 - [架构设计](docs/architecture.md)
 - [安全模型](docs/security-model.md)
 - [Bridge 协议](docs/bridge-protocol.md)
-- [Codex 配置](docs/clients/codex.md)
+- [Codex 配置（中文默认）](docs/clients/codex.md)
+- [Codex integration (English)](docs/clients/codex.en.md)
 - [故障排查](docs/troubleshooting.md)
 - [验证与兼容性](docs/testing.md)
 - [Roadmap](ROADMAP.md)
