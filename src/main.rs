@@ -82,8 +82,14 @@ async fn serve() -> Result<()> {
     let bridge = BridgeClient::new(config.bridge.clone(), secret)?;
     let server = SecureCrtServer::new(bridge, policy, audit, config);
 
-    let service = server.serve(stdio()).await.context("failed to start MCP stdio service")?;
-    service.waiting().await.context("MCP service stopped with an error")?;
+    let service = server
+        .serve(stdio())
+        .await
+        .context("failed to start MCP stdio service")?;
+    service
+        .waiting()
+        .await
+        .context("MCP service stopped with an error")?;
     Ok(())
 }
 
@@ -123,8 +129,8 @@ fn init_files(force: bool) -> Result<()> {
     let cfg_path = config_path()?;
     if !cfg_path.exists() || force {
         let default_config = Config::default();
-        let config_text = toml::to_string_pretty(&default_config)
-            .context("failed to encode default config")?;
+        let config_text =
+            toml::to_string_pretty(&default_config).context("failed to encode default config")?;
         fs::write(&cfg_path, config_text)
             .with_context(|| format!("failed to write {}", cfg_path.display()))?;
     }

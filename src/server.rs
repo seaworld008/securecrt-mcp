@@ -7,11 +7,7 @@ use crate::{
     },
     policy::{Decision, PolicyEngine},
 };
-use rmcp::{
-    ErrorData as McpError,
-    handler::server::wrapper::Parameters,
-    tool, tool_router,
-};
+use rmcp::{ErrorData as McpError, handler::server::wrapper::Parameters, tool, tool_router};
 use serde_json::{Value, json};
 
 #[derive(Clone)]
@@ -49,17 +45,23 @@ impl SecureCrtServer {
 
 #[tool_router(server_handler)]
 impl SecureCrtServer {
-    #[tool(description = "Check whether the in-process SecureCRT Python bridge is running and reachable.")]
+    #[tool(
+        description = "Check whether the in-process SecureCRT Python bridge is running and reachable."
+    )]
     async fn securecrt_bridge_status(&self) -> Result<String, McpError> {
         self.bridge_json("ping", json!({})).await
     }
 
-    #[tool(description = "List tabs in the SecureCRT window that is running the bridge, including tab id, caption, connection state, and best-effort session metadata.")]
+    #[tool(
+        description = "List tabs in the SecureCRT window that is running the bridge, including tab id, caption, connection state, and best-effort session metadata."
+    )]
     async fn securecrt_list_sessions(&self) -> Result<String, McpError> {
         self.bridge_json("list_sessions", json!({})).await
     }
 
-    #[tool(description = "Read the currently visible terminal text from an existing SecureCRT tab without sending anything to the remote host.")]
+    #[tool(
+        description = "Read the currently visible terminal text from an existing SecureCRT tab without sending anything to the remote host."
+    )]
     async fn securecrt_read_screen(
         &self,
         Parameters(params): Parameters<ReadScreenParams>,
@@ -76,7 +78,9 @@ impl SecureCrtServer {
         .await
     }
 
-    #[tool(description = "Bring an existing SecureCRT tab to the foreground. This changes local UI focus only; it does not send a remote command.")]
+    #[tool(
+        description = "Bring an existing SecureCRT tab to the foreground. This changes local UI focus only; it does not send a remote command."
+    )]
     async fn securecrt_focus_session(
         &self,
         Parameters(params): Parameters<SessionParams>,
@@ -85,7 +89,9 @@ impl SecureCrtServer {
             .await
     }
 
-    #[tool(description = "Execute one command in an existing SecureCRT tab. The local policy engine evaluates the command before any text is sent. In safe mode only read-oriented commands are allowed by default.")]
+    #[tool(
+        description = "Execute one command in an existing SecureCRT tab. The local policy engine evaluates the command before any text is sent. In safe mode only read-oriented commands are allowed by default."
+    )]
     async fn securecrt_execute_command(
         &self,
         Parameters(params): Parameters<ExecuteCommandParams>,
@@ -105,7 +111,10 @@ impl SecureCrtServer {
 
         if !allowed {
             return Err(McpError::invalid_params(
-                format!("command blocked by securecrt-mcp policy: {}", decision.reason),
+                format!(
+                    "command blocked by securecrt-mcp policy: {}",
+                    decision.reason
+                ),
                 None,
             ));
         }
@@ -129,7 +138,9 @@ impl SecureCrtServer {
         .await
     }
 
-    #[tool(description = "Send raw text to a SecureCRT tab. Disabled by default because raw text can bypass command safety policy. Enable policy.allow_raw_send only when you intentionally want this capability.")]
+    #[tool(
+        description = "Send raw text to a SecureCRT tab. Disabled by default because raw text can bypass command safety policy. Enable policy.allow_raw_send only when you intentionally want this capability."
+    )]
     async fn securecrt_send_text(
         &self,
         Parameters(params): Parameters<SendTextParams>,
@@ -165,7 +176,9 @@ impl SecureCrtServer {
         .await
     }
 
-    #[tool(description = "Send Ctrl+C to an existing SecureCRT tab to interrupt a foreground command. Enabled by default in safe mode and can be disabled in local policy.")]
+    #[tool(
+        description = "Send Ctrl+C to an existing SecureCRT tab to interrupt a foreground command. Enabled by default in safe mode and can be disabled in local policy."
+    )]
     async fn securecrt_interrupt(
         &self,
         Parameters(params): Parameters<InterruptParams>,

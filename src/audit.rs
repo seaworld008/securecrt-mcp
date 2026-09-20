@@ -72,7 +72,9 @@ impl AuditLog {
             .open(self.path.as_ref())
             .await
             .with_context(|| format!("failed to open audit log: {}", self.path.display()))?;
-        file.write_all(&line).await.context("failed to append audit record")?;
+        file.write_all(&line)
+            .await
+            .context("failed to append audit record")?;
         Ok(())
     }
 }

@@ -81,14 +81,22 @@ impl PolicyEngine {
             Mode::Observe => deny("policy mode is observe; command execution is disabled"),
             Mode::Unrestricted => allow("policy mode is unrestricted and no deny rule matched"),
             Mode::Allowlist => {
-                if self.custom_allow_patterns.iter().any(|re| re.is_match(trimmed)) {
+                if self
+                    .custom_allow_patterns
+                    .iter()
+                    .any(|re| re.is_match(trimmed))
+                {
                     allow("command matched a configured allow rule")
                 } else {
                     deny("command did not match any configured allow rule")
                 }
             }
             Mode::Safe => {
-                if self.custom_allow_patterns.iter().any(|re| re.is_match(trimmed)) {
+                if self
+                    .custom_allow_patterns
+                    .iter()
+                    .any(|re| re.is_match(trimmed))
+                {
                     return allow("command matched an explicit custom allow rule");
                 }
                 if has_unsafe_shell_control(trimmed) {
@@ -220,9 +228,7 @@ mod tests {
     #[test]
     fn explicit_custom_allow_can_permit_a_reviewed_pipeline() {
         let mut config = PolicyConfig::default();
-        config.custom_allow_patterns = vec![
-            r"^kubectl get pods -A \| grep Running$".to_owned(),
-        ];
+        config.custom_allow_patterns = vec![r"^kubectl get pods -A \| grep Running$".to_owned()];
         let policy = PolicyEngine::new(&config).expect("policy");
         assert_eq!(
             policy
