@@ -60,7 +60,7 @@ impl Job {
     fn snapshot(&self) -> Value {
         json!({"command_id": self.id, "operation_id": self.operation_id, "session": self.session, "state": self.state,
             "sent": self.sent, "requires_idle_ack": self.requires_idle_ack,
-            "error_code": if matches!(self.state, State::Rejected | State::Unknown | State::TimedOut) { Some(crate::fault::code(&self.reason)) } else { None },
+            "error_code": if self.state == State::TimedOut { Some("capture_timeout") } else if matches!(self.state, State::Rejected | State::Unknown) { Some(crate::fault::code(&self.reason)) } else { None },
             "action": if self.state.active() { "Poll this command_id or explicitly interrupt; never resubmit." }
                 else if self.requires_idle_ack { crate::fault::action("busy_unresolved") }
                 else if self.state == State::Rejected { crate::fault::action(crate::fault::code(&self.reason)) }
@@ -266,7 +266,20 @@ impl Engine {
         if let Some(job) = self.inner.lock().await.jobs.get_mut(&id) {
             job.sent = None;
         }
-        if let Err(error) = self.bridge.call("begin", request).await {
+        let begin_result = self.bridge.call("begin", request).await.and_then(|value| {
+            if value["sent"].as_bool() == Some(true) {
+                Ok(value)
+            } else {
+                Err(crate::fault::BridgeFault {
+                    message:
+                        "dispatch outcome unknown: success reply lacks send evidence; do not replay"
+                            .into(),
+                    sent: None,
+                }
+                .into())
+            }
+        });
+        if let Err(error) = begin_result {
             let unsent = error
                 .downcast_ref::<crate::fault::BridgeFault>()
                 .is_some_and(|e| e.sent == Some(false));
@@ -586,6 +599,11 @@ impl Engine {
             .await?;
         let mut registry = self.inner.lock().await;
         if registry.busy == previous {
+            if let Some(id) = previous.as_ref() {
+                if let Some(job) = registry.jobs.get_mut(id) {
+                    job.requires_idle_ack = false;
+                }
+            }
             registry.busy = None;
         }
         Ok(result)

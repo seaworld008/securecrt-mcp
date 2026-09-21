@@ -99,10 +99,11 @@ async fn main() -> Result<()> {
                 config.audit_path()?,
             );
             let policy = PolicyEngine::new(&config.policy)?;
-            let service = SecureCrtServer::new(Engine::new(bridge, audit, policy, config))
-                .serve(stdio())
-                .await?;
-            service.waiting().await?;
+            let engine = Engine::new(bridge, audit, policy, config);
+            let service = SecureCrtServer::new(engine.clone()).serve(stdio()).await?;
+            let ended = service.waiting().await;
+            engine.drain_on_disconnect().await;
+            ended?;
         }
         Command::Init { force } => initialize(force)?,
         Command::Upgrade => initialize(false)?,
@@ -269,9 +270,10 @@ async fn doctor(offline: bool) -> Result<()> {
 fn print_codex_config(approval_mode: &str, toolset: &str) -> Result<()> {
     let path = std::env::current_exe()?.to_string_lossy().into_owned();
     let quoted = toml::Value::String(path).to_string();
+    let tool_timeout = 65 + 2 * Config::load()?.bridge.request_timeout_ms.div_ceil(1000);
     println!("# Merge this block into your config; do not duplicate an existing securecrt table.");
     println!(
-        "[mcp_servers.securecrt]\ncommand = {quoted}\nargs = [\"serve\"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 65\ndefault_tools_approval_mode = \"{approval_mode}\""
+        "[mcp_servers.securecrt]\ncommand = {quoted}\nargs = [\"serve\"]\nstartup_timeout_sec = 30\ntool_timeout_sec = {tool_timeout}\ndefault_tools_approval_mode = \"{approval_mode}\""
     );
     if toolset == "basic" {
         println!(

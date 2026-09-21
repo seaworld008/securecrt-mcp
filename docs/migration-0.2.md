@@ -1,3 +1,13 @@
+# Preview.2 Agent UX upgrade
+
+Build `main`, run `upgrade`, restart the native script, run `doctor`, then reload the MCP client. Existing policy/token remain unchanged. New installations use `mode = "client"`; existing users explicitly edit that one setting only if they want command approvals delegated to the client. Custom deny patterns are not automatically deleted.
+
+`codex-config` now defaults to an additive basic tool preset and approval mode `auto`. Inspect and merge the output; do not append duplicate tables or overwrite unrelated client settings. `--approval-mode prompt --toolset full` provides explicit prompts and the full low-level surface.
+
+Prefer `run_command` for routine idle POSIX-shell investigations. The old low-level tools remain available. One-use screen tokens still exist internally but are not normal high-level parameters. Acknowledge unresolved work only after inspecting the original terminal; acknowledgements now return a fresh screen.
+
+See [Agent usage](agent-usage.md) and [local clients](clients/command-line.md). The following is the historical protocol-1 to protocol-2 migration; its preview.1 desktop record is not relabeled as preview.2 validation.
+
 # 0.1.x → 0.2.0-preview.1 升级与首次验收
 
 协议及执行接口有变更。先在测试环境升级，不把旧会话 ID 或旧屏幕判断复用到新进程。

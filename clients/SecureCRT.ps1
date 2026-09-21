@@ -8,12 +8,14 @@ param(
     [string]$Session,
     [string]$InputFile,
     [string]$CommandText,
-    [ValidateSet('posix','prompt','snapshot')][string]$Mode = 'posix',
+    [ValidateSet('posix','prompt','snapshot')][string]$Mode,
     [string]$ExpectedPrompt,
     [ValidateRange(1000,3600000)][int]$TimeoutMs = 30000,
     [ValidateRange(4,65536)][int]$MaxBytes = 60000
 )
 $ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Console]::OutputEncoding
 $tempPath = $null
 $code = 1
 try {
@@ -27,6 +29,7 @@ try {
         if (-not $InputFile) {
             if (-not $CommandText) { throw 'A command JSON file or -CommandText is required' }
             if ($Action -eq 'run' -and -not $Session) { throw 'run requires -Session with -CommandText' }
+            if ($Action -eq 'run' -and -not $Mode) { throw 'run requires an explicit -Mode with -CommandText' }
             $request = @{session=$Session; command=$CommandText; mode=$Mode; timeout_ms=$TimeoutMs; max_bytes=$MaxBytes}
             if ($ExpectedPrompt) { $request.expected_prompt = $ExpectedPrompt }
             $tempPath = [System.IO.Path]::GetTempFileName()

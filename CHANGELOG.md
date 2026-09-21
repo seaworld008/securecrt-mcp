@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.0-preview.2 — 2026-09-21
+
+- Add agent-first run_command with internal fresh context, one submission, bounded wait/output, explicit capture mode and stable operation identity.
+- Add delivery evidence and actionable structured errors; proven pre-send rejections no longer become unresolved jobs. Malformed success/lost responses remain uncertain.
+- Add client policy for new installs; preserve existing configuration and optional legacy guardrails/custom rules. Add effective-policy diagnostics.
+- Renew actively used native leases, return a fresh screen after explicit acknowledgement and reflect acknowledgement in job status.
+- Evict old completed output while retaining replay-prevention tombstones; preserve partial output on timeout.
+- Drain already-sent work for up to two seconds on graceful MCP EOF, without new input or implicit recovery. Hard-kill/restart recovery is still manual.
+- Add Rust JSON CLI plus Python/PowerShell wrappers and configurable additive Codex tool presets.
+- Preserve historical preview.1 Windows acceptance; new desktop behavior still requires local verification. No release tag created by this change.
+
+
 ## 0.2.0-preview.1 — 2026-09-20
 
 ### Breaking preview changes

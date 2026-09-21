@@ -168,6 +168,24 @@ fn shell_prompt_candidate(line: &str) -> bool {
     line.ends_with('$') || line.ends_with('#') || line.ends_with('%')
 }
 
+impl Engine {
+    /// Graceful EOF only: drain already-sent work for at most two seconds. No new command,
+    /// no interrupt and no implicit acknowledgement. Hard termination still needs recovery.
+    pub async fn drain_on_disconnect(&self) {
+        let active = {
+            let registry = self.inner.lock().await;
+            registry
+                .busy
+                .as_ref()
+                .filter(|id| registry.jobs.get(*id).is_some_and(|j| j.state.active()))
+                .cloned()
+        };
+        if let Some(id) = active {
+            let _ = self.wait_result(&id, 2000, 4).await;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

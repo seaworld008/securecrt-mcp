@@ -175,9 +175,13 @@ def run(binary):
         assert json.loads(result)['state'] == 'completed'
         if sys.platform == 'win32':
             script = wrapper.with_name('SecureCRT.ps1')
-            result = subprocess.check_output(['pwsh', '-NoProfile', '-File', str(script), '-Binary', binary,
-                                              '-Action', 'run', '-InputFile', str(params)], env=env, text=True, encoding='utf-8')
-            assert json.loads(result)['state'] == 'completed'
+            payload['command'] = 'large-output'
+            params.write_text(json.dumps(payload), encoding='utf-8')
+            for shell in ('pwsh', 'powershell.exe'):
+                result = subprocess.check_output([shell, '-NoProfile', '-File', str(script), '-Binary', binary,
+                                                  '-Action', 'run', '-InputFile', str(params)], env=env, text=True, encoding='utf-8')
+                parsed = json.loads(result)
+                assert parsed['state'] == 'completed' and parsed['text'].startswith('中')
         bridge.shutdown()
     print('PASS: one-call MCP, client policy, deduplication, context guard, explicit unsent rejection, uncertainty/no replay, busy/no auto-ack, UTF-8 pages, CLI and wrappers; native desktop approval NOT tested')
 
