@@ -1,0 +1,27 @@
+name: Persistent terminal final review
+on:
+  push:
+    branches: [feat/persistent-terminal-performance]
+permissions:
+  contents: read
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: cargo build --locked
+      - run: python tests/persistent_fault_smoke.py target/debug/securecrt-mcp
+      - name: Verify narrow guard review regressions are red
+        run: |
+          cat tests/critical_scope.rs.txt >> src/regression.rs
+          if cargo test --locked critical_scope_allows_auth_config_backup_but_not_replacement > /tmp/critical-red.log 2>&1; then exit 1; fi
+          cat /tmp/critical-red.log
+          grep -q 'FAILED' /tmp/critical-red.log
