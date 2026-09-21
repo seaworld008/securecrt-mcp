@@ -1,4 +1,4 @@
-name: Persistent terminal release readiness
+name: Persistent terminal complete verification
 on:
   push:
     branches: [feat/persistent-terminal-performance]
@@ -22,6 +22,12 @@ jobs:
         with:
           python-version: '3.12'
       - run: python .perf-finalize.py
+      - name: Prove prompt readiness regression before fix
+        run: |
+          if python -m unittest discover -s tests -p test_prompt_readiness.py -v > /tmp/prompt-red.log 2>&1; then exit 1; fi
+          cat /tmp/prompt-red.log
+          grep -q 'FAILED (' /tmp/prompt-red.log
+      - run: python .perf-latency-review.py
       - run: cargo fmt --all
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - run: cargo test --locked --all-targets --all-features
@@ -30,7 +36,7 @@ jobs:
       - run: python tests/mcp_smoke.py target/debug/securecrt-mcp
       - run: python tests/ux_smoke.py target/debug/securecrt-mcp
       - run: python tests/review_smoke.py target/debug/securecrt-mcp
-      - run: python tests/performance_smoke.py target/debug/securecrt-mcp
+      - run: python tests/performance_smoke.py target/debug/securecrt-mcp --output /tmp/final-performance.json
       - run: python tests/persistent_fault_smoke.py target/debug/securecrt-mcp
       - run: python tests/daemon_smoke.py target/debug/securecrt-mcp
       - run: python tests/package_smoke.py target/debug/securecrt-mcp review-linux
@@ -38,9 +44,10 @@ jobs:
       - name: Commit verified final source to feature branch only
         run: |
           test "$(git branch --show-current)" = feat/persistent-terminal-performance
-          rm .perf-finalize.py .github/workflows/perf-final.yml
+          cp /tmp/final-performance.json docs/benchmarks/final-linux.json
+          rm .perf-finalize.py .perf-latency-review.py .github/workflows/perf-final.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add src bridge clients tests scripts docs README* CHANGELOG.md .perf-finalize.py .github/workflows/perf-final.yml
-          git commit -m 'fix: finalize persistent terminal lifecycle, critical scope and unified clients'
+          git add src bridge clients tests scripts docs README* CHANGELOG.md .perf-finalize.py .perf-latency-review.py .github/workflows
+          git commit -m 'fix: finalize persistent terminal, audit hot path and delayed prompt readiness'
           git push origin HEAD:refs/heads/feat/persistent-terminal-performance
