@@ -17,11 +17,26 @@ impl SecureCrtServer {
 fn result(value: anyhow::Result<Value>) -> Result<String, McpError> {
     value
         .and_then(|v| serde_json::to_string(&v).map_err(Into::into))
-        .map_err(|e| McpError::invalid_params(e.to_string(), None))
+        .map_err(|e| McpError::invalid_params(e.to_string(), Some(crate::fault::details(&e))))
 }
 
 #[tool_router(server_handler)]
 impl SecureCrtServer {
+    #[tool(
+        description = "Preferred command tool: reuse an explicit session, obtain a fresh screen internally, submit ONCE, wait and return bounded output plus sent/state/exit_code/next_cursor. Client owns command approval. mode is REQUIRED: posix is an explicit idle POSIX-shell assertion, not for REPLs/passwords/appliances; prompt/snapshot require expected_prompt. Omitted expected_prompt in posix uses a conservative prompt heuristic, NOT host authentication. No automatic retry, Ctrl+C or unresolved acknowledgement. Use operation_id for same-process deduplication. A running result means poll command_id, never resubmit.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false
+        )
+    )]
+    async fn securecrt_run_command(
+        &self,
+        Parameters(p): Parameters<crate::model::RunParams>,
+    ) -> Result<String, McpError> {
+        result(self.engine.run_command(p).await)
+    }
+
     #[tool(
         description = "Report protocol/runtime capabilities, actual adapter Python version and unresolved state. Does not send remote input.",
         annotations(

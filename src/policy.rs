@@ -25,7 +25,7 @@ impl PolicyEngine {
     pub fn new(config: &PolicyConfig) -> Result<Self> {
         let mode = config.mode.to_ascii_lowercase();
         ensure!(
-            ["observe", "safe", "allowlist", "unrestricted"].contains(&mode.as_str()),
+            ["client", "observe", "safe", "allowlist", "unrestricted"].contains(&mode.as_str()),
             "invalid policy.mode"
         );
         ensure!(
@@ -46,11 +46,7 @@ impl PolicyEngine {
                 })
                 .collect()
         };
-        let mut deny = HARD_DENY
-            .iter()
-            .map(|p| Regex::new(p))
-            .collect::<Result<Vec<_>, _>>()?;
-        deny.extend(compile(&config.custom_deny_patterns, false)?);
+        let deny = compile(&config.custom_deny_patterns, false)?;
         Ok(Self {
             mode,
             raw: config.allow_raw_send,
@@ -76,10 +72,25 @@ impl PolicyEngine {
         if self.mode == "observe" {
             return denied("observe mode disables execution");
         }
-        if self.deny.iter().any(|p| p.is_match(cmd)) {
-            return denied("command matched a local deny rule");
+        if let Some(index) = self.deny.iter().position(|p| p.is_match(cmd)) {
+            return denied(&format!(
+                "custom_deny_rule[{index}]: operator-configured pattern matched"
+            ));
         }
-        let allowed = self.mode == "unrestricted"
+        if self.mode != "client" {
+            for (index, pattern) in HARD_DENY.iter().enumerate() {
+                if Regex::new(pattern)
+                    .expect("static guardrail regex")
+                    .is_match(cmd)
+                {
+                    return denied(&format!(
+                        "builtin_guardrail[{index}]: legacy optional local policy"
+                    ));
+                }
+            }
+        }
+        let allowed = self.mode == "client"
+            || self.mode == "unrestricted"
             || self.allow.iter().any(|p| p.is_match(cmd))
             || (self.mode == "safe" && safe_command(cmd));
         if allowed {

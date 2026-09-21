@@ -32,7 +32,7 @@ class FakeBridge(socketserver.ThreadingTCPServer):
     def method(self, name, p):
         with self.lock:
             if name == 'ping':
-                return {'bridge_version': '0.2.0-preview.1', 'protocol_version': 2}
+                return {'bridge_version': '0.2.0-preview.2', 'protocol_version': 2}
             if name == 'list_sessions':
                 return {'sessions': [{'id': 'fake-instance/fake-session', 'caption': 'test', 'connected': True}]}
             if name == 'read_screen':
@@ -173,13 +173,13 @@ def run(binary):
         cli('init')
         config_path = root / 'config.toml'
         original_token = json.loads((root / 'bridge.json').read_text())['token']
-        configured = config_path.read_text().replace('mode = "unrestricted"', 'mode = "safe"')
+        configured = config_path.read_text().replace('mode = "client"', 'mode = "safe"')
         config_path.write_text(configured)
         cli('upgrade')
         assert config_path.read_text() == configured, 'upgrade reset user policy'
         assert json.loads((root / 'bridge.json').read_text())['token'] == original_token, 'upgrade rotated token'
         assert 'offline_checks=OK' in cli('doctor', '--offline')
-        config = tomllib.loads(cli('codex-config'))
+        config = tomllib.loads(cli('codex-config', '--approval-mode', 'prompt', '--toolset', 'full'))
         assert config['mcp_servers']['securecrt']['default_tools_approval_mode'] == 'prompt'
         assert config['mcp_servers']['securecrt']['command'] == str(binary)
         secret_path = root / 'bridge.json'
@@ -193,7 +193,7 @@ def run(binary):
         mcp = MCP(binary, env)
         tools = mcp.request('tools/list', {})['result']['tools']
         names = {t['name']: t for t in tools}
-        assert len(names) == 10, names.keys()
+        assert len(names) == 11, names.keys()
         assert names['securecrt_execute_command']['annotations']['readOnlyHint'] is False
         assert names['securecrt_execute_command']['annotations']['destructiveHint'] is True
         assert names['securecrt_read_screen']['annotations']['readOnlyHint'] is True

@@ -2,6 +2,8 @@ mod audit;
 mod bridge;
 mod config;
 mod execution;
+mod fault;
+mod local_cli;
 mod model;
 mod policy;
 #[cfg(test)]
@@ -52,7 +54,29 @@ enum Command {
     },
     Paths,
     /// Print an additive Codex configuration; never modify the user's Codex files.
-    CodexConfig,
+    CodexConfig {
+        #[arg(long, default_value="auto", value_parser=["auto", "prompt", "writes", "approve"])]
+        approval_mode: String,
+        #[arg(long, default_value="basic", value_parser=["basic", "full"])]
+        toolset: String,
+    },
+    /// List existing sessions as JSON, without sending remote input.
+    Sessions,
+    /// Read an explicit session as JSON.
+    Screen {
+        #[arg(long)]
+        session: String,
+    },
+    /// Execute one JSON request from a UTF-8 file or '-' stdin. Keeps the process alive until terminal state.
+    Run {
+        #[arg(long)]
+        input: String,
+    },
+    /// Inspect effective policy for the command in a JSON file or '-' stdin. Never connects.
+    PolicyCheck {
+        #[arg(long)]
+        input: String,
+    },
 }
 
 #[tokio::main]
@@ -89,7 +113,14 @@ async fn main() -> Result<()> {
             println!("bridge_config={}", bridge_config_path()?.display());
             println!("bridge_script={}", bridge_script_path()?.display());
         }
-        Command::CodexConfig => print_codex_config()?,
+        Command::CodexConfig {
+            approval_mode,
+            toolset,
+        } => print_codex_config(&approval_mode, &toolset)?,
+        Command::Sessions => local_cli::sessions().await?,
+        Command::Screen { session } => local_cli::screen(session).await?,
+        Command::Run { input } => local_cli::run(&input).await?,
+        Command::PolicyCheck { input } => local_cli::policy_check(&input)?,
     }
     Ok(())
 }
@@ -235,13 +266,18 @@ async fn doctor(offline: bool) -> Result<()> {
     Ok(())
 }
 
-fn print_codex_config() -> Result<()> {
+fn print_codex_config(approval_mode: &str, toolset: &str) -> Result<()> {
     let path = std::env::current_exe()?.to_string_lossy().into_owned();
     let quoted = toml::Value::String(path).to_string();
     println!("# Merge this block into your config; do not duplicate an existing securecrt table.");
     println!(
-        "[mcp_servers.securecrt]\ncommand = {quoted}\nargs = [\"serve\"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 65\ndefault_tools_approval_mode = \"prompt\""
+        "[mcp_servers.securecrt]\ncommand = {quoted}\nargs = [\"serve\"]\nstartup_timeout_sec = 30\ntool_timeout_sec = 65\ndefault_tools_approval_mode = \"{approval_mode}\""
     );
+    if toolset == "basic" {
+        println!(
+            "enabled_tools = [\"securecrt_bridge_status\", \"securecrt_list_sessions\", \"securecrt_read_screen\", \"securecrt_run_command\", \"securecrt_get_command_status\", \"securecrt_get_command_output\", \"securecrt_interrupt\", \"securecrt_acknowledge_idle\"]"
+        );
+    }
     for name in [
         "bridge_status",
         "list_sessions",
