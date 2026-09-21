@@ -1,0 +1,29 @@
+name: Agent UX regression baseline
+on:
+  push:
+    branches: [feat/agent-first-command-ux]
+permissions:
+  contents: read
+jobs:
+  baseline:
+    if: github.ref == 'refs/heads/feat/agent-first-command-ux'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: cargo test --locked --all-targets --all-features
+      - run: python -m unittest discover -s tests -p test_bridge.py -v
+      - name: Prove new adapter regressions fail before implementation
+        run: |
+          if python -m unittest discover -s tests -p test_ux_bridge.py -v > /tmp/ux-red.log 2>&1; then
+            cat /tmp/ux-red.log
+            echo 'Expected regression failure on baseline; tests did not exercise missing behavior'
+            exit 1
+          fi
+          cat /tmp/ux-red.log
+          grep -q 'FAILED (' /tmp/ux-red.log
