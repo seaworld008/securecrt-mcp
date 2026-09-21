@@ -247,7 +247,8 @@ class NativeAdapter:
         pending = c['pending']
         # Local batching removes one socket round-trip + Rust sleep per output line.
         # Never pass a fractional/zero timeout: supported native API uses seconds.
-        while len(pending) < MAX_CHUNK and count < max_reads:
+        draining_pending = bool(pending)
+        while not draining_pending and len(pending) < MAX_CHUNK and count < max_reads:
             read_started = time.monotonic()
             text = s.ReadString(patterns, 1)
             elapsed = (time.monotonic() - read_started) * 1000
@@ -307,6 +308,7 @@ class NativeAdapter:
         c = self.captures.get(capture_id) or self.unresolved_sessions.get(session)
         if not c or c.get('id', c.get('capture_id')) != capture_id or c['session'] != session:
             fail('capture_mismatch: refusing to interrupt an unrelated foreground program')
+        if 'owner' in c and c['owner'] != self.owner: fail('ownership_conflict')
         self._ownership(session)
         e = self._session(session)
         self._before_send()
@@ -455,6 +457,10 @@ def handle_request(adapter, request, token):
         if not isinstance(params, dict):
             fail('invalid params')
         adapter.owner = string(request.get('client_id', 'legacy'), 'client_id', 128)
+        if method == 'end':
+            capture = adapter.captures.get(params.get('capture_id'))
+            if capture and capture['owner'] != adapter.owner:
+                fail('ownership_conflict: cannot end another connector capture')
         adapter.metrics['requests'] += 1
         adapter.request_deadline = deadline
         try:

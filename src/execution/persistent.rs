@@ -307,3 +307,23 @@ impl Engine {
         )
     }
 }
+
+impl Engine {
+    pub async fn quiescent(&self) -> Result<()> {
+        ensure!(
+            self.inner.lock().await.busy.is_empty(),
+            "cannot stop daemon with active/unresolved jobs; inspect and resolve first"
+        );
+        ensure!(
+            !self
+                .terminal
+                .lock()
+                .await
+                .batches
+                .values()
+                .any(|(_, b)| b["state"] == "running"),
+            "cannot stop daemon with active batch"
+        );
+        Ok(())
+    }
+}

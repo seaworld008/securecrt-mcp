@@ -402,7 +402,7 @@ impl Engine {
                 break (
                     State::Cancelled,
                     None,
-                    "interrupt requested; termination unproven".to_owned(),
+                    "capture cancellation requested; remote termination unproven".to_owned(),
                 );
             }
             if started.elapsed() >= timeout {

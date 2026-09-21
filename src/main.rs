@@ -2,6 +2,7 @@ mod audit;
 mod bridge;
 mod config;
 mod critical;
+mod daemon;
 mod execution;
 mod fault;
 mod local_cli;
@@ -42,6 +43,21 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Serve,
+    /// Retain one Engine for separate CLI clients. Foreground only, never auto-spawned.
+    Daemon {
+        #[arg(long, conflicts_with = "cleanup_stale")]
+        stop: bool,
+        /// Explicitly remove a refused stale endpoint after inspecting SecureCRT; no state reset.
+        #[arg(long)]
+        cleanup_stale: bool,
+    },
+    /// Invoke the persistent daemon using a UTF-8 JSON file, without starting another Engine.
+    Session {
+        #[arg(value_parser=["sessions","screen","attach","exec","exec-batch","batch-status","detach","heartbeat","status","output","acknowledge-idle","interrupt","shell-open","shell-read","shell-write","shell-close","latency","ping"])]
+        method: String,
+        #[arg(long, default_value = "-")]
+        input: String,
+    },
     /// Initialize files; preserve existing policy/token unless --force is explicitly supplied.
     Init {
         #[arg(long)]
@@ -53,6 +69,8 @@ enum Command {
     Doctor {
         #[arg(long)]
         offline: bool,
+        #[arg(long, conflicts_with = "offline")]
+        latency: bool,
     },
     Paths,
     /// Print an additive Codex configuration; never modify the user's Codex files.
@@ -109,7 +127,28 @@ async fn main() -> Result<()> {
         }
         Command::Init { force } => initialize(force)?,
         Command::Upgrade => initialize(false)?,
-        Command::Doctor { offline } => doctor(offline).await?,
+        Command::Doctor { offline, latency } => {
+            if latency {
+                local_cli::emit(&local_cli::engine()?.latency(20).await?)?;
+            } else {
+                doctor(offline).await?;
+            }
+        }
+        Command::Daemon {
+            stop,
+            cleanup_stale,
+        } => {
+            if stop {
+                local_cli::emit(&daemon::call("shutdown", serde_json::json!({})).await?)?;
+            } else if cleanup_stale {
+                daemon::cleanup_stale().await?;
+            } else {
+                daemon::serve().await?;
+            }
+        }
+        Command::Session { method, input } => {
+            local_cli::emit(&daemon::call(&method, local_cli::input(&input)?).await?)?
+        }
         Command::Paths => {
             println!("app_dir={}", app_dir()?.display());
             println!("config={}", config_path()?.display());

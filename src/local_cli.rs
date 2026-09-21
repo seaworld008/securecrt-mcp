@@ -12,7 +12,7 @@ use anyhow::{Result, ensure};
 use serde_json::{Value, json};
 use std::{fs::File, io::Read};
 
-fn engine() -> Result<Engine> {
+pub(crate) fn engine() -> Result<Engine> {
     let config = Config::load()?;
     let bridge = BridgeClient::new(config.bridge.clone(), config::load_bridge_secret()?)?;
     let audit = AuditLog::new(
@@ -23,7 +23,7 @@ fn engine() -> Result<Engine> {
     let policy = PolicyEngine::new(&config.policy)?;
     Ok(Engine::new(bridge, audit, policy, config))
 }
-fn input(path: &str) -> Result<Value> {
+pub(crate) fn input(path: &str) -> Result<Value> {
     let mut bytes = Vec::new();
     if path == "-" {
         std::io::stdin().take(262_145).read_to_end(&mut bytes)?;
@@ -38,14 +38,20 @@ fn input(path: &str) -> Result<Value> {
     let bytes = bytes.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(&bytes);
     Ok(serde_json::from_slice(bytes)?)
 }
-fn emit(value: &Value) -> Result<()> {
+pub(crate) fn emit(value: &Value) -> Result<()> {
     println!("{}", serde_json::to_string(value)?);
     Ok(())
 }
 pub async fn sessions() -> Result<()> {
+    if crate::daemon::available() {
+        return emit(&crate::daemon::call("sessions", json!({})).await?);
+    }
     emit(&engine()?.bridge.call("list_sessions", json!({})).await?)
 }
 pub async fn screen(session: String) -> Result<()> {
+    if crate::daemon::available() {
+        return emit(&crate::daemon::call("screen", json!({"session":session})).await?);
+    }
     emit(
         &engine()?
             .bridge
@@ -67,6 +73,22 @@ pub fn policy_check(path: &str) -> Result<()> {
     )
 }
 pub async fn run(path: &str) -> Result<()> {
+    if crate::daemon::available() {
+        // Never fall back to a new Engine after a daemon failure; a command may have been sent.
+        let mut value = crate::daemon::call("run", input(path)?).await?;
+        value["client"] = json!("persistent_daemon");
+        value["output_available_after_exit"] = json!(true);
+        emit(&value)?;
+        ensure!(
+            matches!(
+                value["state"].as_str(),
+                Some("running" | "starting" | "completed")
+            ),
+            "daemon command failed; inspect JSON before another operation"
+        );
+        return Ok(());
+    }
+
     let operation = async {
         let params: RunParams = serde_json::from_value(input(path)?)?;
         let max = params.max_bytes.unwrap_or(16_384);
