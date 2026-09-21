@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.0-preview.1] - 2026-09-21
+
+- Persistent bounded Bridge connection pool, atomic prepare-and-begin, batched buffered native reads and notification-driven waits.
+- Per-session capture/interlocks, attach/exec/batch, cooperative ownership and incremental streams with explicit gaps.
+- Incremental long-line parser, native overflow draining and delivery evidence; no unknown replay or implicit interrupt.
+- Optional authenticated foreground daemon, CLI/Python/PowerShell state reuse and explicit shutdown/stale-endpoint cleanup.
+- Narrow catastrophic guard with quoted-search/ordinary CRUD regression tests; client permissions and custom deny rules preserved.
+- Stream-specific timeout budget; terminal tool preset; doctor --latency; comparative benchmark with explicit synthetic scope.
+- Native transport fragmentation/lost-send, three-tab, long-output, stream and daemon regression tests.
+
 ## 0.2.0-preview.2 — 2026-09-21
 
 - Add agent-first run_command with internal fresh context, one submission, bounded wait/output, explicit capture mode and stable operation identity.

@@ -3,6 +3,7 @@ use crate::{config, execution::Engine, fault, model, terminal};
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{fs, io::Write, path::PathBuf, sync::Arc, time::Duration};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -214,13 +215,14 @@ pub async fn serve() -> Result<()> {
     let slots = Arc::new(Semaphore::new(32));
     let (stop_tx, mut stop_rx) = watch::channel(false);
     let lifecycle = Arc::new(RwLock::new(()));
+    let shutting_down = Arc::new(AtomicBool::new(false));
     loop {
         tokio::select! {
             _=stop_rx.changed()=>{break;},
             accepted=listener.accept()=>{
                 let (stream,_)=accepted?;
                 let Ok(permit)=slots.clone().try_acquire_owned() else {drop(stream);continue;};
-                let engine=engine.clone();let token=token.clone();let stop_tx=stop_tx.clone();let lifecycle=lifecycle.clone();
+                let engine=engine.clone();let token=token.clone();let stop_tx=stop_tx.clone();let lifecycle=lifecycle.clone();let shutting_down=shutting_down.clone();
                 tokio::spawn(async move {
                     let _permit=permit;
                     let mut reader=BufReader::new(stream);
@@ -235,15 +237,25 @@ pub async fn serve() -> Result<()> {
                     let result=if stopping {
                         let _lock=lifecycle.write().await;
                         let result=engine.quiescent().await.map(|()|json!({"stopping":true,"sent":false}));
-                        if result.is_ok(){let _=stop_tx.send(true);}result
+                        if result.is_ok(){shutting_down.store(true,Ordering::SeqCst);}result
                     } else {
                         let _lock=lifecycle.read().await;
-                        if *stop_tx.borrow(){Err(anyhow::anyhow!("daemon shutting down; nothing sent"))}
+                        if shutting_down.load(Ordering::SeqCst){Err(anyhow::anyhow!("daemon shutting down; nothing sent"))}
                         else {route(&engine,method,req["params"].clone()).await}
                     };
                     let shutdown_ok=stopping&&result.is_ok();
                     let value=match result {Ok(v)=>json!({"id":id,"ok":true,"result":v}),Err(e)=>json!({"id":id,"ok":false,"error":fault::details(&e)})};
-                    if let Ok(mut data)=serde_json::to_vec(&value){data.push(b'\n');if data.len()<=LIMIT{let _=timeout(Duration::from_secs(5),reader.get_mut().write_all(&data)).await;}}
+                    if let Ok(mut data)=serde_json::to_vec(&value){
+                        data.push(b'\n');
+                        if data.len()>LIMIT {
+                            data=serde_json::to_vec(&json!({"id":value["id"],"ok":false,"error":{
+                                "error_code":"response_too_large","command_id":value["result"]["command_id"],
+                                "state":value["result"]["state"],"sent":value["result"]["sent"],
+                                "action":"Read the existing command_id with a smaller max_bytes; never replay the command."}})).unwrap_or_default();
+                            data.push(b'\n');
+                        }
+                        let _=timeout(Duration::from_secs(5),reader.get_mut().write_all(&data)).await;
+                    }
                     if shutdown_ok{let _=stop_tx.send(true);}
                 });
             }

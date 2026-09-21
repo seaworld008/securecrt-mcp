@@ -77,7 +77,7 @@ enum Command {
     CodexConfig {
         #[arg(long, default_value="auto", value_parser=["auto", "prompt", "writes", "approve"])]
         approval_mode: String,
-        #[arg(long, default_value="basic", value_parser=["basic", "full"])]
+        #[arg(long, default_value="terminal", value_parser=["terminal", "basic", "full"])]
         toolset: String,
     },
     /// List existing sessions as JSON, without sending remote input.
@@ -117,7 +117,8 @@ async fn main() -> Result<()> {
                 config.audit.enabled,
                 config.audit.include_command_text,
                 config.audit_path()?,
-            );
+            )
+            .with_sync(config.audit.durability == "each_event");
             let policy = PolicyEngine::new(&config.policy)?;
             let engine = Engine::new(bridge, audit, policy, config);
             let service = SecureCrtServer::new(engine.clone()).serve(stdio()).await?;
@@ -316,6 +317,34 @@ fn print_codex_config(approval_mode: &str, toolset: &str) -> Result<()> {
     println!(
         "[mcp_servers.securecrt]\ncommand = {quoted}\nargs = [\"serve\"]\nstartup_timeout_sec = 30\ntool_timeout_sec = {tool_timeout}\ndefault_tools_approval_mode = \"{approval_mode}\""
     );
+    if toolset == "terminal" {
+        let names = [
+            "bridge_status",
+            "list_sessions",
+            "read_screen",
+            "run_command",
+            "get_command_status",
+            "get_command_output",
+            "interrupt",
+            "acknowledge_idle",
+            "attach",
+            "exec",
+            "exec_batch",
+            "get_batch_status",
+            "heartbeat",
+            "detach",
+            "shell_open",
+            "shell_read",
+            "shell_write",
+            "shell_close",
+            "latency",
+        ];
+        let tools = names
+            .iter()
+            .map(|n| toml::Value::String(format!("securecrt_{n}")))
+            .collect();
+        println!("enabled_tools = {}", toml::Value::Array(tools));
+    }
     if toolset == "basic" {
         println!(
             "enabled_tools = [\"securecrt_bridge_status\", \"securecrt_list_sessions\", \"securecrt_read_screen\", \"securecrt_run_command\", \"securecrt_get_command_status\", \"securecrt_get_command_output\", \"securecrt_interrupt\", \"securecrt_acknowledge_idle\"]"
@@ -327,6 +356,10 @@ fn print_codex_config(approval_mode: &str, toolset: &str) -> Result<()> {
         "read_screen",
         "get_command_status",
         "get_command_output",
+        "get_batch_status",
+        "heartbeat",
+        "shell_read",
+        "latency",
     ] {
         println!("\n[mcp_servers.securecrt.tools.securecrt_{name}]\napproval_mode = \"approve\"");
     }

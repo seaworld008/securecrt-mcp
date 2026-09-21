@@ -17,16 +17,16 @@ impl Engine {
             ["shared", "exclusive", "observe"].contains(&p.mode.as_str()),
             "invalid ownership mode"
         );
-        let value = self.bridge.call("attach", serde_json::to_value(p)?).await?;
-        let id = value["attachment_id"]
-            .as_str()
-            .context("missing attachment_id")?
-            .to_owned();
         let mut registry = self.terminal.lock().await;
         ensure!(
             registry.attachments.len() < 128,
             "attachment cache full; detach unused attachments"
         );
+        let value = self.bridge.call("attach", serde_json::to_value(p)?).await?;
+        let id = value["attachment_id"]
+            .as_str()
+            .context("missing attachment_id")?
+            .to_owned();
         registry.attachments.insert(id, value.clone());
         Ok(value)
     }
@@ -34,9 +34,10 @@ impl Engine {
         let result = self
             .bridge
             .call("detach", json!({"attachment_id":id}))
-            .await?;
+            .await;
+        // Explicitly forget an unusable local handle even if the native lease expired.
         self.terminal.lock().await.attachments.remove(id);
-        Ok(result)
+        result
     }
     pub async fn exec(&self, p: ExecParams) -> Result<Value> {
         let a = self
@@ -51,9 +52,11 @@ impl Engine {
             a["mode"] != "observe",
             "observe attachment does not permit commands"
         );
-        let timeout = p
-            .timeout_ms
-            .unwrap_or(self.config.bridge.max_command_timeout_ms.min(30000));
+        let timeout = p.timeout_ms.unwrap_or(if p.mode == CaptureMode::Stream {
+            self.config.bridge.max_stream_timeout_ms.min(600000)
+        } else {
+            self.config.bridge.max_command_timeout_ms.min(30000)
+        });
         let wait = p
             .wait_ms
             .unwrap_or((timeout + 2 * self.config.bridge.request_timeout_ms).min(50000));
@@ -168,7 +171,7 @@ impl Engine {
                         operation_id: Some(op),
                         timeout_ms: p.timeout_ms,
                         wait_ms: Some(60000),
-                        max_bytes: Some(4096),
+                        max_bytes: Some(1024),
                         wait_for: None,
                     })
                     .await;
@@ -178,7 +181,7 @@ impl Engine {
                         break;
                     };
                     result = engine
-                        .wait_result(cid, 60000, 4096)
+                        .wait_result(cid, 60000, 1024)
                         .await
                         .unwrap_or_else(|e| fault::details(&e));
                 }

@@ -1,3 +1,5 @@
+> **0.3.0 update:** Continuous diagnostics should use the persistent terminal workflow: [attach / exec / batch / daemon](../persistent-terminal.md). Client permissions remain operator-owned; client mode now includes the narrow catastrophic guard. The earlier one-call API remains compatible. New installs generate the terminal tool preset; existing configuration is never silently replaced.
+
 # Rust CLI、Python 和 PowerShell 调用
 
 推荐 Agent 直接接入持久 MCP 并使用 run_command。下面的客户端适合手工调试和不便直接调用 MCP 的工具。它们共用 Rust 引擎，不维护第二套状态机，不绕过本地协议保护，也不新建 SSH 连接。

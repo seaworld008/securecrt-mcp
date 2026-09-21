@@ -22,6 +22,7 @@ pub struct BridgeConfig {
     pub connect_timeout_ms: u64,
     pub request_timeout_ms: u64,
     pub max_command_timeout_ms: u64,
+    pub max_stream_timeout_ms: u64,
     pub max_output_bytes: usize,
     pub max_jobs: usize,
     pub job_retention_sec: u64,
@@ -35,6 +36,7 @@ impl Default for BridgeConfig {
             connect_timeout_ms: 1_500,
             request_timeout_ms: 5_000,
             max_command_timeout_ms: 30_000,
+            max_stream_timeout_ms: 3_600_000,
             max_output_bytes: 1_048_576,
             max_jobs: 32,
             job_retention_sec: 3600,
@@ -70,6 +72,7 @@ pub struct AuditConfig {
     pub enabled: bool,
     pub file: String,
     pub include_command_text: bool,
+    pub durability: String,
 }
 
 impl Default for AuditConfig {
@@ -78,6 +81,7 @@ impl Default for AuditConfig {
             enabled: true,
             file: "audit.jsonl".into(),
             include_command_text: false,
+            durability: "os_buffered".into(),
         }
     }
 }
@@ -145,6 +149,10 @@ impl Config {
             "invalid max_command_timeout_ms"
         );
         ensure!(
+            (1000..=3_600_000).contains(&b.max_stream_timeout_ms),
+            "invalid max_stream_timeout_ms"
+        );
+        ensure!(
             (4096..=16_777_216).contains(&b.max_output_bytes),
             "invalid max_output_bytes"
         );
@@ -158,6 +166,10 @@ impl Config {
             "output cache exceeds 128 MiB budget"
         );
         ensure!(!self.audit.file.is_empty(), "audit.file must not be empty");
+        ensure!(
+            ["os_buffered", "each_event"].contains(&self.audit.durability.as_str()),
+            "invalid audit.durability"
+        );
         crate::policy::PolicyEngine::new(&self.policy)?;
         Ok(())
     }

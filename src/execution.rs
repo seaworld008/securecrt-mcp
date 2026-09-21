@@ -54,6 +54,7 @@ struct Job {
     created: Instant,
     first_output_us: Option<u64>,
     poll_calls: u64,
+    audit_dispatch_us: u64,
     exit_code: Option<i32>,
     reason: String,
     truncated: bool,
@@ -77,7 +78,7 @@ impl Job {
             "observed_output_bytes": self.output_bytes, "audit_warning": self.audit_warning,
             "remote_termination_confirmed": false, "stream": self.stream, "output_start": self.output_start,
             "timing": {"elapsed_us": self.finished.unwrap_or_else(Instant::now).duration_since(self.created).as_micros() as u64,
-                "first_output_us": self.first_output_us, "poll_calls": self.poll_calls}})
+                "first_output_us": self.first_output_us, "poll_calls": self.poll_calls, "audit_dispatch_us": self.audit_dispatch_us}})
     }
     fn append(&mut self, text: &str, limit: usize) {
         if !text.is_empty() && self.first_output_us.is_none() {
@@ -162,7 +163,12 @@ impl Engine {
         let fast = self.bridge.supports_fast().await?;
         let timeout = p.timeout_ms.unwrap_or(5000);
         ensure!(
-            (1000..=self.config.bridge.max_command_timeout_ms).contains(&timeout),
+            (1000..=if p.mode == CaptureMode::Stream {
+                self.config.bridge.max_stream_timeout_ms
+            } else {
+                self.config.bridge.max_command_timeout_ms
+            })
+                .contains(&timeout),
             "invalid timeout_ms"
         );
         let settle = p.settle_ms.unwrap_or(750);
@@ -253,6 +259,7 @@ impl Engine {
                     created: Instant::now(),
                     first_output_us: None,
                     poll_calls: 0,
+                    audit_dispatch_us: 0,
                     exit_code: None,
                     reason: "dispatch pending".into(),
                     truncated: false,
@@ -265,7 +272,8 @@ impl Engine {
         }
         let decision = self.policy.classify_command(&p.command);
         // Mandatory before-send audit: an I/O error must not be swallowed.
-        if let Err(error) = self
+        let audit_started = Instant::now();
+        let audit_result = self
             .audit
             .record(
                 "dispatch_attempt",
@@ -274,8 +282,11 @@ impl Engine {
                 &decision.reason,
                 Some(&p.command),
             )
-            .await
-        {
+            .await;
+        if let Some(job) = self.inner.lock().await.jobs.get_mut(&id) {
+            job.audit_dispatch_us = audit_started.elapsed().as_micros() as u64;
+        }
+        if let Err(error) = audit_result {
             self.finish(
                 &id,
                 State::Rejected,

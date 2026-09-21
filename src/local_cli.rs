@@ -19,7 +19,8 @@ pub(crate) fn engine() -> Result<Engine> {
         config.audit.enabled,
         config.audit.include_command_text,
         config.audit_path()?,
-    );
+    )
+    .with_sync(config.audit.durability == "each_event");
     let policy = PolicyEngine::new(&config.policy)?;
     Ok(Engine::new(bridge, audit, policy, config))
 }

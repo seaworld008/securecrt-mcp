@@ -51,8 +51,29 @@ fn segments(input: &str) -> Vec<Vec<String>> {
     }
     result
 }
+fn normalized(path: &str) -> String {
+    if !path.starts_with('/') {
+        return path.into();
+    }
+    let mut parts = Vec::new();
+    for p in path.split('/') {
+        match p {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            _ => parts.push(p),
+        }
+    }
+    format!("/{}", parts.join("/"))
+}
+fn authentication_target(path: &str) -> bool {
+    let p = normalized(path);
+    p == "/etc/ssh" || p.starts_with("/etc/ssh/") || p.starts_with("/etc/sudoers")
+}
 fn protected(path: &str) -> bool {
-    let path = path.trim_end_matches('/');
+    let normalized = normalized(path);
+    let path = normalized.trim_end_matches('/');
     path.is_empty()
         || [
             "/*", "/.*", "/bin", "/sbin", "/usr", "/lib", "/lib64", "/boot", "/etc", "/dev",
@@ -133,10 +154,17 @@ fn check(input: &str, depth: usize) -> bool {
         if cmd == "nft" && a.windows(2).any(|p| p == ["flush", "ruleset"]) {
             return true;
         }
-        if ["tee", "truncate", "cp", "mv", "install"].contains(&cmd)
-            && a.iter()
-                .any(|s| s.starts_with("/etc/ssh/") || s.starts_with("/etc/sudoers"))
-        {
+        if ["cp", "install"].contains(&cmd) {
+            let destination = a
+                .windows(2)
+                .find(|p| p[0] == "-t" || p[0] == "--target-directory")
+                .map(|p| p[1].as_str())
+                .or_else(|| a.last().map(String::as_str));
+            if destination.is_some_and(authentication_target) {
+                return true;
+            }
+        }
+        if ["tee", "truncate", "mv"].contains(&cmd) && a.iter().any(|s| authentication_target(s)) {
             return true;
         }
     }

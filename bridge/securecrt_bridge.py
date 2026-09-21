@@ -236,6 +236,8 @@ class NativeAdapter:
             fail('capture_mismatch: capture expired, disconnected or ended; outcome unknown')
         if c['owner'] != self.owner: fail('ownership_conflict')
         c['heartbeat'] = self.now()
+        attachment = self.attachments.get(c.get('attachment_id'))
+        if attachment: attachment['expires'] = self.now() + 600000
         s = c['entry']['tab'].Screen
         patterns = ['\n']
         if wait_for is not None:
@@ -262,7 +264,7 @@ class NativeAdapter:
             # The native API itself allocates its string before Python can bound it.
             # Bound retained native overflow; disclose actual loss, never silently hide it.
             if len(data) > 16 * 1024 * 1024:
-                data = data[:16 * 1024 * 1024]
+                data = data[:16 * 1024 * 1024].decode('utf-8', errors='ignore').encode('utf-8')
                 overflow = True
             pending += data
             count += 1
@@ -300,7 +302,8 @@ class NativeAdapter:
         attachment = self.attachments.get(c.get('attachment_id'))
         if attachment and confirmed_complete and not errors:
             # Record only connector-owned completion. This is not keyboard interception.
-            attachment['context'] = self._input(c['entry'])
+            attachment['awaiting_prompt'] = True
+            attachment['completion_marker'] = c.get('completion_marker')
             attachment['expires'] = self.now() + 600000
         return dict(released=True, unresolved=sid in self.unresolved_sessions, restore_errors=errors)
 
@@ -358,6 +361,11 @@ class NativeAdapter:
             fail('ownership_conflict')
         context = self._input(e)
         if expected_prompt is not None and context['current_line'] != expected_prompt.rstrip(): fail('prompt_mismatch')
+        if expected_prompt is None and mode != 'observe':
+            line = context['current_line']
+            if (not line.endswith(('$', '#', '%'))
+                    or any(x in line.lower() for x in ('password', 'passphrase', '--more--', '密码'))):
+                fail('input_context_required: inspect terminal and provide an explicit expected_prompt')
         aid = self.instance + '/attachment/' + str(uuid.uuid4())
         self.attachments[aid] = dict(session=session, entry=e, mode=mode, context=context,
                                     owner=self.owner, expires=self.now()+600000)
@@ -377,9 +385,28 @@ class NativeAdapter:
         return a
 
     def _attachment_context(self, a):
-        if self._input(a['entry']) != a['context']:
-            self.metrics['context_rejections'] += 1
-            fail('context_changed: input/cursor changed; inspect and attach again; nothing sent')
+        if a.get('awaiting_prompt'):
+            # After an owned completion, the marker may be visible before the shell prompt.
+            # Rebase row only when the ORIGINAL prompt and input column return. Never adopt
+            # arbitrary post-command text, a password prompt, or a half-entered command.
+            until = time.monotonic() + 0.2
+            while True:
+                current = self._input(a['entry'])
+                if all(current[k] == a['context'][k] for k in ('current_line', 'cursor_column', 'columns')):
+                    a['context'] = current
+                    a['awaiting_prompt'] = False
+                    return
+                line = current['current_line']
+                marker = a.get('completion_marker')
+                owned_marker = marker and line.startswith(marker + ' ') and line[len(marker)+1:].isdigit()
+                sleeper = getattr(self.app, 'Sleep', None)
+                if (line and not owned_marker) or not callable(sleeper) or time.monotonic() >= until:
+                    break
+                sleeper(5)
+        elif self._input(a['entry']) == a['context']:
+            return
+        self.metrics['context_rejections'] += 1
+        fail('context_changed: input/cursor changed; inspect and attach again; nothing sent')
 
     def heartbeat(self, attachment_id):
         a = self._attachment(attachment_id)

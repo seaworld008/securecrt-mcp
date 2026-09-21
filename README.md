@@ -156,3 +156,12 @@ python scripts/validate_repository.py
 Windows 二进制加.exe；综合测试脚本需Python3.12，适配器单元测试还覆盖Python3.8。贡献指南见 [CONTRIBUTING](CONTRIBUTING.md)。
 
 [架构](docs/architecture.md) · [协议](docs/bridge-protocol.md) · [性能](docs/performance.md) · [Agent](docs/agent-usage.md) · [验收](docs/testing.md) · [排障](docs/troubleshooting.md) · [路线图](ROADMAP.md)
+
+
+## Audit durability / 审计持久化时机
+
+`audit.durability = "os_buffered"` is the default for configurations omitting this new field. The append handle is reused and each write is flushed to the operating system before dispatch; write/open failures still reject before sending. It does **not** fsync every event and may lose recent audit records on OS crash/power loss. Choose `"each_event"` to restore synchronous event durability, accepting local disk latency. This is a durability/performance choice, not a change to client permissions. Configure it explicitly when upgrading under an existing audit-compliance requirement. Log rotation that replaces the file requires restarting the MCP/daemon to reopen the handle; copy-truncate retains the handle but has the usual rotation races.
+
+默认省略新字段时使用操作系统缓冲，减少每次审计打开文件和同步刷盘的开销；这不保证断电时最近审计记录仍在磁盘。要求逐事件落盘时显式设置 `durability = "each_event"`。命令结果的 `timing.audit_dispatch_us` 用于区分审计开销和 Bridge/远端耗时。
+
+After an owned completion marker, the attachment waits briefly for the original prompt/input column rather than adopting a marker line as a new prompt. A changed prompt (including `cd` that changes prompt text), partially typed command, or uncertain input context requires explicit inspection/re-attachment; it is not silently trusted.

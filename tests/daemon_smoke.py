@@ -40,6 +40,12 @@ def run(binary):
         routed=json.loads(subprocess.check_output([str(h.binary),'run','--input',str(request)],env=h.env,text=True,encoding='utf-8'))
         assert routed['client']=='persistent_daemon' and routed['output_available_after_exit']
         assert cli('output',dict(command_id=routed['command_id']))['text']=='hello\n'
+        if sys.platform=='win32':
+            script=Path(__file__).resolve().parents[1]/'clients'/'SecureCRT.Session.ps1'
+            for shell in ('pwsh','powershell.exe'):
+                command=". '"+str(script).replace("'","''")+"'; $r=Invoke-SecureCRTSession -Binary '"+str(h.binary).replace("'","''")+"' -Action output -Request @{command_id='"+result['command_id']+"'}; $r | ConvertTo-Json -Compress"
+                value=json.loads(subprocess.check_output([shell,'-NoProfile','-Command',command],env=h.env,text=True,encoding='utf-8'))
+                assert value['text']=='hello\n',value
         cli('detach',dict(attachment_id=attach['attachment_id']))
         subprocess.check_call([str(h.binary),'daemon','--stop'],env=h.env,stdout=subprocess.DEVNULL)
         proc.wait(timeout=5);assert proc.returncode==0,proc.stderr.read()
