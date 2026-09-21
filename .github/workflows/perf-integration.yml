@@ -1,0 +1,31 @@
+name: Persistent terminal integration and benchmark
+on:
+  push:
+    branches: [feat/persistent-terminal-performance]
+permissions:
+  contents: read
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@1.88.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: cargo build --locked
+      - run: python tests/performance_smoke.py target/debug/securecrt-mcp --output /tmp/persistent.json
+      - name: Native review regression pre-fix evidence
+        run: |
+          python -m unittest discover -s tests -p test_native_review.py -v
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: connector-performance
+          path: /tmp/persistent.json
