@@ -1,0 +1,24 @@
+name: Performance regression baseline
+on:
+  push:
+    branches: [feat/persistent-terminal-performance]
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s tests -p test_bridge.py -v
+      - name: Prove new behavior missing before implementation
+        run: |
+          if python -m unittest discover -s tests -p test_perf_bridge.py -v > /tmp/perf-red.log 2>&1; then
+            cat /tmp/perf-red.log
+            exit 1
+          fi
+          cat /tmp/perf-red.log
+          grep -q 'FAILED (' /tmp/perf-red.log
