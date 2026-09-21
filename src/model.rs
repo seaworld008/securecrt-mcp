@@ -30,11 +30,15 @@ pub enum CaptureMode {
     /// Opt-in POSIX shell envelope using eval in the current shell; preserves cd/export.
     /// Not for PowerShell, appliances, REPLs, passwords, editors or interactive programs.
     Posix,
+    /// Continuous capture. Explicit close/interrupt; no automatic completion inference.
+    Stream,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ExecuteParams {
+    #[serde(default)]
+    pub attachment_id: Option<String>,
     pub session: String,
     pub screen_token: String,
     pub expected_prompt: String,

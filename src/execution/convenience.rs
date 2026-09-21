@@ -39,8 +39,8 @@ impl Engine {
             }))?)
         );
         // Serialize only preflight/dispatch. Never wait in a queue and type later unexpectedly.
-        let gate = self
-            .run_gate
+        let gate_ref = self.gate_for(&p.session).await;
+        let gate = gate_ref
             .try_lock()
             .map_err(|_| anyhow::anyhow!("busy: another command is preparing; nothing sent"))?;
         let existing = {
@@ -53,7 +53,7 @@ impl Engine {
                 Some(id.clone())
             } else {
                 ensure!(
-                    registry.busy.is_none(),
+                    !registry.busy.contains_key(&p.session),
                     "busy/unresolved: inspect current operation; nothing sent"
                 );
                 None
@@ -62,6 +62,33 @@ impl Engine {
         if let Some(id) = existing {
             drop(gate);
             return self.wait_result(&id, wait, max).await;
+        }
+        if p.mode == CaptureMode::Posix && self.bridge.supports_fast().await? {
+            let job = self
+                .submit_internal(
+                    ExecuteParams {
+                        session: p.session,
+                        attachment_id: None,
+                        screen_token: String::new(),
+                        expected_prompt: p.expected_prompt.unwrap_or_default(),
+                        operation_id: op,
+                        command: p.command,
+                        mode: p.mode,
+                        wait_for: p.wait_for,
+                        timeout_ms: Some(timeout),
+                        settle_ms: p.settle_ms,
+                    },
+                    Some(fingerprint),
+                )
+                .await?;
+            drop(gate);
+            return self
+                .wait_result(
+                    job["command_id"].as_str().context("missing command_id")?,
+                    wait,
+                    max,
+                )
+                .await;
         }
         // Reading is not a command or a remote probe. Explicit mode is still required.
         let screen = self
@@ -93,6 +120,7 @@ impl Engine {
         let job = self
             .submit_internal(
                 ExecuteParams {
+                    attachment_id: None,
                     session: p.session,
                     screen_token: token,
                     expected_prompt: expected,
@@ -122,6 +150,9 @@ impl Engine {
         );
         let until = Instant::now() + Duration::from_millis(wait_ms);
         loop {
+            let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
             let registry = self.inner.lock().await;
             let job = registry.jobs.get(id).ok_or_else(|| fault::BridgeFault {
                 message: "unknown/expired command_id; never infer it was not executed".into(),
@@ -131,9 +162,9 @@ impl Engine {
                 let mut result = job.snapshot();
                 let end = prefix_len(&job.output, max_bytes);
                 result["text"] = json!(&job.output[..end]);
-                result["cursor"] = json!(0);
+                result["cursor"] = json!(job.output_start);
                 result["next_cursor"] = if end < job.output.len() || job.state.active() {
-                    json!(end)
+                    json!(end + job.output_start)
                 } else {
                     Value::Null
                 };
@@ -141,7 +172,7 @@ impl Engine {
                 return Ok(result);
             }
             drop(registry);
-            tokio::time::sleep(Duration::from_millis(25)).await;
+            let _ = tokio::time::timeout_at(tokio::time::Instant::from_std(until), changed).await;
         }
     }
 }
@@ -172,17 +203,32 @@ impl Engine {
     /// Graceful EOF only: drain already-sent work for at most two seconds. No new command,
     /// no interrupt and no implicit acknowledgement. Hard termination still needs recovery.
     pub async fn drain_on_disconnect(&self) {
-        let active = {
-            let registry = self.inner.lock().await;
-            registry
-                .busy
-                .as_ref()
-                .filter(|id| registry.jobs.get(*id).is_some_and(|j| j.state.active()))
-                .cloned()
-        };
-        if let Some(id) = active {
-            let _ = self.wait_result(&id, 2000, 4).await;
+        let until = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            let active = self
+                .inner
+                .lock()
+                .await
+                .jobs
+                .values()
+                .any(|j| j.state.active());
+            if !active || tokio::time::Instant::now() >= until {
+                break;
+            }
+            let _ = tokio::time::timeout_at(until, changed).await;
         }
+    }
+    async fn gate_for(&self, session: &str) -> Arc<Mutex<()>> {
+        let mut gates = self.run_gates.lock().await;
+        // Retain a gate only while somebody is holding or awaiting it.
+        gates.retain(|_, v| Arc::strong_count(v) > 1);
+        gates
+            .entry(session.into())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
     }
 }
 

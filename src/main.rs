@@ -1,6 +1,7 @@
 mod audit;
 mod bridge;
 mod config;
+mod critical;
 mod execution;
 mod fault;
 mod local_cli;
@@ -9,6 +10,7 @@ mod policy;
 #[cfg(test)]
 mod regression;
 mod server;
+mod terminal;
 
 use anyhow::{Context, Result, ensure};
 use audit::AuditLog;
