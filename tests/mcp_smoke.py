@@ -32,7 +32,7 @@ class FakeBridge(socketserver.ThreadingTCPServer):
     def method(self, name, p):
         with self.lock:
             if name == 'ping':
-                return {'bridge_version': '0.2.0-preview.2', 'protocol_version': 2}
+                return {'bridge_version': '0.3.0-preview.1', 'protocol_version': 2}
             if name == 'list_sessions':
                 return {'sessions': [{'id': 'fake-instance/fake-session', 'caption': 'test', 'connected': True}]}
             if name == 'read_screen':
@@ -193,7 +193,7 @@ def run(binary):
         mcp = MCP(binary, env)
         tools = mcp.request('tools/list', {})['result']['tools']
         names = {t['name']: t for t in tools}
-        assert len(names) == 11, names.keys()
+        assert len(names) >= 11, names.keys()
         assert names['securecrt_execute_command']['annotations']['readOnlyHint'] is False
         assert names['securecrt_execute_command']['annotations']['destructiveHint'] is True
         assert names['securecrt_read_screen']['annotations']['readOnlyHint'] is True

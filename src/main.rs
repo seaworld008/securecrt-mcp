@@ -1,6 +1,8 @@
 mod audit;
 mod bridge;
 mod config;
+mod critical;
+mod daemon;
 mod execution;
 mod fault;
 mod local_cli;
@@ -9,6 +11,7 @@ mod policy;
 #[cfg(test)]
 mod regression;
 mod server;
+mod terminal;
 
 use anyhow::{Context, Result, ensure};
 use audit::AuditLog;
@@ -40,6 +43,21 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     Serve,
+    /// Retain one Engine for separate CLI clients. Foreground only, never auto-spawned.
+    Daemon {
+        #[arg(long, conflicts_with = "cleanup_stale")]
+        stop: bool,
+        /// Explicitly remove a refused stale endpoint after inspecting SecureCRT; no state reset.
+        #[arg(long)]
+        cleanup_stale: bool,
+    },
+    /// Invoke the persistent daemon using a UTF-8 JSON file, without starting another Engine.
+    Session {
+        #[arg(value_parser=["sessions","screen","attach","exec","exec-batch","batch-status","detach","heartbeat","status","output","acknowledge-idle","interrupt","shell-open","shell-read","shell-write","shell-close","latency","ping"])]
+        method: String,
+        #[arg(long, default_value = "-")]
+        input: String,
+    },
     /// Initialize files; preserve existing policy/token unless --force is explicitly supplied.
     Init {
         #[arg(long)]
@@ -51,13 +69,15 @@ enum Command {
     Doctor {
         #[arg(long)]
         offline: bool,
+        #[arg(long, conflicts_with = "offline")]
+        latency: bool,
     },
     Paths,
     /// Print an additive Codex configuration; never modify the user's Codex files.
     CodexConfig {
         #[arg(long, default_value="auto", value_parser=["auto", "prompt", "writes", "approve"])]
         approval_mode: String,
-        #[arg(long, default_value="basic", value_parser=["basic", "full"])]
+        #[arg(long, default_value="terminal", value_parser=["terminal", "basic", "full"])]
         toolset: String,
     },
     /// List existing sessions as JSON, without sending remote input.
@@ -97,7 +117,8 @@ async fn main() -> Result<()> {
                 config.audit.enabled,
                 config.audit.include_command_text,
                 config.audit_path()?,
-            );
+            )
+            .with_sync(config.audit.durability == "each_event");
             let policy = PolicyEngine::new(&config.policy)?;
             let engine = Engine::new(bridge, audit, policy, config);
             let service = SecureCrtServer::new(engine.clone()).serve(stdio()).await?;
@@ -107,7 +128,28 @@ async fn main() -> Result<()> {
         }
         Command::Init { force } => initialize(force)?,
         Command::Upgrade => initialize(false)?,
-        Command::Doctor { offline } => doctor(offline).await?,
+        Command::Doctor { offline, latency } => {
+            if latency {
+                local_cli::emit(&local_cli::engine()?.latency(20).await?)?;
+            } else {
+                doctor(offline).await?;
+            }
+        }
+        Command::Daemon {
+            stop,
+            cleanup_stale,
+        } => {
+            if stop {
+                local_cli::emit(&daemon::call("shutdown", serde_json::json!({})).await?)?;
+            } else if cleanup_stale {
+                daemon::cleanup_stale().await?;
+            } else {
+                daemon::serve().await?;
+            }
+        }
+        Command::Session { method, input } => {
+            local_cli::emit(&daemon::call(&method, local_cli::input(&input)?).await?)?
+        }
         Command::Paths => {
             println!("app_dir={}", app_dir()?.display());
             println!("config={}", config_path()?.display());
@@ -275,6 +317,34 @@ fn print_codex_config(approval_mode: &str, toolset: &str) -> Result<()> {
     println!(
         "[mcp_servers.securecrt]\ncommand = {quoted}\nargs = [\"serve\"]\nstartup_timeout_sec = 30\ntool_timeout_sec = {tool_timeout}\ndefault_tools_approval_mode = \"{approval_mode}\""
     );
+    if toolset == "terminal" {
+        let names = [
+            "bridge_status",
+            "list_sessions",
+            "read_screen",
+            "run_command",
+            "get_command_status",
+            "get_command_output",
+            "interrupt",
+            "acknowledge_idle",
+            "attach",
+            "exec",
+            "exec_batch",
+            "get_batch_status",
+            "heartbeat",
+            "detach",
+            "shell_open",
+            "shell_read",
+            "shell_write",
+            "shell_close",
+            "latency",
+        ];
+        let tools = names
+            .iter()
+            .map(|n| toml::Value::String(format!("securecrt_{n}")))
+            .collect();
+        println!("enabled_tools = {}", toml::Value::Array(tools));
+    }
     if toolset == "basic" {
         println!(
             "enabled_tools = [\"securecrt_bridge_status\", \"securecrt_list_sessions\", \"securecrt_read_screen\", \"securecrt_run_command\", \"securecrt_get_command_status\", \"securecrt_get_command_output\", \"securecrt_interrupt\", \"securecrt_acknowledge_idle\"]"
@@ -286,6 +356,10 @@ fn print_codex_config(approval_mode: &str, toolset: &str) -> Result<()> {
         "read_screen",
         "get_command_status",
         "get_command_output",
+        "get_batch_status",
+        "heartbeat",
+        "shell_read",
+        "latency",
     ] {
         println!("\n[mcp_servers.securecrt.tools.securecrt_{name}]\napproval_mode = \"approve\"");
     }

@@ -77,6 +77,11 @@ impl PolicyEngine {
                 "custom_deny_rule[{index}]: operator-configured pattern matched"
             ));
         }
+        if crate::critical::is_critical(cmd) {
+            return denied(
+                "critical_guardrail: catastrophic command position/target; client approval does not override this narrow guard",
+            );
+        }
         if self.mode != "client" {
             for (index, pattern) in HARD_DENY.iter().enumerate() {
                 if Regex::new(pattern)

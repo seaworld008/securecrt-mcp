@@ -1,3 +1,5 @@
+> **0.3.0 update:** Continuous diagnostics should use the persistent terminal workflow: [attach / exec / batch / daemon](persistent-terminal.md). Client permissions remain operator-owned; client mode now includes the narrow catastrophic guard. The earlier one-call API remains compatible. New installs generate the terminal tool preset; existing configuration is never silently replaced.
+
 # Agent 优先：一次调用执行命令
 
 0.2.0-preview.2 的定位是已登录终端的连接层，不是第二套 AI 权限系统。MCP 客户端决定是否批准命令；本工具负责明确目标、一次发送、输出与状态。不要把模型对风险的判断误认为 MCP 已经验证了用户批准。

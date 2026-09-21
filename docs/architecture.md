@@ -1,25 +1,35 @@
-> **0.2.0-preview.2 update:** New installs use `client` policy (client-owned command authorization); upgrades preserve old settings. `run_command` is the preferred orchestration tool; low-level protocol-2 tools remain. See [Agent usage](agent-usage.md). Earlier preview.1 approval/default-policy examples below are historical, not a change to existing settings. Actual desktop approval behavior is not certified by CI.
+# Architecture: persistent terminal connector
 
-# Architecture
+## Ownership boundaries
 
-Rust owns MCP tools, command authorization, auditing, operation deduplication, lifecycle and bounded output. The Python standard-library adapter owns SecureCRT-native object references, input-context checks, bounded capture calls, cleanup/watchdog and local IPC. No native extensions or UI key simulation are introduced.
+MCP clients own approval. Rust owns local session/operation state, command boundaries, incremental parsing, output retention and auditing. The standard-library Python adapter owns only native SecureCRT calls and buffering/connection bookkeeping. All crt calls stay on its script thread. A future supported PTY backend can replace that boundary; a normal external Rust process cannot directly access the injected crt object.
 
-## Data path
+## Runtime paths
 
-MCP stdio → Rust Engine → loopback protocol 2 → SecureCRT script thread → retained native Tab → existing authenticated remote connection.
+Native MCP: client -> one long-lived `serve` process -> retained Engine -> four persistent bounded bridge lanes -> adapter -> existing authenticated Tab.
 
-A command is registered before dispatch. A failed pre-send audit rejects it. A transport failure after a dispatch attempt is unknown, never proof of nonexecution. An operation ID can return an existing job but cannot replay it; tombstones remain after output expiry within the process (bounded at 4096). Output cache limits bound memory; full caches reject new work instead of evicting running jobs.
+Repeated CLI: CLI or Python/PowerShell helper -> explicitly started authenticated localhost daemon -> one retained Engine -> same bridge protocol. No automatic daemon spawning, no fallback/replay after a failed call. These are separate Engine instances; do not mix their command/attachment IDs.
 
-Rust polls one bounded native capture at a time. Every native `ReadString` has a one-second timeout, allowing other requests between polls. One active capture per window avoids multiplying this delay across many tabs in the preview. Remote commands keep running independently of capture; timeout restores native screen settings without sending Ctrl+C.
+## State and scheduling
 
-## Identity and freshness
+Session handles bind retained native Tab objects, not tab positions. Attachments retain an owner, cooperative mode, configured metadata and sampled input context. Native `prepare_and_begin` combines validation and dispatch, without an external read/token round-trip. Old single-use screen-token APIs remain available.
 
-Session IDs bind retained native Tab references. Tab indexes are display metadata only and are never used to reselect a write target. The adapter periodically detects native reference errors, disconnected state or changed configured endpoint metadata. Leases expire after 120 seconds without renewal; active/unresolved references are retained for diagnosis. A read supplies a 30-second single-use screen token including visible content and cursor coordinates. Dispatch also checks an explicit expected input line.
+Registry busy/interlock keys are session-scoped. Different tabs can make progress independently. Native calls are still serialized; at most16 captures are admitted, not16 native threads. Quiet reads can add queueing and timeouts; three-tab acceptance is explicitly tested with the fake adapter, not claimed as zero-contention desktop performance.
 
-These mechanisms are conservative mistake guards, not host authentication. A rapid unobserved reconnect, nested SSH change or spoofed prompt can evade sampled detection. Do not equate configured endpoint metadata with the current shell's host. Human target verification remains required.
+High-level exec reuses attachments; batch keeps every command separate and visible in the initial client approval context. Local command state and output caches are bounded. The operation ledger persists within the Engine even when old output is evicted, preventing automatic replay. It is not durable exactly-once storage.
 
-## Output semantics
+## Data plane
 
-Snapshot is explicitly unknown. Prompt mode only attests that a literal text boundary was observed. POSIX mode runs a quoted eval envelope in the current shell and parses random markers across chunks; no subshell is silently inserted. Completion separators add newlines. TUI rendering, binary output, shell-wide redirection, exit/exec/set -e and background processes have no byte-exact/completion guarantee.
+One in-flight request per persistent lane; request IDs and token checks per frame. Poll traffic uses three lanes; control traffic uses a separate lane. A failed exchange is dropped and never resent. New requests can use a new socket. Partial/oversized/mismatched responses are not interpreted as unsent evidence.
 
-Native timeout slices can be incomplete on some SecureCRT/Python combinations; the result preserves `capture_may_be_incomplete`. Output is not an authorized instruction source. Do not silently fetch credentials, escalate privilege, retry or kill programs based on captured text.
+Native poll_bulk batches buffered delimiters up to a read/time budget and returns at most64KiB of UTF-8. Pending native bytes drain without another quiet wait. Large native strings have a bounded retained remainder, with explicit overflow beyond that bound. The incremental Rust parser no longer holds a whole arbitrary line while waiting for a completion marker.
+
+Normal commands retain a bounded prefix; streams retain a bounded rolling tail with absolute cursors and explicit gaps. Notifications wake local waiting tool calls instead of timer-polling the registry. This is incremental pull/long-poll at the MCP boundary, not unsolicited raw PTY events.
+
+## Failure and cleanup
+
+sent is true/false/null according to delivery evidence. Unknown, timeout, lost reply and cancellation never trigger replay. Explicit stream close stops local capture but does not interrupt SSH. Explicit interrupt never proves all remote processes terminated. Acknowledgement requires an inspected idle context and cannot rewrite historical outcomes as success.
+
+The daemon refuses normal shutdown with active/unresolved local jobs or batches. Native Script > Cancel and process termination may leave remote work running. Native watchdog releases capture settings and preserves unresolved state. No background installation or remote tmux changes happen.
+
+See [performance](performance.md), [protocol](bridge-protocol.md), [security](security-model.md), and [native acceptance](testing.md).

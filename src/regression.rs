@@ -163,3 +163,16 @@ fn timed_out_partial_output_is_not_discarded() {
     assert_eq!(parser.drain_partial(), "partial-without-newline");
     assert_eq!(parser.drain_partial(), "");
 }
+
+// Incorporated into Rust regression.rs during this development pass.
+#[test]
+fn critical_scope_allows_auth_config_backup_but_not_replacement() {
+    use crate::critical::is_critical;
+    assert!(!is_critical(
+        "cp /etc/ssh/sshd_config /tmp/sshd_config.backup"
+    ));
+    assert!(is_critical("cp /tmp/new-config /etc/ssh/sshd_config"));
+    assert!(is_critical("rm -rf /tmp/../"));
+    assert!(is_critical("rm -rf /etc/ssh/../sudoers"));
+    assert!(!is_critical("rm -rf /root/test-dir"));
+}

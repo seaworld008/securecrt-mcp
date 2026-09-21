@@ -6,8 +6,9 @@ use crate::{
     model::{CaptureMode, ContextParams, ExecuteParams, OutputParams},
     policy::{Decision, PolicyEngine},
 };
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 mod convenience;
+mod persistent;
 use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -19,7 +20,7 @@ use std::{
     },
     time::{Duration, Instant},
 };
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -48,6 +49,12 @@ struct Job {
     state: State,
     output: String,
     output_bytes: usize,
+    output_start: usize,
+    stream: bool,
+    created: Instant,
+    first_output_us: Option<u64>,
+    poll_calls: u64,
+    audit_dispatch_us: u64,
     exit_code: Option<i32>,
     reason: String,
     truncated: bool,
@@ -69,10 +76,28 @@ impl Job {
             "exit_code": self.exit_code, "reason": self.reason, "truncated": self.truncated,
             "capture_may_be_incomplete": self.incomplete, "retained_bytes": self.output.len(),
             "observed_output_bytes": self.output_bytes, "audit_warning": self.audit_warning,
-            "remote_termination_confirmed": false})
+            "remote_termination_confirmed": false, "stream": self.stream, "output_start": self.output_start,
+            "timing": {"elapsed_us": self.finished.unwrap_or_else(Instant::now).duration_since(self.created).as_micros() as u64,
+                "first_output_us": self.first_output_us, "poll_calls": self.poll_calls, "audit_dispatch_us": self.audit_dispatch_us}})
     }
     fn append(&mut self, text: &str, limit: usize) {
+        if !text.is_empty() && self.first_output_us.is_none() {
+            self.first_output_us = Some(self.created.elapsed().as_micros() as u64);
+        }
         self.output_bytes = self.output_bytes.saturating_add(text.len());
+        if self.stream {
+            self.output.push_str(text);
+            if self.output.len() > limit {
+                let mut remove = self.output.len() - limit;
+                while !self.output.is_char_boundary(remove) {
+                    remove += 1;
+                }
+                self.output.drain(..remove);
+                self.output_start += remove;
+                self.truncated = true;
+            }
+            return;
+        }
         let count = prefix_len(text, limit.saturating_sub(self.output.len()));
         self.output.push_str(&text[..count]);
         self.truncated |= count != text.len();
@@ -84,7 +109,7 @@ struct Registry {
     jobs: HashMap<String, Job>,
     // Tombstones prevent replay even after output expires; bounded, refuse new submissions at cap.
     operations: HashMap<String, (String, String)>,
-    busy: Option<String>,
+    busy: HashMap<String, String>,
 }
 
 #[derive(Clone)]
@@ -94,7 +119,9 @@ pub struct Engine {
     pub policy: PolicyEngine,
     pub config: Config,
     inner: Arc<Mutex<Registry>>,
-    run_gate: Arc<Mutex<()>>,
+    run_gates: Arc<Mutex<HashMap<String, Arc<Mutex<()>>>>>,
+    changed: Arc<Notify>,
+    terminal: Arc<Mutex<persistent::TerminalState>>,
 }
 
 impl Engine {
@@ -110,7 +137,9 @@ impl Engine {
             policy,
             config,
             inner: Arc::new(Mutex::new(Registry::default())),
-            run_gate: Arc::new(Mutex::new(())),
+            run_gates: Arc::new(Mutex::new(HashMap::new())),
+            changed: Arc::new(Notify::new()),
+            terminal: Arc::new(Mutex::new(persistent::TerminalState::default())),
         }
     }
 
@@ -131,9 +160,15 @@ impl Engine {
                     .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b)),
             "operation_id must be 1..128 ASCII identifier characters"
         );
+        let fast = self.bridge.supports_fast().await?;
         let timeout = p.timeout_ms.unwrap_or(5000);
         ensure!(
-            (1000..=self.config.bridge.max_command_timeout_ms).contains(&timeout),
+            (1000..=if p.mode == CaptureMode::Stream {
+                self.config.bridge.max_stream_timeout_ms
+            } else {
+                self.config.bridge.max_command_timeout_ms
+            })
+                .contains(&timeout),
             "invalid timeout_ms"
         );
         let settle = p.settle_ms.unwrap_or(750);
@@ -142,9 +177,12 @@ impl Engine {
             "invalid settle_ms"
         );
         ensure!(
-            !p.expected_prompt.trim().is_empty()
-                && p.expected_prompt.len() <= 512
-                && !p.expected_prompt.chars().any(char::is_control),
+            (fast
+                && p.screen_token.is_empty()
+                && (p.mode == CaptureMode::Posix || p.attachment_id.is_some()))
+                || (!p.expected_prompt.trim().is_empty()
+                    && p.expected_prompt.len() <= 512
+                    && !p.expected_prompt.chars().any(char::is_control)),
             "invalid expected_prompt"
         );
         if p.mode == CaptureMode::Prompt {
@@ -173,18 +211,19 @@ impl Engine {
                 });
             }
             ensure!(
-                registry.busy.is_none(),
+                !registry.busy.contains_key(&p.session),
                 "busy/unresolved: inspect the current job and acknowledge idle; no automatic interrupt"
             );
             let retention = Duration::from_secs(self.config.bridge.job_retention_sec);
-            registry
-                .jobs
-                .retain(|_, j| j.finished.is_none_or(|t| t.elapsed() < retention));
+            registry.jobs.retain(|_, j| {
+                j.requires_idle_ack || j.finished.is_none_or(|t| t.elapsed() < retention)
+            });
             if registry.jobs.len() >= self.config.bridge.max_jobs {
                 // Output eviction never removes the operation ledger: old IDs cannot replay.
                 let oldest = registry
                     .jobs
                     .iter()
+                    .filter(|(_, job)| !job.requires_idle_ack)
                     .filter_map(|(id, job)| job.finished.map(|finished| (id.clone(), finished)))
                     .min_by_key(|(_, finished)| *finished)
                     .map(|(id, _)| id);
@@ -203,7 +242,7 @@ impl Engine {
             registry
                 .operations
                 .insert(p.operation_id.clone(), (id.clone(), fingerprint));
-            registry.busy = Some(id.clone());
+            registry.busy.insert(p.session.clone(), id.clone());
             registry.jobs.insert(
                 id.clone(),
                 Job {
@@ -215,6 +254,12 @@ impl Engine {
                     state: State::Starting,
                     output: String::new(),
                     output_bytes: 0,
+                    output_start: 0,
+                    stream: p.mode == CaptureMode::Stream,
+                    created: Instant::now(),
+                    first_output_us: None,
+                    poll_calls: 0,
+                    audit_dispatch_us: 0,
                     exit_code: None,
                     reason: "dispatch pending".into(),
                     truncated: false,
@@ -227,7 +272,8 @@ impl Engine {
         }
         let decision = self.policy.classify_command(&p.command);
         // Mandatory before-send audit: an I/O error must not be swallowed.
-        if let Err(error) = self
+        let audit_started = Instant::now();
+        let audit_result = self
             .audit
             .record(
                 "dispatch_attempt",
@@ -236,8 +282,11 @@ impl Engine {
                 &decision.reason,
                 Some(&p.command),
             )
-            .await
-        {
+            .await;
+        if let Some(job) = self.inner.lock().await.jobs.get_mut(&id) {
+            job.audit_dispatch_us = audit_started.elapsed().as_micros() as u64;
+        }
+        if let Err(error) = audit_result {
             self.finish(
                 &id,
                 State::Rejected,
@@ -261,24 +310,49 @@ impl Engine {
         } else {
             p.command.clone()
         };
-        let request = json!({"session": p.session, "screen_token": p.screen_token,
-            "expected_prompt": p.expected_prompt, "text": text, "capture_id": id, "runtime_ms": timeout});
+        let prepared = fast && p.screen_token.is_empty();
+        let mut request = if prepared {
+            json!({"session":p.session,"attachment_id":p.attachment_id,
+            "expected_prompt":if p.expected_prompt.is_empty(){None}else{Some(&p.expected_prompt)},
+            "text":text,"capture_id":id,"runtime_ms":timeout})
+        } else {
+            json!({"session":p.session,"screen_token":p.screen_token,"expected_prompt":p.expected_prompt,
+                "text":text,"capture_id":id,"runtime_ms":timeout})
+        };
+        if fast {
+            request["completion_marker"] = if p.mode == CaptureMode::Posix {
+                json!(&end)
+            } else {
+                Value::Null
+            };
+        }
         if let Some(job) = self.inner.lock().await.jobs.get_mut(&id) {
             job.sent = None;
         }
-        let begin_result = self.bridge.call("begin", request).await.and_then(|value| {
-            if value["sent"].as_bool() == Some(true) {
-                Ok(value)
-            } else {
-                Err(crate::fault::BridgeFault {
+        let begin_result = self
+            .bridge
+            .call(
+                if prepared {
+                    "prepare_and_begin"
+                } else {
+                    "begin"
+                },
+                request,
+            )
+            .await
+            .and_then(|value| {
+                if value["sent"].as_bool() == Some(true) {
+                    Ok(value)
+                } else {
+                    Err(crate::fault::BridgeFault {
                     message:
                         "dispatch outcome unknown: success reply lacks send evidence; do not replay"
                             .into(),
                     sent: None,
                 }
                 .into())
-            }
-        });
+                }
+            });
         if let Err(error) = begin_result {
             let unsent = error
                 .downcast_ref::<crate::fault::BridgeFault>()
@@ -328,6 +402,7 @@ impl Engine {
         end: String,
         stop: Arc<AtomicBool>,
     ) {
+        let fast = self.bridge.supports_fast().await.unwrap_or(false);
         let started = Instant::now();
         let timeout = Duration::from_millis(p.timeout_ms.unwrap_or(5000));
         let settle = Duration::from_millis(p.settle_ms.unwrap_or(750));
@@ -338,7 +413,7 @@ impl Engine {
                 break (
                     State::Cancelled,
                     None,
-                    "interrupt requested; termination unproven".to_owned(),
+                    "capture cancellation requested; remote termination unproven".to_owned(),
                 );
             }
             if started.elapsed() >= timeout {
@@ -348,8 +423,15 @@ impl Engine {
                     "capture deadline exceeded; remote may still run".to_owned(),
                 );
             }
-            let request = json!({"capture_id": id, "wait_for": if p.mode == CaptureMode::Prompt { p.wait_for.clone() } else { None }});
-            let response = match self.bridge.call("poll", request).await {
+            let mut request = json!({"capture_id": id, "wait_for": if p.mode == CaptureMode::Prompt { p.wait_for.clone() } else { None }});
+            if fast {
+                request["max_reads"] = json!(128);
+            }
+            let response = match self
+                .bridge
+                .call(if fast { "poll_bulk" } else { "poll" }, request)
+                .await
+            {
                 Ok(value) => value,
                 Err(error) => {
                     break (
@@ -366,11 +448,13 @@ impl Engine {
                 (chunk.to_owned(), None)
             };
             if let Some(job) = self.inner.lock().await.jobs.get_mut(&id) {
+                job.poll_calls += 1;
                 job.append(&output, self.config.bridge.max_output_bytes);
                 job.incomplete |= response["capture_may_be_incomplete"]
                     .as_bool()
                     .unwrap_or(true);
             }
+            self.changed.notify_waiters();
             if response["overflow"].as_bool() == Some(true) || parser.overflow {
                 break (
                     State::Unknown,
@@ -416,7 +500,11 @@ impl Engine {
                         .to_owned(),
                 );
             }
-            tokio::time::sleep(Duration::from_millis(5)).await;
+            if chunk.is_empty() {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            } else {
+                tokio::task::yield_now().await;
+            }
         };
         if stop.load(Ordering::SeqCst) {
             state = State::Cancelled;
@@ -481,11 +569,12 @@ impl Engine {
             job.reason = reason.into();
             job.finished = Some(Instant::now());
             let session = job.session.clone();
-            if release && registry.busy.as_deref() == Some(id) {
-                registry.busy = None;
+            if release && registry.busy.get(&session).map(String::as_str) == Some(id) {
+                registry.busy.remove(&session);
             }
             session
         };
+        self.changed.notify_waiters();
         if let Err(error) = self
             .audit
             .record("terminal_state", id, &session, reason, None)
@@ -512,12 +601,14 @@ impl Engine {
     pub async fn output(&self, p: OutputParams) -> Result<Value> {
         let max = p.max_bytes.unwrap_or(16_384);
         ensure!((4..=65_536).contains(&max), "invalid max_bytes");
-        let offset = p.cursor.unwrap_or(0);
+        let requested = p.cursor;
         let registry = self.inner.lock().await;
         let job = registry
             .jobs
             .get(&p.command_id)
             .ok_or_else(|| anyhow::anyhow!("unknown command_id"))?;
+        let requested = requested.unwrap_or(job.output_start);
+        let offset = requested.max(job.output_start) - job.output_start;
         ensure!(
             offset <= job.output.len() && job.output.is_char_boundary(offset),
             "invalid UTF-8 byte cursor"
@@ -525,7 +616,8 @@ impl Engine {
         let end = offset + prefix_len(&job.output[offset..], max);
         Ok(
             json!({"command_id": job.id, "state": job.state, "text": &job.output[offset..end],
-            "cursor": offset, "next_cursor": if end < job.output.len() || job.state.active() { Some(end) } else { None },
+            "cursor": offset+job.output_start, "next_cursor": if end < job.output.len() || job.state.active() { Some(end+job.output_start) } else { None },
+            "gap":requested<job.output_start,"dropped_bytes":job.output_start.saturating_sub(requested),
             "retained_bytes": job.output.len(), "truncated": job.truncated, "capture_may_be_incomplete": job.incomplete}),
         )
     }
@@ -542,7 +634,8 @@ impl Engine {
                 .get(id)
                 .ok_or_else(|| anyhow::anyhow!("unknown command_id"))?;
             ensure!(
-                registry.busy.as_deref() == Some(id) && job.state != State::Starting,
+                registry.busy.get(&job.session).map(String::as_str) == Some(id)
+                    && job.state != State::Starting,
                 "not an interruptible current command"
             );
             (job.session.clone(), job.stop.clone())
@@ -575,14 +668,14 @@ impl Engine {
     pub async fn acknowledge_idle(&self, p: ContextParams) -> Result<Value> {
         let previous = {
             let registry = self.inner.lock().await;
-            if let Some(id) = &registry.busy {
+            if let Some(id) = registry.busy.get(&p.session) {
                 let job = &registry.jobs[id];
                 ensure!(
                     !job.state.active() && job.session == p.session,
                     "cannot acknowledge another or still-active command"
                 );
             }
-            registry.busy.clone()
+            registry.busy.get(&p.session).cloned()
         };
         self.audit
             .record(
@@ -598,13 +691,13 @@ impl Engine {
             .call("acknowledge_idle", serde_json::to_value(&p)?)
             .await?;
         let mut registry = self.inner.lock().await;
-        if registry.busy == previous {
+        if registry.busy.get(&p.session) == previous.as_ref() {
             if let Some(id) = previous.as_ref() {
                 if let Some(job) = registry.jobs.get_mut(id) {
                     job.requires_idle_ack = false;
                 }
             }
-            registry.busy = None;
+            registry.busy.remove(&p.session);
         }
         Ok(result)
     }
@@ -630,6 +723,7 @@ pub struct MarkerParser {
     started: bool,
     done: bool,
     pending: String,
+    mid_line: bool,
     pub overflow: bool,
 }
 impl MarkerParser {
@@ -640,17 +734,19 @@ impl MarkerParser {
             started: false,
             done: false,
             pending: String::new(),
+            mid_line: false,
             overflow: false,
         }
     }
     pub fn drain_partial(&mut self) -> String {
-        if !self.started || self.done || self.overflow {
-            return String::new();
+        if !self.started || self.done {
+            String::new()
+        } else {
+            std::mem::take(&mut self.pending)
         }
-        std::mem::take(&mut self.pending)
     }
     pub fn feed(&mut self, chunk: &str) -> (String, Option<i32>) {
-        if self.done || self.overflow {
+        if self.done {
             return (String::new(), None);
         }
         self.pending.push_str(chunk);
@@ -659,26 +755,35 @@ impl MarkerParser {
             let line = self.pending[..index].trim_end_matches('\r').to_owned();
             self.pending.drain(..=index);
             if !self.started {
-                if line == self.begin {
+                if !self.mid_line && line == self.begin {
                     self.started = true;
                 }
+                self.mid_line = false;
                 continue;
             }
-            if let Some(status) = line.strip_prefix(&(self.end.clone() + " ")) {
-                if let Ok(code) = status.parse::<i32>() {
-                    if (0..=255).contains(&code) {
-                        self.done = true;
-                        self.pending.clear();
-                        return (output, Some(code));
+            if !self.mid_line {
+                if let Some(status) = line.strip_prefix(&(self.end.clone() + " ")) {
+                    if let Ok(code) = status.parse::<i32>() {
+                        if (0..=255).contains(&code) {
+                            self.done = true;
+                            self.pending.clear();
+                            return (output, Some(code));
+                        }
                     }
                 }
             }
             output.push_str(&line);
             output.push('\n');
+            self.mid_line = false;
         }
-        if self.pending.len() > 65_536 {
-            self.overflow = true;
-            self.pending.clear();
+        // Keep only a small candidate header. Non-marker long lines flow immediately.
+        if self.pending.len() > self.begin.len().max(self.end.len()) + 32 {
+            let n = self.pending.len() - usize::from(self.pending.ends_with('\r'));
+            if self.started {
+                output.push_str(&self.pending[..n]);
+            }
+            self.pending.drain(..n);
+            self.mid_line = true;
         }
         (output, None)
     }
