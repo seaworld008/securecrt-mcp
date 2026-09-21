@@ -75,3 +75,25 @@ pub struct SendTextParams {
     pub text: String,
     pub append_enter: Option<bool>,
 }
+
+/// Agent-oriented command submission. Response budgets do not change operation identity.
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunParams {
+    pub session: String,
+    pub command: String,
+    /// Explicit capture type. posix asserts an idle POSIX shell; never infer it for appliances/REPLs.
+    pub mode: CaptureMode,
+    /// Optional stable ID for same-process deduplication. Omitted IDs are generated and returned.
+    pub operation_id: Option<String>,
+    /// Optional for ordinary POSIX-style prompts, required for prompt/snapshot and unusual input contexts.
+    pub expected_prompt: Option<String>,
+    pub wait_for: Option<String>,
+    /// Remote capture budget. Default min(30000, configured maximum).
+    pub timeout_ms: Option<u64>,
+    /// Wait for this response, 0..60000 ms. A shorter wait returns running, without cancelling.
+    pub wait_ms: Option<u64>,
+    /// First output page bound in UTF-8 bytes, 4..65536. Default 16384.
+    pub max_bytes: Option<usize>,
+    pub settle_ms: Option<u64>,
+}

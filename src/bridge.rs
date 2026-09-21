@@ -51,11 +51,27 @@ impl BridgeClient {
                 "bridge protocol mismatch: run upgrade, stop Script > Cancel, then start the installed adapter");
             ensure!(response["id"] == id, "bridge response ID mismatch");
             ensure!(response["bridge_instance"].is_string(), "missing bridge identity");
-            ensure!(response["ok"].as_bool() == Some(true), "bridge rejected request: {}", response["error"]);
+            if response["ok"].as_bool() != Some(true) {
+                return Err(crate::fault::BridgeFault {
+                    message: format!("bridge rejected request: {}", response["error"]),
+                    sent: response["sent"].as_bool(),
+                }.into());
+            }
             Ok::<Value, anyhow::Error>(response["result"].clone())
         }).await;
-        result.context(
-            "bridge timeout: outcome may be unknown; NEVER automatically replay a command",
-        )?
+        let outcome = result
+            .context("bridge timeout: outcome may be unknown; NEVER automatically replay a command")
+            .and_then(|value| value);
+        outcome.map_err(|error| {
+            if error.downcast_ref::<crate::fault::BridgeFault>().is_some() {
+                error
+            } else {
+                crate::fault::BridgeFault {
+                    message: format!("{error:#}"),
+                    sent: None,
+                }
+                .into()
+            }
+        })
     }
 }

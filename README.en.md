@@ -1,6 +1,6 @@
 # securecrt-mcp
 
-**0.2.0-preview.1 / bridge protocol 2 / [中文](README.md)**
+**0.2.0-preview.2 / bridge protocol 2 / [中文](README.md)**
 
 A Rust MCP server controlling **existing authenticated SecureCRT tabs** through a Python standard-library native adapter. No new SSH connections or exported SSH credentials. Independent of VanDyke Software.
 
@@ -8,7 +8,7 @@ A Rust MCP server controlling **existing authenticated SecureCRT tabs** through 
 
 This preview changes session selectors and command execution. CI tests Rust and a fake native adapter; it does not certify actual SecureCRT desktop compatibility or interactive Codex approvals. Test on non-production sessions first.
 
-The unrestricted default introduced in 0.1.2 is preserved. It is trusted-client passthrough with a convenience deny filter, NOT a sandbox. Scripts, wrappers, aliases and compound commands can evade that filter. Remote accounts/RBAC and verified client approvals remain necessary. Safe mode is a small finite grammar, not arbitrary-shell security. Custom allow expressions match the entire command and are explicit administrative exceptions.
+New installations use `policy.mode = "client"`, delegating command risk/approval to the client without a built-in command denylist. Explicit custom deny rules still apply. Upgrades preserve existing policy verbatim; the old unrestricted profile remains available. Client mode is trusted-client passthrough; legacy unrestricted includes a convenience deny filter. Neither is a sandbox. Scripts, wrappers, aliases and compound commands can evade that filter. Remote accounts/RBAC and verified client approvals remain necessary. Safe mode is a small finite grammar, not arbitrary-shell security. Custom allow expressions match the entire command and are explicit administrative exceptions.
 
 ## Build and upgrade
 
@@ -25,6 +25,8 @@ Run `./target/release/securecrt-mcp paths` to print the installed script path. R
 
 ## Verified Windows flow
 
+This is historical **preview.1** evidence, not desktop certification of preview.2 or its new client-policy default.
+
 On 2026-09-20, protocol 2 was exercised against Windows x64, SecureCRT 9.0.0 x64 and embedded Python 3.8.10:
 
 - `doctor` reported Bridge `0.2.0-preview.1`, protocol 2, and a healthy runtime connection.
@@ -35,9 +37,17 @@ On 2026-09-20, protocol 2 was exercised against Windows x64, SecureCRT 9.0.0 x64
 
 This evidence covers the tested Windows/SecureCRT combination only. It is not a certification of other SecureCRT versions, terminal types, or client approval UIs. On timeout, cancellation or `unknown`, inspect the original screen and confirm idleness before any further action; do not replay automatically.
 
-`codex-config` prints additive TOML with all tools defaulting to `prompt`, and read-only exceptions. It never edits your client settings. Verify actual approval rejection in your installed Codex; annotations and documentation are not approval enforcement.
+`codex-config` prints additive TOML with `--approval-mode auto --toolset basic` by default, and read-only exceptions. Use `--approval-mode prompt` for explicit per-call prompts and `--toolset full` for every low-level tool. It never edits your client settings. Verify actual approval rejection in your installed Codex; annotations and documentation are not approval enforcement.
 
-## Execution workflow
+## Preferred one-call workflow
+
+Select an existing session, then call `securecrt_run_command` with `session`, `command`, and explicit `mode: "posix"`. It obtains fresh native context, submits once, waits and returns bounded `text`, `sent`, `state`, `exit_code` and `next_cursor`. Prompt/snapshot and nonstandard prompts require explicit `expected_prompt`. Prompt inference is a UX heuristic, NOT remote-host authentication.
+
+`wait_ms` bounds waiting for this response, not the remote operation. A running result is polled by its original command ID, not resubmitted. Exact pre-send rejection no longer creates an unnecessary unknown interlock. A lost reply is still `sent: null`; there is never an automatic retry, interrupt or idle acknowledgement. Explicit idle acknowledgement returns a fresh usable screen token. Results are evicted at cache capacity without deleting replay-prevention tombstones.
+
+Use the native MCP connection for persistent jobs. The Rust one-shot CLI and thin Python/PowerShell wrappers remove JSON-RPC/string-escaping boilerplate; see [local clients](docs/clients/command-line.md) and [Agent usage](docs/agent-usage.md).
+
+## Low-level execution workflow
 
 List sessions → read screen → inspect target and idle context → submit an approved command with `session`, `screen_token`, `expected_prompt`, unique `operation_id`, `command` and `mode` → poll `command_id` → page output with UTF-8 byte cursors.
 
@@ -53,7 +63,7 @@ Output is bounded (default 1 MiB/job, 32 jobs); pagination reports truncation/in
 
 ## Tools
 
-`securecrt_bridge_status`, `securecrt_list_sessions`, `securecrt_read_screen`, `securecrt_focus_session`, `securecrt_execute_command`, `securecrt_get_command_status`, `securecrt_get_command_output`, `securecrt_interrupt`, `securecrt_acknowledge_idle`, `securecrt_send_text` (disabled by default).
+`securecrt_run_command`, `securecrt_bridge_status`, `securecrt_list_sessions`, `securecrt_read_screen`, `securecrt_focus_session`, `securecrt_execute_command`, `securecrt_get_command_status`, `securecrt_get_command_output`, `securecrt_interrupt`, `securecrt_acknowledge_idle`, `securecrt_send_text` (disabled by default).
 
 Audit failure before dispatch prevents sends; post-dispatch errors remain visible alongside the actual result. The adapter binds explicitly to loopback with a random token and expiring bounded frames. Same-user malware/token theft is outside the security boundary. Windows relies on user-profile ACLs; no custom ACL hardening is claimed.
 
@@ -66,6 +76,8 @@ cargo test --locked --all-targets --all-features
 cargo build --locked
 python -m unittest discover -s tests -v
 python tests/mcp_smoke.py target/debug/securecrt-mcp
+python tests/ux_smoke.py target/debug/securecrt-mcp
+python tests/review_smoke.py target/debug/securecrt-mcp
 python scripts/validate_repository.py
 ```
 

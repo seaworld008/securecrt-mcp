@@ -7,6 +7,7 @@ use crate::{
     policy::{Decision, PolicyEngine},
 };
 use anyhow::{Result, ensure};
+mod convenience;
 use serde::Serialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -40,6 +41,9 @@ impl State {
 
 struct Job {
     id: String,
+    operation_id: String,
+    sent: Option<bool>,
+    requires_idle_ack: bool,
     session: String,
     state: State,
     output: String,
@@ -54,7 +58,14 @@ struct Job {
 }
 impl Job {
     fn snapshot(&self) -> Value {
-        json!({"command_id": self.id, "session": self.session, "state": self.state,
+        json!({"command_id": self.id, "operation_id": self.operation_id, "session": self.session, "state": self.state,
+            "sent": self.sent, "requires_idle_ack": self.requires_idle_ack,
+            "error_code": if self.state == State::TimedOut { Some("capture_timeout") } else if matches!(self.state, State::Rejected | State::Unknown) { Some(crate::fault::code(&self.reason)) } else { None },
+            "action": if self.state.active() { "Poll this command_id or explicitly interrupt; never resubmit." }
+                else if self.requires_idle_ack { crate::fault::action("busy_unresolved") }
+                else if self.state == State::Rejected { crate::fault::action(crate::fault::code(&self.reason)) }
+                else { "Read further output pages if next_cursor is present." },
+            "automatic_retry": false,
             "exit_code": self.exit_code, "reason": self.reason, "truncated": self.truncated,
             "capture_may_be_incomplete": self.incomplete, "retained_bytes": self.output.len(),
             "observed_output_bytes": self.output_bytes, "audit_warning": self.audit_warning,
@@ -83,6 +94,7 @@ pub struct Engine {
     pub policy: PolicyEngine,
     pub config: Config,
     inner: Arc<Mutex<Registry>>,
+    run_gate: Arc<Mutex<()>>,
 }
 
 impl Engine {
@@ -98,10 +110,19 @@ impl Engine {
             policy,
             config,
             inner: Arc::new(Mutex::new(Registry::default())),
+            run_gate: Arc::new(Mutex::new(())),
         }
     }
 
     pub async fn submit(&self, p: ExecuteParams) -> Result<Value> {
+        self.submit_internal(p, None).await
+    }
+
+    async fn submit_internal(
+        &self,
+        p: ExecuteParams,
+        stable_fingerprint: Option<String>,
+    ) -> Result<Value> {
         ensure!(
             !p.operation_id.is_empty()
                 && p.operation_id.len() <= 128
@@ -134,7 +155,8 @@ impl Engine {
                 "prompt mode requires a nonempty literal wait_for"
             );
         }
-        let fingerprint = format!("{:x}", Sha256::digest(serde_json::to_vec(&p)?));
+        let fingerprint =
+            stable_fingerprint.unwrap_or(format!("{:x}", Sha256::digest(serde_json::to_vec(&p)?)));
         let id = Uuid::new_v4().to_string();
         let stop = Arc::new(AtomicBool::new(false));
         {
@@ -158,9 +180,21 @@ impl Engine {
             registry
                 .jobs
                 .retain(|_, j| j.finished.is_none_or(|t| t.elapsed() < retention));
+            if registry.jobs.len() >= self.config.bridge.max_jobs {
+                // Output eviction never removes the operation ledger: old IDs cannot replay.
+                let oldest = registry
+                    .jobs
+                    .iter()
+                    .filter_map(|(id, job)| job.finished.map(|finished| (id.clone(), finished)))
+                    .min_by_key(|(_, finished)| *finished)
+                    .map(|(id, _)| id);
+                if let Some(id) = oldest {
+                    registry.jobs.remove(&id);
+                }
+            }
             ensure!(
                 registry.jobs.len() < self.config.bridge.max_jobs,
-                "job cache full; wait for retention expiry"
+                "job cache full; active work is never evicted"
             );
             ensure!(
                 registry.operations.len() < 4096,
@@ -174,6 +208,9 @@ impl Engine {
                 id.clone(),
                 Job {
                     id: id.clone(),
+                    operation_id: p.operation_id.clone(),
+                    sent: Some(false),
+                    requires_idle_ack: false,
                     session: p.session.clone(),
                     state: State::Starting,
                     output: String::new(),
@@ -226,19 +263,52 @@ impl Engine {
         };
         let request = json!({"session": p.session, "screen_token": p.screen_token,
             "expected_prompt": p.expected_prompt, "text": text, "capture_id": id, "runtime_ms": timeout});
-        if let Err(error) = self.bridge.call("begin", request).await {
-            // The transport cannot prove whether a remote send occurred; preserve an inspectable job.
+        if let Some(job) = self.inner.lock().await.jobs.get_mut(&id) {
+            job.sent = None;
+        }
+        let begin_result = self.bridge.call("begin", request).await.and_then(|value| {
+            if value["sent"].as_bool() == Some(true) {
+                Ok(value)
+            } else {
+                Err(crate::fault::BridgeFault {
+                    message:
+                        "dispatch outcome unknown: success reply lacks send evidence; do not replay"
+                            .into(),
+                    sent: None,
+                }
+                .into())
+            }
+        });
+        if let Err(error) = begin_result {
+            let unsent = error
+                .downcast_ref::<crate::fault::BridgeFault>()
+                .is_some_and(|e| e.sent == Some(false));
+            if let Some(job) = self.inner.lock().await.jobs.get_mut(&id) {
+                job.sent = if unsent { Some(false) } else { None };
+            }
             self.finish(
                 &id,
-                State::Unknown,
+                if unsent {
+                    State::Rejected
+                } else {
+                    State::Unknown
+                },
                 None,
-                &format!("dispatch outcome unknown: {error}; do not replay"),
-                false,
+                &format!(
+                    "{}: {error}",
+                    if unsent {
+                        "not sent"
+                    } else {
+                        "dispatch outcome unknown; do not replay"
+                    }
+                ),
+                unsent,
             )
             .await;
             return self.status(&id).await;
         }
         if let Some(job) = self.inner.lock().await.jobs.get_mut(&id) {
+            job.sent = Some(true);
             job.state = State::Running;
             job.reason = "capturing output".into();
         }
@@ -352,6 +422,12 @@ impl Engine {
             state = State::Cancelled;
             code = None;
         }
+        if p.mode == CaptureMode::Posix && state != State::Completed {
+            let partial = parser.drain_partial();
+            if let Some(job) = self.inner.lock().await.jobs.get_mut(&id) {
+                job.append(&partial, self.config.bridge.max_output_bytes);
+            }
+        }
         let released = self
             .bridge
             .call(
@@ -400,6 +476,7 @@ impl Engine {
                 return;
             };
             job.state = state;
+            job.requires_idle_ack = !release;
             job.exit_code = code;
             job.reason = reason.into();
             job.finished = Some(Instant::now());
@@ -522,6 +599,11 @@ impl Engine {
             .await?;
         let mut registry = self.inner.lock().await;
         if registry.busy == previous {
+            if let Some(id) = previous.as_ref() {
+                if let Some(job) = registry.jobs.get_mut(id) {
+                    job.requires_idle_ack = false;
+                }
+            }
             registry.busy = None;
         }
         Ok(result)
@@ -560,6 +642,12 @@ impl MarkerParser {
             pending: String::new(),
             overflow: false,
         }
+    }
+    pub fn drain_partial(&mut self) -> String {
+        if !self.started || self.done || self.overflow {
+            return String::new();
+        }
+        std::mem::take(&mut self.pending)
     }
     pub fn feed(&mut self, chunk: &str) -> (String, Option<i32>) {
         if self.done || self.overflow {

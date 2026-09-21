@@ -1,3 +1,5 @@
+> **0.2.0-preview.2 update:** New installs use `client` policy (client-owned command authorization); upgrades preserve old settings. `run_command` is the preferred orchestration tool; low-level protocol-2 tools remain. See [Agent usage](agent-usage.md). Earlier preview.1 approval/default-policy examples below are historical, not a change to existing settings. Actual desktop approval behavior is not certified by CI.
+
 # Security model and non-guarantees
 
 The server is privileged local automation for already authenticated terminals, not an SSH sandbox. Anyone controlling the local user account or bridge token can bypass Rust-side policy. Do not expose the port through LAN listeners, port forwarding, proxies or containers. Keep config/token/backups/audit private; never commit them.

@@ -1,3 +1,5 @@
+> **0.2.0-preview.2 update:** New installs use `client` policy (client-owned command authorization); upgrades preserve old settings. `run_command` is the preferred orchestration tool; low-level protocol-2 tools remain. See [Agent usage](agent-usage.md). Earlier preview.1 approval/default-policy examples below are historical, not a change to existing settings. Actual desktop approval behavior is not certified by CI.
+
 # Bridge protocol 2
 
 Private local NDJSON over TCP, explicitly `127.0.0.1`, default port 27855. One request and one response per connection, maximum frame 262144 bytes. Authentication uses a per-install random token; the adapter compares it with `hmac.compare_digest`. Requests carry an absolute Unix millisecond deadline. Expired/oversized/malformed requests do not dispatch. This is local transport, not TLS or a same-user sandbox.

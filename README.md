@@ -3,17 +3,31 @@
 [![CI](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-**0.2.0-preview.1 · Bridge 协议 2 · [English](README.en.md)**
+**0.2.0-preview.2 · Bridge 协议 2 · [English](README.en.md)**
 
 让 AI 操作 SecureCRT **已经登录的会话**，继续复用 VPN、堡垒机、SSH 密钥与 MFA。Rust 负责 MCP、策略、执行状态、输出分页及审计；标准库 Python 适配器只在 SecureCRT 脚本线程内调用 `crt` API。不新建 SSH 连接，不导出 SSH 凭证，也不是 VanDyke 官方产品。
 
 > 这是接口有变化的预览版。自动化测试不等于真实 SecureCRT 三平台验证，也不能证明你的 Codex 配置会弹出审批。先在测试会话完成 [升级与验收](docs/migration-0.2.md)，再接生产环境。
 
+## 一次调用，完成常规排查
+
+完成会话选择后，优先使用 `securecrt_run_command`：
+
+```json
+{"session":"从会话列表取得的句柄","command":"docker ps","mode":"posix","timeout_ms":30000,"max_bytes":60000}
+```
+
+工具内部读取新屏幕、获取 Token、提交一次命令、等待并返回有界输出；正常情况下不必手动轮询或再取一次输出。`mode` 必填：`posix` 是调用方明确选择空闲 POSIX Shell，不用于密码提示、堡垒机菜单或数据库 REPL。
+
+新安装默认 `policy.mode = "client"`，命令风险与批准交给客户端。升级不修改旧策略；已有用户按需将现有 `[policy]` 的 `mode` 改成 `client`。自定义拒绝规则仍是操作者显式配置，不会被悄悄删除。
+
+详见 [Agent 使用与错误恢复](docs/agent-usage.md) 和 [Python / PowerShell 客户端](docs/clients/command-line.md)。
+
 ## 本版解决的问题
 
 - 会话使用绑定原生 Tab 对象的、不透明短期句柄，不再接受 `tab:1` 或标题作为操作目标。重排不会主动重新绑定目标；已观察到的断线、连接配置变化和租约到期使旧句柄失效。
-- 每次发送需要新鲜、单次使用的 `screen_token` 和明确的 `expected_prompt`，避免把旧屏幕上的判断用于变化后的输入上下文。
-- 命令先返回 `command_id`，再查询状态和分页输出。`completed`、`timed_out`、`cancelled`、`unknown` 与 `rejected` 不混淆。
+- 低层接口每次发送需要新鲜、单次使用的 `screen_token` 和明确的 `expected_prompt`，避免把旧屏幕上的判断用于变化后的输入上下文。
+- 低层提交先返回 `command_id`；高层工具整合等待和输出。`completed`、`timed_out`、`cancelled`、`unknown` 与 `rejected` 不混淆。
 - POSIX 模式使用随机完成标记和退出码，不依赖固定 sleep；不自动包装其他类型终端。无换行输出也有独立结束标记行。
 - 原生捕获调用每次最多等待一秒，调用之间可以处理显式中断。超时不会自动 Ctrl+C，也不会自动重放命令。
 - 审计在发送前失败就拒绝执行；发送后审计失败保留结果并返回警告。输出、消息帧和缓存均有大小限制。
@@ -48,6 +62,8 @@ macOS/Linux 对应二进制为 `./target/release/securecrt-mcp`，其余子命�
 
 ## 已验证的 Windows 流程
 
+以下是 **preview.1 的历史实测**，保留原始证据；不是 preview.2 高层工具或新默认 `client` 策略的桌面验收。
+
 2026-09-20 在 Windows x64、SecureCRT 9.0.0 x64、内嵌 Python 3.8.10 上完成了协议 2 的真实桌面验收：
 
 - `doctor` 报告 Bridge `0.2.0-preview.1`、协议 2，且运行时检查通过。
@@ -68,34 +84,32 @@ command = "C:\\Tools\\securecrt-mcp.exe"
 args = ["serve"]
 startup_timeout_sec = 30
 tool_timeout_sec = 65
-default_tools_approval_mode = "prompt"
+default_tools_approval_mode = "auto"
 
 [mcp_servers.securecrt.tools.securecrt_read_screen]
 approval_mode = "approve"
 ```
 
-生成器还会为会话列表、状态和输出读取提供相应只读例外。命令执行、原始输入、中断及清除未决状态保持提示确认。旧版客户端若不支持这些键，不要直接删掉审批配置并假定安全；按 [客户端验收](docs/clients/codex.md) 实际测试“拒绝后零发送”。MCP annotations 是提示元数据，不是安全执行器。
+生成器默认 `--approval-mode auto --toolset basic`，由 Codex 标准权限逻辑决定批准；只读工具提供例外。需要逐次确认可选择 `--approval-mode prompt`，需要全部低层工具可选择 `--toolset full`。生成配置不代表已验证实际客户端批准行为。旧版客户端若不支持这些键，不要直接删掉审批配置并假定安全；按 [客户端验收](docs/clients/codex.md) 实际测试“拒绝后零发送”。MCP annotations 是提示元数据，不是安全执行器。
 
 ## 日常调用流程
 
-1. `securecrt_list_sessions` 获取 `session` 句柄。
-2. `securecrt_read_screen` 阅读实际终端，核实当前目标、账号及空闲 Shell，取得 `screen_token` 和 `current_line`。
-3. 经客户端批准后调用 `securecrt_execute_command`，传入句柄、Token、`expected_prompt`、新的 `operation_id` 和命令。
-4. 使用 `securecrt_get_command_status` 查询完成状态，使用 `securecrt_get_command_output` 分页读取结果。
+先列出会话并核实目标。日常命令使用 `securecrt_run_command`，读取返回的 `text`、`state`、`exit_code`。`running` 表示继续查询原 `command_id`；`next_cursor` 非空表示可读取后续页。高级场景仍可使用 `read_screen → execute_command → status/output` 低层流程。
 
-示例意图：
+高层工具不会自动重试命令、Ctrl+C 或确认未决状态。明确未发送的拒绝返回 `sent: false`，不再错误地制造本地 unknown 阻塞；丢失发送回执仍返回 `sent: null` 并保留保护。显式确认空闲后同时返回新 `screen`，包含可用的新 Token。
+
+示例：
 
 ```text
-列出 SecureCRT 会话，读取指定测试会话并确认目标。
-在已确认的 POSIX Shell 上，经我批准后执行 uname -a，使用 posix 捕获模式。
-查询 command_id 直到结束，读取输出。结果不确定时停止，不自动重试或中断。
+列出 SecureCRT 会话并让我确认目标。后续优先用 run_command 在已确认的 POSIX Shell 上排查 Docker、Nginx 和网络。
+遵循客户端权限决定；不自动重试未知结果，不自动中断或确认空闲。输出不够时按 next_cursor 读取后续页。
 ```
 
 ### 三种捕获模式
 
 | mode | 行为 | 结束语义 |
 |---|---|---|
-| `snapshot`（默认） | 原样发送并截取可见屏幕 | `unknown`，不是执行完成；需人工核查并确认空闲 |
+| `snapshot`（低层默认；高层需明确选择） | 原样发送并截取可见屏幕 | `unknown`，不是执行完成；需人工核查并确认空闲 |
 | `prompt` | 原样发送，等待 `wait_for` 字面提示符 | `completed` 仅表示看到文本，退出码为 null |
 | `posix` | 明确选择 POSIX Shell，当前 Shell 中 `eval` + 随机标记 | 标记匹配后给出退出码；不会创建子 Shell 隐式丢失 cd/export |
 
@@ -113,6 +127,7 @@ approval_mode = "approve"
 | `securecrt_list_sessions` | 获取短期会话句柄 |
 | `securecrt_read_screen` | 读屏及获取一次性上下文 Token |
 | `securecrt_focus_session` | 聚焦明确会话 |
+| `securecrt_run_command` | 首选的一次调用执行与有界输出 |
 | `securecrt_execute_command` | 提交经批准的命令 |
 | `securecrt_get_command_status` | 生命周期状态 |
 | `securecrt_get_command_output` | UTF-8 字节游标分页 |
@@ -122,20 +137,20 @@ approval_mode = "approve"
 
 ## 策略范围
 
-保留 `0.1.2` 的默认 `unrestricted`，现有配置升级不被覆盖。它允许普通单行命令，仅保留便利性危险命令过滤；脚本、包装、别名或组合语法可能绕过过滤，**不是沙箱**。真正授权依赖客户端审批、SSH 账号、sudo、Kubernetes RBAC 和数据库权限。
+新安装默认 `client`：不使用内置危险命令词表代替客户端授权。可选自定义拒绝规则、原始输入开关、输入/消息大小限制、审计和会话绑定仍然有效。旧版 `unrestricted` 保留原来的便利性过滤，升级不改变现有配置；两者都**不是沙箱**。真正授权依赖客户端权限、SSH 账号、sudo、Kubernetes RBAC 和数据库权限。
 
 `observe` 禁止发送命令；`safe` 只支持有限的命令/参数语法，未知参数拒绝，而不是仅检查命令名前缀；`allowlist` 仅允许管理员配置的完整命令正则。自定义允许规则是受信任管理员的显式例外。任何模式都不保证命令输出不含秘密，配置和读取权限需独立管理。
 
 ```toml
 [policy]
-mode = "unrestricted"
+mode = "client"
 allow_raw_send = false
 allow_interrupt = true
 custom_allow_patterns = []
 custom_deny_patterns = []
 ```
 
-输出默认每任务保留 1 MiB、最多 32 个任务，参数乘积上限 128 MiB。游标是 UTF-8 **字节**偏移；必须遵循返回的 `next_cursor`。`truncated` 和 `capture_may_be_incomplete` 表示结果并非完整文件或可靠全量日志，不能忽略。原生 `ReadString` 超时行为因运行时需实测，本版保守标注捕获不完整风险。
+输出默认每任务保留 1 MiB、最多 32 个任务，参数乘积上限 128 MiB。缓存满时淘汰最旧的已结束结果，仍保留操作去重记录；不会因删掉输出而重新执行旧操作。游标是 UTF-8 **字节**偏移；必须遵循返回的 `next_cursor`。`truncated` 和 `capture_may_be_incomplete` 表示结果并非完整文件或可靠全量日志，不能忽略。原生 `ReadString` 超时行为因运行时需实测，本版保守标注捕获不完整风险。
 
 ## 开发与发布
 
@@ -146,6 +161,8 @@ cargo test --locked --all-targets --all-features
 cargo build --locked
 python -m unittest discover -s tests -v
 python tests/mcp_smoke.py target/debug/securecrt-mcp
+python tests/ux_smoke.py target/debug/securecrt-mcp
+python tests/review_smoke.py target/debug/securecrt-mcp
 python scripts/validate_repository.py
 ```
 

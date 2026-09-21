@@ -17,7 +17,7 @@ import time
 import uuid
 from pathlib import Path
 
-BRIDGE_VERSION = "0.2.0-preview.1"
+BRIDGE_VERSION = "0.2.0-preview.2"
 PROTOCOL_VERSION = 2
 MAX_FRAME = 262144
 MAX_CHUNK = 65536
@@ -63,6 +63,7 @@ class NativeAdapter:
         self.capture = None
         self.unresolved = None
         self.request_deadline = None
+        self.send_attempted = False
 
     def _alive(self, entry):
         try:
@@ -99,6 +100,7 @@ class NativeAdapter:
         if (not entry or not self._alive(entry)
                 or (self.now() > entry['expires'] and not protected)):
             fail('stale_session: list sessions again; never substitute a tab index')
+        entry['expires'] = self.now() + LEASE_MS
         return entry
 
     def list_sessions(self):
@@ -191,6 +193,7 @@ class NativeAdapter:
         try:
             screen.Synchronous = True
             screen.IgnoreEscape = True
+            self.send_attempted = True
             screen.Send(text + '\r')
         except Exception:
             self.end(capture_id, False)
@@ -234,6 +237,7 @@ class NativeAdapter:
                 return dict(released=True, unresolved=True)
             fail('capture_mismatch')
         self.capture = None
+        c['entry']['expires'] = self.now() + LEASE_MS
         if not confirmed_complete:
             self.unresolved = dict(session=c['session'], capture_id=c['id'])
         errors = []
@@ -254,6 +258,7 @@ class NativeAdapter:
         entry = self._session(session)
         self._before_send()
         try:
+            self.send_attempted = True
             entry['tab'].Screen.Send('\x03')
         finally:
             if self.capture:
@@ -267,7 +272,13 @@ class NativeAdapter:
         if self.unresolved and self.unresolved['session'] != session:
             fail('capture_mismatch: acknowledge the original session, not another tab')
         self.unresolved = None
-        return dict(idle_acknowledged=True, remote_termination_confirmed=False)
+        result = dict(idle_acknowledged=True, remote_termination_confirmed=False)
+        try:
+            result['screen'] = self.read_screen(session)
+        except Exception as exc:
+            result['screen_error'] = str(exc)
+            result['action'] = 'read_screen before the next operation'
+        return result
 
     def send_text(self, session, screen_token, expected_prompt, text, append_enter=False):
         if self.capture or self.unresolved:
@@ -279,6 +290,7 @@ class NativeAdapter:
         self._before_send()
         # Even an intentional raw send may start a remote program: quarantine afterwards.
         self.unresolved = dict(session=session, capture_id='raw-' + str(uuid.uuid4()))
+        self.send_attempted = True
         entry['tab'].Screen.Send(text + ('\r' if append_enter else ''))
         return dict(sent=True, unresolved=self.unresolved)
 
@@ -293,7 +305,7 @@ class NativeAdapter:
                     platform=platform.system(), architecture=platform.machine(),
                     securecrt_version=str(getattr(self.app, 'Version', 'unknown')),
                     securecrt_tabs=self.app.GetTabCount(), max_active_captures=1,
-                    capabilities=['session_leases', 'screen_tokens', 'bounded_poll', 'interrupt'],
+                    capabilities=['session_leases', 'screen_tokens', 'bounded_poll', 'interrupt', 'delivery_evidence', 'ack_fresh_view'],
                     unresolved=self.unresolved)
 
 
@@ -302,6 +314,7 @@ METHODS = ('ping', 'list_sessions', 'read_screen', 'focus_session', 'begin', 'po
 
 
 def handle_request(adapter, request, token):
+    adapter.send_attempted = False
     response = dict(id='', protocol_version=PROTOCOL_VERSION,
                     bridge_instance=adapter.instance, ok=False, result=None, error=None)
     try:
@@ -330,6 +343,8 @@ def handle_request(adapter, request, token):
             adapter.request_deadline = None
     except Exception as exc:
         response['error'] = str(exc)[:1024]
+        response['error_code'] = str(exc).split(':', 1)[0][:64]
+    response['sent'] = (True if response['ok'] else None) if adapter.send_attempted else False
     return response
 
 

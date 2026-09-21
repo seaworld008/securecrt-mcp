@@ -102,3 +102,64 @@ fn echoed_marker_does_not_complete_a_command() {
     );
     assert_eq!(parser.feed("BEGIN_test\nnormal\nEND_test nope\n").1, None);
 }
+
+#[test]
+fn client_profile_delegates_risk_without_treating_search_data_as_commands() {
+    let config = Config::default();
+    assert_eq!(config.policy.mode, "client");
+    let policy = PolicyEngine::new(&config.policy).unwrap();
+    for text in [
+        "grep 'deny' nginx.conf",
+        "grep 'shutdown' nginx.conf",
+        "systemctl stop test-only",
+        "rm -rf /tmp/FAKE-TEST",
+    ] {
+        assert_eq!(
+            policy.classify_command(text).decision,
+            Decision::Allow,
+            "{text}"
+        );
+    }
+    assert_eq!(
+        policy.classify_command("\u{3}uname").decision,
+        Decision::Deny
+    );
+}
+
+#[test]
+fn legacy_guardrails_match_command_positions_not_grep_operands() {
+    let mut config = Config::default();
+    config.policy.mode = "unrestricted".into();
+    let policy = PolicyEngine::new(&config.policy).unwrap();
+    for text in [
+        "grep 'deny' nginx.conf",
+        "grep 'shutdown' nginx.conf",
+        "grep deny nginx.conf",
+        "systemctl status nginx",
+    ] {
+        assert_eq!(
+            policy.classify_command(text).decision,
+            Decision::Allow,
+            "{text}"
+        );
+    }
+    assert_eq!(
+        policy.classify_command("systemctl stop test-only").decision,
+        Decision::Deny
+    );
+    config.policy.mode = "client".into();
+    config.policy.custom_deny_patterns.push("deny".into());
+    let denied = PolicyEngine::new(&config.policy)
+        .unwrap()
+        .classify_command("grep deny nginx.conf");
+    assert_eq!(denied.decision, Decision::Deny);
+    assert!(denied.reason.contains("custom_deny_rule[0]"));
+}
+
+#[test]
+fn timed_out_partial_output_is_not_discarded() {
+    let mut parser = MarkerParser::new("BEGIN".into(), "END".into());
+    assert_eq!(parser.feed("BEGIN\npartial-without-newline").0, "");
+    assert_eq!(parser.drain_partial(), "partial-without-newline");
+    assert_eq!(parser.drain_partial(), "");
+}

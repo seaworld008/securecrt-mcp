@@ -55,7 +55,7 @@ pub struct PolicyConfig {
 impl Default for PolicyConfig {
     fn default() -> Self {
         Self {
-            mode: "unrestricted".into(),
+            mode: "client".into(),
             allow_raw_send: false,
             allow_interrupt: true,
             custom_allow_patterns: Vec::new(),

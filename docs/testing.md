@@ -1,3 +1,5 @@
+> **0.2.0-preview.2 update:** New installs use `client` policy (client-owned command authorization); upgrades preserve old settings. `run_command` is the preferred orchestration tool; low-level protocol-2 tools remain. See [Agent usage](agent-usage.md). Earlier preview.1 approval/default-policy examples below are historical, not a change to existing settings. Actual desktop approval behavior is not certified by CI.
+
 # Validation evidence and remaining desktop acceptance
 
 Version: **0.2.0-preview.1**. This document distinguishes test layers; green CI is not a SecureCRT compatibility certification.

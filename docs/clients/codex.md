@@ -1,3 +1,5 @@
+> **0.2.0-preview.2 update:** New installs use `client` policy (client-owned command authorization); upgrades preserve old settings. `run_command` is the preferred orchestration tool; low-level protocol-2 tools remain. See [Agent usage](../agent-usage.md). Earlier preview.1 approval/default-policy examples below are historical, not a change to existing settings. Actual desktop approval behavior is not certified by CI.
+
 # Codex 接入与审批拒绝验收
 
 先完成 [升级说明](../migration-0.2.md)。执行 `securecrt-mcp codex-config` 打印准确的二进制路径及增量 TOML；手动合并到现有配置，不覆盖其他 MCP/模型/插件设置。
