@@ -4,11 +4,9 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
 jobs:
   rust:
     name: Rust (${{ matrix.os }})
@@ -32,21 +30,25 @@ jobs:
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - run: cargo test --locked --all-targets --all-features
       - run: cargo build --locked
-      - name: Live MCP stdio against fake bridge
+      - name: Live MCP, agent UX, failure recovery and package checks
         shell: bash
         run: |
           binary=target/debug/securecrt-mcp
           if [ "${{ runner.os }}" = Windows ]; then binary="$binary.exe"; fi
           python tests/mcp_smoke.py "$binary"
+          python tests/ux_smoke.py "$binary"
+          python tests/review_smoke.py "$binary"
           python tests/package_smoke.py "$binary" "ci-${{ runner.os }}-${{ runner.arch }}"
       - run: python -m unittest discover -s tests -v
       - run: python scripts/validate_repository.py
-  python-compatibility:
+  adapter:
     name: Adapter syntax / Python ${{ matrix.python }}
-    runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         python: ['3.8', '3.12']
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
