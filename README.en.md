@@ -5,11 +5,13 @@
 [![License](https://img.shields.io/github/license/seaworld008/securecrt-mcp)](LICENSE)
 [中文说明](README.md)
 
-**securecrt-mcp 0.3.0** is a production-oriented Rust MCP server for operating SSH sessions that are already authenticated in SecureCRT from Codex, Claude, or another MCP client.
+**securecrt-mcp 0.4.0** is a production-oriented Rust MCP server for operating SSH sessions that are already authenticated in SecureCRT from Codex, Claude, or another MCP client, with an explicit persistent OpenSSH/PTY connector option.
 
 It reuses the operator's VPN, bastion, SSH key, and MFA flow. It does not create a second SSH connection or export server credentials. This project is independent of VanDyke Software.
 
 > **Production scope:** suitable for operations diagnostics, release checks, log inspection, and controlled changes. It is a SecureCRT session connector, not a native SSH/PTY implementation and not a second AI approval system. Client approval, remote account authorization, and human target confirmation remain required.
+
+> **High-performance connector (opt-in):** the new `connector_*` tools can open persistent system OpenSSH command or PTY sessions explicitly. SecureCRT remains the default backend. OpenSSH uses the user's `ssh_config`, Agent, ProxyJump and known_hosts; MCP does not store passwords. See [Unified connectors](docs/connectors.md).
 
 ## What it provides
 
@@ -21,10 +23,11 @@ It reuses the operator's VPN, bastion, SSH key, and MFA flow. It does not create
 - An optional loopback daemon for CLI, Python, and PowerShell clients that need one retained Engine.
 - A narrow catastrophic-operation guard; routine command decisions stay with the MCP client and remote account.
 - No automatic replay of unknown commands, implicit Ctrl+C, tab rebinding, or approval bypass.
+- Persistent OpenSSH `ssh -T`/`ssh -tt` sessions provide command execution, long-running streams, PTY input, resize and absolute-cursor pagination.
 
 ## Verified scope
 
-Before 0.3.0, Rust, Bridge, MCP stdio, batch, daemon, fault-injection, packaging, and adapter tests passed. Real desktop acceptance was run on Windows x64 with SecureCRT 9.0.0 and embedded Python 3.8.10:
+Before 0.4.0, Rust, Bridge, MCP stdio, batch, daemon, fault-injection, packaging, and connector tests passed. Real desktop acceptance was run on Windows x64 with SecureCRT 9.0.0 and embedded Python 3.8.10:
 
 - Three Linux SSH tabs (`php_test`, `php_dev`, `k8s-master1`) completed `hostname`, `uptime`, and `pwd` batches after a SecureCRT restart.
 - Long output was read through cursor pagination.
@@ -39,7 +42,7 @@ These results do not claim native SSH equivalence. Validate the actual targets, 
 Download the Windows x64 archive and `SHA256SUMS` from the [latest Release](https://github.com/seaworld008/securecrt-mcp/releases/latest):
 
 ```powershell
-Get-FileHash .\securecrt-mcp-0.3.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256
+Get-FileHash .\securecrt-mcp-0.4.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256
 Get-Content .\SHA256SUMS
 ```
 
@@ -134,6 +137,7 @@ See [security model](docs/security-model.md), [persistent terminal guide](docs/p
 - [Security model](docs/security-model.md)
 - [Architecture](docs/architecture.md) · [Bridge protocol](docs/bridge-protocol.md)
 - [Performance and limits](docs/performance.md)
+- [Unified connectors and OpenSSH/PTY](docs/connectors.md)
 - [Troubleshooting](docs/troubleshooting.md)
 - [Codex](docs/clients/codex.en.md) · [Claude](docs/clients/claude.md)
 - [Release process](docs/releases.md)

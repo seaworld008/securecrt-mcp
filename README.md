@@ -6,11 +6,13 @@
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange)](https://www.rust-lang.org/)
 [English](README.en.md)
 
-**securecrt-mcp 0.3.0** 是一个面向生产环境的 Rust MCP Server：让 Codex、Claude 等 MCP 客户端安全、可审计地操作 SecureCRT 中已经登录的 SSH 会话。
+**securecrt-mcp 0.4.0** 是一个面向生产环境的 Rust MCP Server：让 Codex、Claude 等 MCP 客户端安全、可审计地操作 SecureCRT 中已经登录的 SSH 会话，并可显式选择持久 OpenSSH/PTY 连接器。
 
 它复用操作员已经完成的 VPN、堡垒机、SSH 密钥和 MFA 流程，不建立第二条 SSH 连接，也不导出服务器凭据。项目独立于 VanDyke Software。
 
 > **生产定位**：适合运维诊断、发布检查、日志查看和受控变更。它是 SecureCRT 会话连接层，不是原生 SSH/PTY，也不是第二套 AI 权限系统。客户端审批、远端账号权限和人工目标确认仍然有效。
+
+> **高性能连接器（opt-in）**：新增 `connector_*` 工具可显式打开系统 OpenSSH 的长期命令会话或 PTY 会话。SecureCRT 仍是默认后端；OpenSSH 使用现有 `ssh_config`、Agent、ProxyJump 和 known_hosts，不在 MCP 中保存密码。详见 [统一连接器](docs/connectors.md)。
 
 ## 能力概览
 
@@ -22,10 +24,11 @@
 - 可选 loopback daemon，供 CLI、Python 和 PowerShell 高频调用复用同一个 Engine。
 - 默认仅做少量极高危防误操作过滤；普通命令由 MCP 客户端审批和远端账号权限决定。
 - 不自动重放未知命令，不自动 Ctrl+C，不自动切换到同名会话，不静默绕过客户端审批。
+- OpenSSH connector 使用持久 `ssh -T`/`ssh -tt` 会话，支持命令、长驻流、PTY 输入、resize 和绝对 cursor 分页。
 
 ## 已验证范围
 
-0.3.0 发布前完成了 Rust、Bridge、MCP stdio、批量执行、daemon、故障注入、打包和适配器测试，并在 Windows x64 / SecureCRT 9.0.0 / 内嵌 Python 3.8.10 上进行了真实桌面验收：
+0.4.0 发布前完成了 Rust、Bridge、MCP stdio、批量执行、daemon、故障注入、打包和连接器测试，并在 Windows x64 / SecureCRT 9.0.0 / 内嵌 Python 3.8.10 上进行了真实桌面验收：
 
 - Linux SSH Tab：`hostname`、`uptime`、`pwd`、`id` 连续执行成功。
 - 四命令 batch 完成，逐条返回输出和退出码。
@@ -42,7 +45,7 @@
 从 [最新 Release](https://github.com/seaworld008/securecrt-mcp/releases/latest) 下载 Windows x64 ZIP，同时下载 `SHA256SUMS`，在 PowerShell 中校验：
 
 ```powershell
-Get-FileHash .\securecrt-mcp-0.3.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256
+Get-FileHash .\securecrt-mcp-0.4.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256
 Get-Content .\SHA256SUMS
 ```
 
@@ -154,6 +157,7 @@ Batch 不是事务，也不是永久授权；所有命令应在客户端第一�
 - [安全模型](docs/security-model.md)
 - [架构与协议](docs/architecture.md) · [Bridge 协议](docs/bridge-protocol.md)
 - [性能与已知限制](docs/performance.md)
+- [统一连接器与 OpenSSH/PTY](docs/connectors.md)
 - [排障](docs/troubleshooting.md)
 - [Codex](docs/clients/codex.md) · [Claude](docs/clients/claude.md)
 - [发布流程](docs/releases.md)

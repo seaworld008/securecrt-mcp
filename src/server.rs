@@ -4,6 +4,7 @@ use crate::{
 };
 use rmcp::{ErrorData as McpError, handler::server::wrapper::Parameters, tool, tool_router};
 use serde_json::{Value, json};
+use tokio::time::{Duration, timeout};
 
 #[derive(Clone)]
 pub struct SecureCrtServer {
@@ -22,6 +23,273 @@ fn result(value: anyhow::Result<Value>) -> Result<String, McpError> {
 
 #[tool_router(server_handler)]
 impl SecureCrtServer {
+    #[tool(
+        description = "List sessions owned by the opt-in native OpenSSH connector. This does not inspect or alter SecureCRT tabs.",
+        annotations(read_only_hint = true, destructive_hint = false)
+    )]
+    async fn connector_list(&self) -> Result<String, McpError> {
+        let securecrt = match timeout(
+            Duration::from_millis(250),
+            self.engine.bridge.call("list_sessions", json!({})),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(anyhow::anyhow!("SecureCRT session probe timed out")),
+        };
+        let openssh = self.engine.connectors.list().await;
+        result(
+            async {
+                let openssh = openssh?;
+                let mut response = json!({
+                    "securecrt": [],
+                    "openssh": openssh["sessions"].clone(),
+                });
+                match securecrt {
+                    Ok(value) => response["securecrt"] = value["sessions"].clone(),
+                    Err(error) => response["securecrt_error"] = json!(error.to_string()),
+                }
+                Ok(response)
+            }
+            .await,
+        )
+    }
+
+    #[tool(
+        description = "Open an explicit persistent OpenSSH command or PTY session. Uses the user's ssh_config, Agent and known_hosts; never stores credentials. backend must be openssh.",
+        annotations(read_only_hint = false, destructive_hint = false)
+    )]
+    async fn connector_open(
+        &self,
+        Parameters(p): Parameters<crate::connector::ConnectorOpenParams>,
+    ) -> Result<String, McpError> {
+        if p.backend == crate::connector::ConnectorBackend::Securecrt {
+            let value = self
+                .engine
+                .attach(crate::terminal::AttachParams {
+                    session: p.target,
+                    mode: "shared".into(),
+                    expected_prompt: None,
+                })
+                .await
+                .map(|mut value| {
+                    let attachment = value["attachment_id"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned();
+                    value["session_id"] = json!(format!("securecrt/{attachment}"));
+                    value["backend"] = json!("securecrt");
+                    value
+                });
+            return result(value);
+        }
+        result(self.engine.connectors.open(p).await)
+    }
+
+    #[tool(
+        description = "Execute one command on a persistent OpenSSH exec session. The SSH handshake is reused; output is bounded and cursor-paginated. Unknown outcomes are never replayed.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false
+        )
+    )]
+    async fn connector_exec(
+        &self,
+        Parameters(p): Parameters<crate::connector::ConnectorExecParams>,
+    ) -> Result<String, McpError> {
+        if let Some(attachment) = p.session_id.strip_prefix("securecrt/") {
+            return result(
+                self.engine
+                    .exec(crate::terminal::ExecParams {
+                        attachment_id: attachment.to_owned(),
+                        command: p.command,
+                        mode: crate::model::CaptureMode::Posix,
+                        operation_id: p.operation_id,
+                        timeout_ms: p.timeout_ms,
+                        wait_ms: Some(60_000),
+                        max_bytes: p.max_bytes,
+                        wait_for: None,
+                    })
+                    .await,
+            );
+        }
+        result(self.engine.connectors.exec(p).await)
+    }
+
+    #[tool(
+        description = "Execute a sequential batch on a persistent OpenSSH exec session. Commands stop at the first unknown or failed result.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false
+        )
+    )]
+    async fn connector_exec_batch(
+        &self,
+        Parameters(p): Parameters<crate::connector::ConnectorBatchParams>,
+    ) -> Result<String, McpError> {
+        if let Some(attachment) = p.session_id.strip_prefix("securecrt/") {
+            return result(
+                self.engine
+                    .exec_batch(crate::terminal::BatchParams {
+                        attachment_id: attachment.to_owned(),
+                        commands: p.commands,
+                        operation_id: None,
+                        on_error: Some("stop".into()),
+                        timeout_ms: p.timeout_ms,
+                    })
+                    .await,
+            );
+        }
+        result(self.engine.connectors.batch(p).await)
+    }
+
+    #[tool(
+        description = "Read a completed OpenSSH command's bounded output by absolute cursor.",
+        annotations(read_only_hint = true, destructive_hint = false)
+    )]
+    async fn connector_read(
+        &self,
+        Parameters(p): Parameters<crate::connector::ConnectorReadParams>,
+    ) -> Result<String, McpError> {
+        match self.engine.connectors.read(p.clone()).await {
+            Ok(value) => result(Ok(value)),
+            Err(_) => result(
+                self.engine
+                    .output(crate::model::OutputParams {
+                        command_id: p.command_id,
+                        cursor: p.cursor.and_then(|v| usize::try_from(v).ok()),
+                        max_bytes: p.max_bytes,
+                    })
+                    .await,
+            ),
+        }
+    }
+
+    #[tool(
+        description = "Get an OpenSSH session or command status. Provide exactly one session_id or command_id.",
+        annotations(read_only_hint = true, destructive_hint = false)
+    )]
+    async fn connector_get_status(
+        &self,
+        Parameters(p): Parameters<crate::connector::ConnectorStatusParams>,
+    ) -> Result<String, McpError> {
+        match self.engine.connectors.status_any(p.clone()).await {
+            Ok(value) => result(Ok(value)),
+            Err(_) => result(match p.command_id {
+                Some(command_id) => self.engine.status(&command_id).await,
+                None => Err(anyhow::anyhow!("SecureCRT status requires command_id")),
+            }),
+        }
+    }
+
+    #[tool(
+        description = "Open a persistent OpenSSH PTY session for logs, REPLs, pagers and interactive programs.",
+        annotations(read_only_hint = false, destructive_hint = false)
+    )]
+    async fn connector_stream_open(
+        &self,
+        Parameters(mut p): Parameters<crate::connector::ConnectorOpenParams>,
+    ) -> Result<String, McpError> {
+        p.backend = crate::connector::ConnectorBackend::Openssh;
+        p.mode = crate::connector::ConnectorMode::Pty;
+        result(self.engine.connectors.open(p).await)
+    }
+
+    #[tool(
+        description = "Read incremental OpenSSH PTY output by absolute cursor. Reports gaps when the bounded ring buffer overwrites old output.",
+        annotations(read_only_hint = true, destructive_hint = false)
+    )]
+    async fn connector_stream_read(
+        &self,
+        Parameters(p): Parameters<crate::connector::ConnectorReadParams>,
+    ) -> Result<String, McpError> {
+        result(self.engine.connectors.stream_read(p).await)
+    }
+
+    #[tool(
+        description = "Send explicit raw input to an OpenSSH PTY session. The client/model owns approval and password handling.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false
+        )
+    )]
+    async fn connector_stream_write(
+        &self,
+        Parameters(p): Parameters<crate::connector::ConnectorWriteParams>,
+    ) -> Result<String, McpError> {
+        result(self.engine.connectors.write(p).await)
+    }
+
+    #[tool(
+        description = "Resize an OpenSSH PTY session.",
+        annotations(read_only_hint = false, destructive_hint = false)
+    )]
+    async fn connector_resize(
+        &self,
+        Parameters(p): Parameters<crate::connector::ConnectorResizeParams>,
+    ) -> Result<String, McpError> {
+        result(self.engine.connectors.resize(p).await)
+    }
+
+    #[tool(
+        description = "Send an explicit interrupt to an OpenSSH session. This does not prove remote termination.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false
+        )
+    )]
+    async fn connector_interrupt(
+        &self,
+        Parameters(p): Parameters<crate::connector::ConnectorSessionParams>,
+    ) -> Result<String, McpError> {
+        result(self.engine.connectors.interrupt(p).await)
+    }
+
+    #[tool(
+        description = "Acknowledge that the operator inspected an unresolved OpenSSH session and confirmed its shell is idle. This does not prove remote termination.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false
+        )
+    )]
+    async fn connector_acknowledge(
+        &self,
+        Parameters(p): Parameters<crate::connector::ConnectorAcknowledgeParams>,
+    ) -> Result<String, McpError> {
+        result(self.engine.connectors.acknowledge(p).await)
+    }
+
+    #[tool(
+        description = "Close an OpenSSH connector session. Remote termination is not claimed.",
+        annotations(
+            read_only_hint = false,
+            destructive_hint = true,
+            idempotent_hint = false
+        )
+    )]
+    async fn connector_close(
+        &self,
+        Parameters(p): Parameters<crate::connector::ConnectorSessionParams>,
+    ) -> Result<String, McpError> {
+        if let Some(attachment) = p.session_id.strip_prefix("securecrt/") {
+            return result(self.engine.detach(attachment).await);
+        }
+        result(self.engine.connectors.close(p).await)
+    }
+
+    #[tool(
+        description = "Report OpenSSH connector session and command counts.",
+        annotations(read_only_hint = true, destructive_hint = false)
+    )]
+    async fn connector_metrics(&self) -> Result<String, McpError> {
+        result(self.engine.connectors.metrics().await)
+    }
+
     #[tool(
         description = "Attach once to an already authenticated SecureCRT session. shared/exclusive/observe are connector ownership modes, not a native keyboard lock. No command is sent and no future approval is granted. Inspect current target; configured host is not proof of nested SSH identity.",
         annotations(read_only_hint = false, destructive_hint = false)

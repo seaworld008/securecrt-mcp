@@ -32,7 +32,7 @@ class FakeBridge(socketserver.ThreadingTCPServer):
     def method(self, name, p):
         with self.lock:
             if name == 'ping':
-                return {'bridge_version': '0.3.0', 'protocol_version': 2}
+                return {'bridge_version': '0.4.0', 'protocol_version': 2}
             if name == 'list_sessions':
                 return {'sessions': [{'id': 'fake-instance/fake-session', 'caption': 'test', 'connected': True}]}
             if name == 'read_screen':
@@ -135,7 +135,8 @@ class MCP:
         raise AssertionError('MCP response timeout')
 
     def tool(self, name, params=None, expect_error=False):
-        response = self.request('tools/call', {'name': 'securecrt_' + name, 'arguments': params or {}})
+        wire_name = name if name.startswith('connector_') else 'securecrt_' + name
+        response = self.request('tools/call', {'name': wire_name, 'arguments': params or {}})
         failed = 'error' in response or response.get('result', {}).get('isError', False)
         if expect_error:
             assert failed, response
@@ -182,6 +183,10 @@ def run(binary):
         config = tomllib.loads(cli('codex-config', '--approval-mode', 'prompt', '--toolset', 'full'))
         assert config['mcp_servers']['securecrt']['default_tools_approval_mode'] == 'prompt'
         assert config['mcp_servers']['securecrt']['command'] == str(binary)
+        terminal_config = tomllib.loads(cli('codex-config', '--approval-mode', 'prompt', '--toolset', 'terminal'))
+        enabled_tools = terminal_config['mcp_servers']['securecrt']['enabled_tools']
+        assert 'connector_list' in enabled_tools
+        assert 'securecrt_connector_list' not in enabled_tools
         secret_path = root / 'bridge.json'
         secret = json.loads(secret_path.read_text()); secret['port'] = bridge.server_address[1]
         secret_path.write_text(json.dumps(secret))
@@ -194,6 +199,20 @@ def run(binary):
         tools = mcp.request('tools/list', {})['result']['tools']
         names = {t['name']: t for t in tools}
         assert len(names) >= 11, names.keys()
+        for connector_name in (
+            'connector_list', 'connector_open', 'connector_exec',
+            'connector_exec_batch', 'connector_read', 'connector_get_status',
+            'connector_stream_open', 'connector_stream_read',
+            'connector_stream_write', 'connector_resize', 'connector_interrupt',
+            'connector_acknowledge', 'connector_close', 'connector_metrics',
+        ):
+            assert connector_name in names, connector_name
+        connector_list = mcp.tool('connector_list')
+        assert len(connector_list['securecrt']) == 1
+        assert connector_list['openssh'] == []
+        connector_metrics = mcp.tool('connector_metrics')
+        assert connector_metrics['backend'] == 'openssh'
+        assert connector_metrics['sessions'] == 0
         assert names['securecrt_execute_command']['annotations']['readOnlyHint'] is False
         assert names['securecrt_execute_command']['annotations']['destructiveHint'] is True
         assert names['securecrt_read_screen']['annotations']['readOnlyHint'] is True

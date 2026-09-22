@@ -18,7 +18,7 @@ import time
 import uuid
 from pathlib import Path
 
-BRIDGE_VERSION = "0.3.0"
+BRIDGE_VERSION = "0.4.0"
 PROTOCOL_VERSION = 2
 MAX_FRAME = 262144
 MAX_CHUNK = 65536
@@ -67,8 +67,8 @@ class NativeAdapter:
         self.send_attempted = False
         self.owner = 'legacy'
         self.metrics = dict(requests=0, native_reads=0, native_read_ms=0, chunks=0, bytes=0,
-                            lease_renewals=0, context_rejections=0, connections=0,
-                            prompt_readiness_extensions=0)
+                            drain_budget_extensions=0, lease_renewals=0, context_rejections=0,
+                            connections=0, prompt_readiness_extensions=0)
 
     @property
     def capture(self):
@@ -250,6 +250,11 @@ class NativeAdapter:
             if any(ord(ch) < 32 for ch in wait_for): fail('invalid wait_for')
             patterns.insert(0, wait_for)
         started = time.monotonic()
+        # SecureCRT exposes a synchronous ReadString API rather than a readable
+        # byte stream. Keep the first read short for fair scheduling, then give a
+        # continuously producing command a larger drain window so large output
+        # does not devolve into one native call per line.
+        drain_budget_ms = 12
         count, uncertain, overflow = 0, False, False
         pending = c['pending']
         # Local batching removes one socket round-trip + Rust sleep per output line.
@@ -273,10 +278,13 @@ class NativeAdapter:
                 overflow = True
             pending += data
             count += 1
+            if data and count >= 2 and drain_budget_ms < 75:
+                drain_budget_ms = 75
+                self.metrics['drain_budget_extensions'] += 1
             marker = c.get('completion_marker')
             boundary = marker and any(line.rstrip('\r').startswith(marker + ' ') for line in text.split('\n'))
             if (boundary or not matched or (wait_for and index == 1) or overflow
-                    or elapsed > 2 or time.monotonic() - started >= 0.012): break
+                    or elapsed > 2 or time.monotonic() - started >= drain_budget_ms / 1000): break
         end = min(len(pending), MAX_CHUNK)
         while end and end < len(pending) and (pending[end] & 0xC0) == 0x80: end -= 1
         data, c['pending'] = pending[:end], pending[end:]

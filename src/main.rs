@@ -1,6 +1,7 @@
 mod audit;
 mod bridge;
 mod config;
+mod connector;
 mod critical;
 mod daemon;
 mod execution;
@@ -338,10 +339,31 @@ fn print_codex_config(approval_mode: &str, toolset: &str) -> Result<()> {
             "shell_write",
             "shell_close",
             "latency",
+            "connector_list",
+            "connector_open",
+            "connector_exec",
+            "connector_exec_batch",
+            "connector_get_status",
+            "connector_read",
+            "connector_stream_open",
+            "connector_stream_read",
+            "connector_stream_write",
+            "connector_resize",
+            "connector_interrupt",
+            "connector_acknowledge",
+            "connector_close",
+            "connector_metrics",
         ];
         let tools = names
             .iter()
-            .map(|n| toml::Value::String(format!("securecrt_{n}")))
+            .map(|n| {
+                let name = if n.starts_with("connector_") {
+                    (*n).to_owned()
+                } else {
+                    format!("securecrt_{n}")
+                };
+                toml::Value::String(name)
+            })
             .collect();
         println!("enabled_tools = {}", toml::Value::Array(tools));
     }
@@ -360,8 +382,27 @@ fn print_codex_config(approval_mode: &str, toolset: &str) -> Result<()> {
         "heartbeat",
         "shell_read",
         "latency",
+        "connector_list",
+        "connector_open",
+        "connector_exec",
+        "connector_exec_batch",
+        "connector_get_status",
+        "connector_read",
+        "connector_stream_open",
+        "connector_stream_read",
+        "connector_stream_write",
+        "connector_resize",
+        "connector_interrupt",
+        "connector_acknowledge",
+        "connector_close",
+        "connector_metrics",
     ] {
-        println!("\n[mcp_servers.securecrt.tools.securecrt_{name}]\napproval_mode = \"approve\"");
+        let tool_name = if name.starts_with("connector_") {
+            name.to_owned()
+        } else {
+            format!("securecrt_{name}")
+        };
+        println!("\n[mcp_servers.securecrt.tools.{tool_name}]\napproval_mode = \"approve\"");
     }
     println!(
         "\n# Requires a Codex version supporting these keys. Test rejection before enabling production sessions."
