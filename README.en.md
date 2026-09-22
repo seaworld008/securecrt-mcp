@@ -25,6 +25,54 @@ It reuses the operator's VPN, bastion, SSH key, and MFA flow. It does not create
 - No automatic replay of unknown commands, implicit Ctrl+C, tab rebinding, or approval bypass.
 - Persistent OpenSSH `ssh -T`/`ssh -tt` sessions provide command execution, long-running streams, PTY input, resize and absolute-cursor pagination.
 
+## Architecture and connectors
+
+```mermaid
+flowchart LR
+    A["Codex / Claude / MCP client<br/>approval, risk and credential decisions"] -->|MCP stdio| B["securecrt-mcp Rust server<br/>unified API, sessions, output and audit"]
+    B --> C["SecureCRT backend<br/>securecrt_* / connector_*"]
+    C -->|protocol 2 / 127.0.0.1| D["SecureCRT Bridge<br/>native script thread"]
+    D --> E["Authenticated SecureCRT tab<br/>screen sampling, context checks and input"]
+    B --> F["OpenSSH backend (explicit opt-in)<br/>connector_*"]
+    F --> G["System OpenSSH<br/>persistent ssh -T / ssh -tt + PTY"]
+    G --> H["Remote server"]
+    E --> H
+    I["CLI / Python / PowerShell"] -->|optional loopback daemon| B
+```
+
+If the client does not render Mermaid, the same two paths are:
+
+```text
+MCP client (Codex / Claude)
+        |
+        v
+Rust securecrt-mcp (sessions, output, status and no-replay semantics)
+        +--> SecureCRT backend --> 127.0.0.1 Bridge --> authenticated tab
+        \--> OpenSSH backend (explicit opt-in) --> persistent ssh/PTY --> remote host
+```
+
+| Backend | Main tools | Connection | Best for |
+| --- | --- | --- | --- |
+| SecureCRT | `securecrt_*` (compatibility) or `connector_*` | Existing authenticated tab through the local Bridge | Reusing the operator's VPN, bastion, MFA and desktop session |
+| OpenSSH/PTY | `connector_*` | Persistent system `ssh -T` or `ssh -tt` session | High-frequency commands, long-running streams, REPLs, paging and raw PTY interaction |
+
+SecureCRT remains the default backend. OpenSSH must be selected explicitly with `backend: "openssh"`; the server never switches between backends automatically. OpenSSH uses the local `ssh_config`, Agent, ProxyJump and `known_hosts`; MCP does not store passwords or disable host-key verification by default. The upper-layer model owns approval, risk and credential use; MCP owns connection lifecycle, output streaming, exit state, pagination and no-replay handling for unknown results.
+
+OpenSSH example:
+
+```json
+{
+  "name": "connector_open",
+  "arguments": {
+    "backend": "openssh",
+    "target": "php-test",
+    "mode": "exec"
+  }
+}
+```
+
+Use the returned `session_id` with `connector_exec`, `connector_exec_batch`, `connector_read` or the PTY stream tools. To reuse an existing SecureCRT tab, follow `securecrt_list_sessions -> securecrt_attach -> securecrt_exec` below.
+
 ## Verified scope
 
 Before 0.4.1, Rust, Bridge, MCP stdio, batch, daemon, fault-injection, packaging, and connector tests passed. Real desktop acceptance was run on Windows x64 with SecureCRT 9.0.0 and embedded Python 3.8.10:

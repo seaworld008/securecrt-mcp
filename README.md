@@ -26,6 +26,54 @@
 - 不自动重放未知命令，不自动 Ctrl+C，不自动切换到同名会话，不静默绕过客户端审批。
 - OpenSSH connector 使用持久 `ssh -T`/`ssh -tt` 会话，支持命令、长驻流、PTY 输入、resize 和绝对 cursor 分页。
 
+## 架构与连接器
+
+```mermaid
+flowchart LR
+    A["Codex / Claude / MCP 客户端<br/>审批、风险判断、凭据使用"] -->|MCP stdio| B["securecrt-mcp Rust Server<br/>统一 API、会话、输出、审计"]
+    B --> C["SecureCRT 后端<br/>securecrt_* / connector_*"]
+    C -->|protocol 2 / 127.0.0.1| D["SecureCRT Bridge<br/>原生脚本线程"]
+    D --> E["已登录 SecureCRT Tab<br/>屏幕采样、上下文校验、原生输入"]
+    B --> F["OpenSSH 后端（显式 opt-in）<br/>connector_*"]
+    F --> G["系统 OpenSSH<br/>持久 ssh -T / ssh -tt + PTY"]
+    G --> H["远端服务器"]
+    E --> H
+    I["CLI / Python / PowerShell"] -->|可选 loopback daemon| B
+```
+
+如果客户端不渲染 Mermaid，可按下面的两条路径理解：
+
+```text
+MCP 客户端（Codex / Claude）
+        |
+        v
+Rust securecrt-mcp（统一会话、输出、状态和 no-replay 语义）
+        +--> SecureCRT 后端 --> 127.0.0.1 Bridge --> 已登录 SecureCRT Tab
+        \--> OpenSSH 后端（显式 opt-in）--> 持久 ssh/PTY --> 远端服务器
+```
+
+| 后端 | 主要工具 | 连接方式 | 适用场景 |
+| --- | --- | --- | --- |
+| SecureCRT | `securecrt_*`（兼容）或 `connector_*` | 复用 SecureCRT 已登录 Tab，经本机 Bridge 调用 | 复用现有 VPN、堡垒机、MFA 和桌面会话 |
+| OpenSSH/PTY | `connector_*` | 系统 OpenSSH 的持久 `ssh -T` 或 `ssh -tt` 会话 | 高频命令、长驻流、REPL、分页和原始 PTY 交互 |
+
+默认后端仍是 SecureCRT；OpenSSH 必须显式指定 `backend: "openssh"`，不会在两个后端之间自动切换。OpenSSH 使用本机 `ssh_config`、Agent、ProxyJump 和 `known_hosts`，MCP 不托管密码，也不默认绕过主机密钥校验。上层模型负责审批、危险判断和凭据使用；MCP 负责连接生命周期、输出流、退出状态、分页和未知结果不重放。
+
+OpenSSH 示例：
+
+```json
+{
+  "name": "connector_open",
+  "arguments": {
+    "backend": "openssh",
+    "target": "php-test",
+    "mode": "exec"
+  }
+}
+```
+
+返回的 `session_id` 可继续用于 `connector_exec`、`connector_exec_batch`、`connector_read` 或 PTY 流工具。需要继续使用现有 SecureCRT Tab 时，仍按下方的 `securecrt_list_sessions -> securecrt_attach -> securecrt_exec` 路径操作。
+
 ## 已验证范围
 
 0.4.1 发布前完成了 Rust、Bridge、MCP stdio、批量执行、daemon、故障注入、打包和连接器测试，并在 Windows x64 / SecureCRT 9.0.0 / 内嵌 Python 3.8.10 上进行了真实桌面验收：
