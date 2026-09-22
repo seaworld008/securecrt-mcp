@@ -1,0 +1,25 @@
+name: Prompt readiness development
+on:
+  push:
+    branches: [fix/prompt-readiness-rebase]
+    paths: ['.github/workflows/prompt-readiness-dev.yml']
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s tests -v
+      - name: Export immutable tracked review source only
+        run: git archive --format=tar.gz --output=/tmp/securecrt-readiness-source.tar.gz HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: securecrt-readiness-source
+          path: /tmp/securecrt-readiness-source.tar.gz
+          retention-days: 3
+          if-no-files-found: error
