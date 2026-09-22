@@ -2,10 +2,91 @@ name: Release preview
 on:
   push:
     tags: ['v*']
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
 permissions:
   contents: read
+concurrency:
+  group: securecrt-preview-release
+  cancel-in-progress: false
 jobs:
+  prepare:
+    if: >-
+      github.event_name == 'push' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      publish: ${{ steps.gate.outputs.publish }}
+      tag: ${{ steps.gate.outputs.tag }}
+      source_sha: ${{ steps.gate.outputs.source_sha }}
+      notes: ${{ steps.gate.outputs.notes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Pin the tested commit and honor an explicit release request
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os, re, subprocess, tomllib
+          from pathlib import Path
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          version = tomllib.loads(Path('Cargo.toml').read_text())['package']['version']
+          assert re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?', version)
+          tag, source = 'v' + version, git('rev-parse', 'HEAD')
+          request_path = Path('.github/release-request.json')
+          request = json.loads(request_path.read_text()) if request_path.exists() else {}
+          automatic = os.environ['EVENT'] == 'workflow_run'
+          if automatic and (request.get('enabled') is not True or request.get('tag') != tag):
+              print('No matching approved release request; nothing to publish.')
+              raise SystemExit(0)
+          if not automatic:
+              assert os.environ['REF_NAME'] == tag, 'tag/version mismatch'
+          notes = request.get('notes', 'CHANGELOG.md') if request.get('tag') == tag else 'CHANGELOG.md'
+          assert re.fullmatch(r'[A-Za-z0-9_./-]+', notes) and '..' not in Path(notes).parts
+          assert Path(notes).is_file(), 'release notes missing'
+          existing = subprocess.run(['gh', 'api', 'repos/' + os.environ['GH_REPO'] + '/releases/tags/' + tag],
+                                    capture_output=True, text=True)
+          if existing.returncode == 0:
+              assert json.loads(existing.stdout)['draft'] is False, 'existing draft requires explicit inspection'
+              print('Release already exists; do not recreate or overwrite assets: ' + tag)
+              raise SystemExit(0)
+          assert 'HTTP 404' in existing.stderr, existing.stderr
+          found = subprocess.run(['git', 'rev-parse', '--verify', 'refs/tags/' + tag + '^{commit}'],
+                                 capture_output=True, text=True)
+          if found.returncode == 0:
+              assert found.stdout.strip() == source, 'existing tag points to a different commit'
+          elif not automatic:
+              raise AssertionError('the pushed tag is missing')
+          if automatic:
+              main = subprocess.check_output(['gh', 'api', 'repos/' + os.environ['GH_REPO'] + '/git/ref/heads/main',
+                                              '--jq', '.object.sha'], text=True).strip()
+              assert main == source, 'main moved; refuse publishing an unselected commit'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'publish=true\ntag={tag}\nsource_sha={source}\nnotes={notes}\n')
+          print('Selected exact tested source: ' + source + ' / ' + tag)
+          PY
   build:
+    needs: prepare
+    if: needs.prepare.outputs.publish == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -26,6 +107,9 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@1.88.0
         with:
           targets: ${{ matrix.target }}
@@ -34,51 +118,75 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Tag/version gate
-        shell: bash
-        run: python -c 'import os,tomllib; assert os.environ["GITHUB_REF_NAME"] == "v"+tomllib.load(open("Cargo.toml","rb"))["package"]["version"]'
+      - run: python -m pip install 'pytest>=8,<9'
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - run: cargo test --locked --all-targets --all-features
-      - run: python -m unittest discover -s tests -v
+      - run: python -m pytest -q tests
       - run: python scripts/validate_repository.py
-      - run: cargo build --locked
-      - name: MCP and persistent terminal gates on runner architecture
+      - run: cargo build --locked --release --target-dir target-latest-test
+      - name: MCP and readiness gates on the native runner architecture
         shell: bash
         run: |
-          binary=target/debug/securecrt-mcp
+          binary=target-latest-test/release/securecrt-mcp
           if [ "${{ runner.os }}" = Windows ]; then binary="$binary.exe"; fi
+          python tests/prompt_readiness_smoke.py "$binary"
           python tests/mcp_smoke.py "$binary"
           python tests/ux_smoke.py "$binary"
           python tests/review_smoke.py "$binary"
           python tests/performance_smoke.py "$binary"
           python tests/persistent_fault_smoke.py "$binary"
           python tests/daemon_smoke.py "$binary"
+          python tests/package_smoke.py "$binary" "release-validation"
       - run: cargo build --locked --release --target ${{ matrix.target }}
       - run: python scripts/package_release.py target/${{ matrix.target }}/release/${{ matrix.binary }} ${{ matrix.target }}
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ matrix.target }}
-          path: dist/*
+          path: |
+            dist/*-${{ matrix.target }}.zip
+            dist/*-${{ matrix.target }}.zip.sha256
           if-no-files-found: error
   publish:
-    needs: build
+    needs: [prepare, build]
+    if: needs.prepare.outputs.publish == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.source_sha }}
+          persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
           pattern: release-*
           path: dist
           merge-multiple: true
-      - name: Verify archives and create preview release
+      - name: Verify four archives and publish the selected source once
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
+          NOTES: ${{ needs.prepare.outputs.notes }}
+          EVENT: ${{ github.event_name }}
+        shell: bash
         run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          if [ "$EVENT" = workflow_run ]; then
+            test "$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq '.object.sha')" = "$SOURCE_SHA"
+          fi
           cd dist
+          test "$(find . -maxdepth 1 -name '*.zip' | wc -l)" -eq 4
+          test "$(find . -maxdepth 1 -name '*.sha256' | wc -l)" -eq 4
           cat *.sha256 > SHA256SUMS
           sha256sum --check SHA256SUMS
-          gh release create "$TAG" --verify-tag --prerelease --generate-notes *.zip SHA256SUMS
+          cp "../$NOTES" RELEASE_NOTES.md
+          printf '\nSource commit: `%s`\n' "$SOURCE_SHA" >> RELEASE_NOTES.md
+          gh release create "$TAG" --target "$SOURCE_SHA" --prerelease --latest=false \
+            --title "securecrt-mcp $TAG — prompt readiness fix" \
+            --notes-file RELEASE_NOTES.md *.zip SHA256SUMS
+          git fetch --no-tags origin "refs/tags/$TAG"
+          test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$SOURCE_SHA"

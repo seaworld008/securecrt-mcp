@@ -64,3 +64,20 @@ Default stream capture retains a rolling bounded tail rather than blocking Secur
 默认省略新字段时使用操作系统缓冲，减少每次审计打开文件和同步刷盘的开销；这不保证断电时最近审计记录仍在磁盘。要求逐事件落盘时显式设置 `durability = "each_event"`。命令结果的 `timing.audit_dispatch_us` 用于区分审计开销和 Bridge/远端耗时。
 
 After an owned completion marker, the attachment waits briefly for the original prompt/input column rather than adopting a marker line as a new prompt. A changed prompt (including `cd` that changes prompt text), partially typed command, or uncertain input context requires explicit inspection/re-attachment; it is not silently trusted.
+
+## 0.3.0-preview.2: completion is not input readiness
+
+The native regression was a race between the owned completion marker and subsequent screen rendering, not a new SSH connection or a slow TCP pool. The previous guard accepted one matching sample immediately; a prompt with an unrestored cursor instead hit the unexpected-text branch and was rejected without waiting. Captured row movement and redraws after that first match made consecutive commands/batches fragile. The old doubles mostly kept a fully stable prompt visible and did not reproduce the intermediate cursor states.
+
+The fix remains in the adapter's attachment guard/end lifecycle: require the original capture's confirmed POSIX marker, allow at most 500ms of read-only repaint readiness (also capped by the request deadline), and require two matching prompt/input-column/terminal-width samples separated by approximately 10ms. Only connector-owned post-completion scrolling permits rebasing the row; the low-level screen-token/digest path is unchanged. Blank lines, that capture's exact marker and a cursor still inside the original prompt can settle; unexpected input, other markers, changed prompts/width or a cursor past the original input boundary are rejected. Missing completion evidence and unresolved work never enter this recovery path. No automatic send, retry, interrupt, reconnect or permission change is involved.
+
+A normally ready prompt adds roughly one sample interval, **not** a fixed 500ms sleep. The native script thread remains serialized, and native calls/OS scheduling can add delay outside the deliberate wait budget. An exhausted readiness budget rejects the pending command as unsent rather than misreporting it as a running-command timeout. `context_changed` now remains a specific Rust error code with an actionable original-terminal recovery message.
+
+Regression entrypoints:
+
+```sh
+python -m pytest -q tests
+python tests/prompt_readiness_smoke.py target-latest-test/release/securecrt-mcp
+```
+
+Use `.exe` on Windows. The smoke test drives the actual compiled Rust MCP, TCP framing and adapter against deterministic fake CRT redraws; it verifies sequential reuse, a three-command batch with independent output/exit/audit, uncertain-context batch stopping even with `continue`, two-tab isolation and timeout/no replay. Unit cases include delayed/blank/marker/premature single samples, partial manual input, changed width/prompt, deadline and lease expiry. No business host is contacted. These tests are functional race regressions, **not real SecureCRT latency measurements or native PTY certification**. The older benchmark JSON files above remain unchanged and are not relabelled as this release's performance.

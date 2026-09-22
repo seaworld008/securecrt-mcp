@@ -17,13 +17,15 @@ import time
 import uuid
 from pathlib import Path
 
-BRIDGE_VERSION = "0.3.0-preview.1"
+BRIDGE_VERSION = "0.3.0-preview.2"
 PROTOCOL_VERSION = 2
 MAX_FRAME = 262144
 MAX_CHUNK = 65536
 LEASE_MS = 120000
 SCREEN_MS = 30000
 WATCHDOG_MS = 10000
+PROMPT_READINESS_MS = 500
+PROMPT_SAMPLE_MS = 10
 
 
 def fail(message):
@@ -300,10 +302,12 @@ class NativeAdapter:
             except Exception as exc: errors.append(type(exc).__name__)
         if errors: self.unresolved_sessions[sid] = dict(session=sid, capture_id=c['id'])
         attachment = self.attachments.get(c.get('attachment_id'))
-        if attachment and confirmed_complete and not errors:
-            # Record only connector-owned completion. This is not keyboard interception.
-            attachment['awaiting_prompt'] = True
-            attachment['completion_marker'] = c.get('completion_marker')
+        if attachment:
+            # The owner confirms completion only after Rust parsed this capture's POSIX
+            # marker. A prompt/snapshot/unknown result grants NO redraw/rebase credit.
+            owned_complete = bool(confirmed_complete and not errors and c.get('completion_marker'))
+            attachment['awaiting_prompt'] = owned_complete
+            attachment['completion_marker'] = c.get('completion_marker') if owned_complete else None
             attachment['expires'] = self.now() + 600000
         return dict(released=True, unresolved=sid in self.unresolved_sessions, restore_errors=errors)
 
@@ -385,28 +389,63 @@ class NativeAdapter:
         return a
 
     def _attachment_context(self, a):
-        if a.get('awaiting_prompt'):
-            # After an owned completion, the marker may be visible before the shell prompt.
-            # Rebase row only when the ORIGINAL prompt and input column return. Never adopt
-            # arbitrary post-command text, a password prompt, or a half-entered command.
-            until = time.monotonic() + 0.2
-            while True:
-                current = self._input(a['entry'])
-                if all(current[k] == a['context'][k] for k in ('current_line', 'cursor_column', 'columns')):
-                    a['context'] = current
-                    a['awaiting_prompt'] = False
-                    return
-                line = current['current_line']
-                marker = a.get('completion_marker')
-                owned_marker = marker and line.startswith(marker + ' ') and line[len(marker)+1:].isdigit()
-                sleeper = getattr(self.app, 'Sleep', None)
-                if (line and not owned_marker) or not callable(sleeper) or time.monotonic() >= until:
+        if a.get('awaiting_prompt') and a.get('completion_marker'):
+            # A completion marker is NOT terminal input readiness. SecureCRT can render
+            # the line, cursor and scroll position separately. Rebase only after TWO
+            # samples of the original prompt/input boundary; never use a whole-screen
+            # digest or accept a new prompt. The row may change due to owned output.
+            expected = a['context']
+            until = time.monotonic() + PROMPT_READINESS_MS / 1000
+            if self.request_deadline is not None:
+                until = min(until, time.monotonic() +
+                            max(0, self.request_deadline - self.now()) / 1000)
+            stable = 0
+            # Iteration cap is additional protection even if a clock/Sleep misbehaves.
+            for _ in range(PROMPT_READINESS_MS // PROMPT_SAMPLE_MS + 1):
+                self._before_send()
+                if time.monotonic() >= until:
                     break
-                sleeper(5)
+                if self.now() > a['expires'] or not self._alive(a['entry']):
+                    fail('stale_attachment: native session changed during prompt readiness; nothing sent')
+                current = self._input(a['entry'])
+                if current['columns'] != expected['columns']:
+                    break  # Resize is not proof of a valid original input boundary.
+                line, column = current['current_line'], current['cursor_column']
+                if line == expected['current_line'] and column == expected['cursor_column']:
+                    stable += 1
+                    if stable == 2:
+                        a['context'] = current
+                        a['awaiting_prompt'] = False
+                        return
+                else:
+                    stable = 0
+                    marker = a['completion_marker']
+                    suffix = line[len(marker) + 1:] if line.startswith(marker + ' ') else ''
+                    owned_marker = (1 <= len(suffix) <= 3 and suffix.isascii()
+                                    and suffix.isdigit() and int(suffix) <= 255)
+                    # Wait through blank/owned-marker lines or a cursor still inside
+                    # the original prompt. A cursor PAST its boundary may be typed
+                    # whitespace hidden by rstrip(), so reject it like any half input.
+                    pending_cursor = (line == expected['current_line']
+                                      and 1 <= column < expected['cursor_column'])
+                    if line and not owned_marker and not pending_cursor:
+                        break  # Passwords, pagers, REPLs, changed prompts, typed input.
+                remaining_ms = int(round((until - time.monotonic()) * 1000))
+                if remaining_ms <= 0:
+                    break
+                delay = min(PROMPT_SAMPLE_MS, remaining_ms)
+                sleeper = getattr(self.app, 'Sleep', None)
+                if callable(sleeper):
+                    sleeper(delay)  # Yield to native rendering; NEVER send input here.
+                else:
+                    time.sleep(delay / 1000)
+            # Keep the completion evidence on bounded refusal. A later EXPLICIT
+            # intended request may revalidate the same attachment; we replay nothing.
         elif self._input(a['entry']) == a['context']:
             return
         self.metrics['context_rejections'] += 1
-        fail('context_changed: input/cursor changed; inspect and attach again; nothing sent')
+        fail('context_changed: original prompt/input boundary not stable within readiness budget '
+             'or unexpected input detected; inspect the same terminal; nothing sent')
 
     def heartbeat(self, attachment_id):
         a = self._attachment(attachment_id)
