@@ -6,7 +6,7 @@
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange)](https://www.rust-lang.org/)
 [English](README.en.md)
 
-**securecrt-mcp 0.4.0** 是一个面向生产环境的 Rust MCP Server：让 Codex、Claude 等 MCP 客户端安全、可审计地操作 SecureCRT 中已经登录的 SSH 会话，并可显式选择持久 OpenSSH/PTY 连接器。
+**securecrt-mcp 0.4.1** 是一个面向生产环境的 Rust MCP Server：让 Codex、Claude 等 MCP 客户端安全、可审计地操作 SecureCRT 中已经登录的 SSH 会话，并可显式选择持久 OpenSSH/PTY 连接器。
 
 它复用操作员已经完成的 VPN、堡垒机、SSH 密钥和 MFA 流程，不建立第二条 SSH 连接，也不导出服务器凭据。项目独立于 VanDyke Software。
 
@@ -28,7 +28,7 @@
 
 ## 已验证范围
 
-0.4.0 发布前完成了 Rust、Bridge、MCP stdio、批量执行、daemon、故障注入、打包和连接器测试，并在 Windows x64 / SecureCRT 9.0.0 / 内嵌 Python 3.8.10 上进行了真实桌面验收：
+0.4.1 发布前完成了 Rust、Bridge、MCP stdio、批量执行、daemon、故障注入、打包和连接器测试，并在 Windows x64 / SecureCRT 9.0.0 / 内嵌 Python 3.8.10 上进行了真实桌面验收：
 
 - Linux SSH Tab：`hostname`、`uptime`、`pwd`、`id` 连续执行成功。
 - 四命令 batch 完成，逐条返回输出和退出码。
@@ -45,7 +45,7 @@
 从 [最新 Release](https://github.com/seaworld008/securecrt-mcp/releases/latest) 下载 Windows x64 ZIP，同时下载 `SHA256SUMS`，在 PowerShell 中校验：
 
 ```powershell
-Get-FileHash .\securecrt-mcp-0.4.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256
+Get-FileHash .\securecrt-mcp-0.4.1-x86_64-pc-windows-msvc.zip -Algorithm SHA256
 Get-Content .\SHA256SUMS
 ```
 
@@ -60,7 +60,7 @@ Release 包含可执行文件、许可证、中文说明和对应版本的 Secur
 .\securecrt-mcp.exe paths
 ```
 
-在 SecureCRT 中选择 **Script -> Run**，运行 `paths` 输出的 `securecrt_bridge.py`。首次启动会显示中文提示；点击“确定”后运行：
+在 SecureCRT 中选择 **Script -> Run**，运行 `paths` 输出的 `securecrt_bridge.py`。即使当前没有登录任何服务器，Bridge 也会先启动监听；此时会话列表为空，后续登录服务器后会自动发现。首次启动会显示中文提示；点击“确定”后运行：
 
 ```powershell
 .\securecrt-mcp.exe doctor

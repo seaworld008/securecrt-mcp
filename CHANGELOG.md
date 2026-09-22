@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.4.1] - 2026-09-22
+
+- Keep the SecureCRT Bridge listener available when SecureCRT has no active or connected tabs.
+- Treat unavailable tab-bound dialog and sleep APIs as non-fatal during startup; sessions remain an empty live view until a tab connects.
+- Add a zero-tab startup regression test and clarify the no-session lifecycle in the Chinese and English operational documentation.
+
 ## [0.4.0] - 2026-09-22
 
 - Add an opt-in unified `connector_*` API with persistent OpenSSH command sessions and native PTY sessions while preserving every existing `securecrt_*` tool.

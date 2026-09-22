@@ -28,7 +28,7 @@
 
 ## 启动与重复启动
 
-Bridge 是 SecureCRT 脚本，不是独立 Python 服务。首次运行 `Script -> Run` 会在回环端口启动服务并显示中文提示。再次运行同一脚本时，如果端口已由旧实例占用，会显示“SecureCRT MCP 已经在运行”，不会重复监听，也不会发起新的 SSH 连接。
+Bridge 是 SecureCRT 脚本，不是独立 Python 服务。首次运行 `Script -> Run` 会在回环端口启动服务并显示中文提示；即使当前没有登录或打开远端 Tab，也会先启动监听，此时 `list_sessions` 返回空数组，后续登录后自动发现会话。再次运行同一脚本时，如果端口已由旧实例占用，会显示“SecureCRT MCP 已经在运行”，不会重复监听，也不会发起新的 SSH 连接。
 
 如果 SecureCRT 菜单中的 `Script -> Cancel` 不可用，直接重启 SecureCRT 是可靠的脚本生命周期清理方式。替换磁盘上的 Bridge 文件不会替换已经加载在 SecureCRT 内存中的旧脚本；升级后必须重新运行脚本，必要时重启 SecureCRT。
 

@@ -1,6 +1,9 @@
 """Native SecureCRT calls are faked; no sockets or remote hosts are contacted."""
 import importlib.util
 from pathlib import Path
+import socket
+import threading
+import time
 import unittest
 
 PATH = Path(__file__).resolve().parents[1] / 'bridge' / 'securecrt_bridge.py'
@@ -208,7 +211,6 @@ class AdapterTests(unittest.TestCase):
         self.assertFalse(result['ok'])
         self.assertIn('expired', result['error'])
         self.assertFalse(self.crt.tabs[0].Screen.sent)
-
     def test_deadline_rechecked_after_native_screen_validation(self):
         params = self.params()
         original = self.adapter._guard
@@ -247,6 +249,54 @@ class AdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, 'runtime_ms'):
             self.adapter.begin(**params)
         self.assertFalse(self.crt.tabs[0].Screen.sent)
+
+
+class TablessStartupTests(unittest.TestCase):
+    def test_listener_starts_without_tabs_or_ui_sleep(self):
+        class NoTabApp:
+            def GetTabCount(self):
+                return 0
+
+            def Sleep(self, milliseconds):
+                raise RuntimeError('no active SecureCRT tab')
+
+            class Dialog:
+                @staticmethod
+                def MessageBox(message, title):
+                    raise RuntimeError('dialog unavailable without a tab')
+
+        probe = socket.socket()
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+        probe.close()
+        stop = threading.Event()
+        error = []
+        config = {'host': '127.0.0.1', 'port': port, 'token': 't' * 64}
+
+        def run():
+            try:
+                namespace['serve'](NoTabApp(), config, stop)
+            except Exception as exc:
+                error.append(exc)
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        connected = False
+        for _ in range(100):
+            client = socket.socket()
+            try:
+                client.settimeout(0.05)
+                client.connect(('127.0.0.1', port))
+                connected = True
+                break
+            except OSError:
+                time.sleep(0.01)
+            finally:
+                client.close()
+        stop.set()
+        thread.join(1)
+        self.assertTrue(connected)
+        self.assertFalse(error, error)
 
 
 if __name__ == '__main__':
