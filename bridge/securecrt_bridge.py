@@ -17,7 +17,7 @@ import time
 import uuid
 from pathlib import Path
 
-BRIDGE_VERSION = "0.3.0-preview.2"
+BRIDGE_VERSION = "0.3.0-preview.3"
 PROTOCOL_VERSION = 2
 MAX_FRAME = 262144
 MAX_CHUNK = 65536
@@ -25,6 +25,7 @@ LEASE_MS = 120000
 SCREEN_MS = 30000
 WATCHDOG_MS = 10000
 PROMPT_READINESS_MS = 500
+PROMPT_READINESS_MAX_MS = 1500
 PROMPT_SAMPLE_MS = 10
 
 
@@ -65,7 +66,8 @@ class NativeAdapter:
         self.send_attempted = False
         self.owner = 'legacy'
         self.metrics = dict(requests=0, native_reads=0, native_read_ms=0, chunks=0, bytes=0,
-                            lease_renewals=0, context_rejections=0, connections=0)
+                            lease_renewals=0, context_rejections=0, connections=0,
+                            prompt_readiness_extensions=0)
 
     @property
     def capture(self):
@@ -395,15 +397,26 @@ class NativeAdapter:
             # samples of the original prompt/input boundary; never use a whole-screen
             # digest or accept a new prompt. The row may change due to owned output.
             expected = a['context']
-            until = time.monotonic() + PROMPT_READINESS_MS / 1000
+            started = time.monotonic()
+            request_until = None
             if self.request_deadline is not None:
-                until = min(until, time.monotonic() +
-                            max(0, self.request_deadline - self.now()) / 1000)
+                request_until = started + max(0, self.request_deadline - self.now()) / 1000
+            overall_until = started + PROMPT_READINESS_MAX_MS / 1000
+            if request_until is not None:
+                overall_until = min(overall_until, request_until)
+            until = min(started + PROMPT_READINESS_MS / 1000, overall_until)
             stable = 0
+            saw_safe_transition = False
+            extended = False
             # Iteration cap is additional protection even if a clock/Sleep misbehaves.
-            for _ in range(PROMPT_READINESS_MS // PROMPT_SAMPLE_MS + 1):
+            for _ in range(PROMPT_READINESS_MAX_MS // PROMPT_SAMPLE_MS + 2):
                 self._before_send()
                 if time.monotonic() >= until:
+                    if saw_safe_transition and not extended and until < overall_until:
+                        extended = True
+                        self.metrics['prompt_readiness_extensions'] += 1
+                        until = overall_until
+                        continue
                     break
                 if self.now() > a['expires'] or not self._alive(a['entry']):
                     fail('stale_attachment: native session changed during prompt readiness; nothing sent')
@@ -430,6 +443,7 @@ class NativeAdapter:
                                       and 1 <= column < expected['cursor_column'])
                     if line and not owned_marker and not pending_cursor:
                         break  # Passwords, pagers, REPLs, changed prompts, typed input.
+                    saw_safe_transition = True
                 remaining_ms = int(round((until - time.monotonic()) * 1000))
                 if remaining_ms <= 0:
                     break

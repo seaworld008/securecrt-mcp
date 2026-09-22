@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.0-preview.3] - 2026-09-22
+
+- Extend confirmed-completion prompt readiness once, up to 1.5 seconds, only while SecureCRT remains in a safe repaint transition. Normal ready prompts keep the short sampling path; typed input, changed prompts and unknown contexts remain rejected without sending.
+- Add regression coverage for slow real-tab redraws and expose readiness-extension metrics for desktop diagnosis.
+
 ## [0.3.0-preview.2] - 2026-09-22
 
 - Fix confirmed-command prompt repaint races with bounded 500ms/two-sample readiness before the next attachment send. Preserve original prompt/input column/width while rebasing owned scroll rows.
