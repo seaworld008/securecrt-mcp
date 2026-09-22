@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0-preview.2] - 2026-09-22
+
+- Fix confirmed-command prompt repaint races with bounded 500ms/two-sample readiness before the next attachment send. Preserve original prompt/input column/width while rebasing owned scroll rows.
+- Require capture-specific confirmed POSIX marker evidence; recheck deadlines/session leases during read-only waits. Keep half-input, changed prompts, unknown outcomes and unresolved work fail-closed without replay.
+- Preserve `context_changed` as an actionable Rust error code without changing delivery evidence or client permissions.
+- Add deterministic redraw regression tests and compiled MCP/adapter batch, per-command audit, two-tab and timeout/no-replay coverage to CI and release gates.
+- Keep protocol 2 and all existing interfaces/policy settings; upgrade and restart the embedded adapter together. Native desktop validation remains required.
+
 ## [0.3.0-preview.1] - 2026-09-21
 
 - Persistent bounded Bridge connection pool, atomic prepare-and-begin, batched buffered native reads and notification-driven waits.

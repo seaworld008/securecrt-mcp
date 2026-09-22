@@ -20,6 +20,8 @@ pub fn code(message: &str) -> &'static str {
         "stale_screen"
     } else if lower.contains("stale_session") {
         "stale_session"
+    } else if lower.contains("context_changed") {
+        "context_changed"
     } else if lower.contains("input_context_required") || lower.contains("prompt_mismatch") {
         "input_context_required"
     } else if lower.contains("operation_id conflict") || lower.contains("operation_conflict") {
@@ -61,6 +63,9 @@ pub fn action(error_code: &str) -> &'static str {
         }
         "stale_session" => {
             "List sessions again and explicitly select the intended target; never substitute a tab index."
+        }
+        "context_changed" => {
+            "Inspect the original terminal and wait for the original idle prompt. A new intended request may revalidate the same attachment after redraw; changed prompts require explicit inspection/re-attachment. Never automatically replay or acknowledge unresolved work."
         }
         "input_context_required" => {
             "Inspect the original terminal. Confirm an idle shell and target, then supply expected_prompt for a nonstandard prompt. Do not type into password prompts or REPLs."

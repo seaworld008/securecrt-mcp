@@ -176,3 +176,36 @@ fn critical_scope_allows_auth_config_backup_but_not_replacement() {
     assert!(is_critical("rm -rf /etc/ssh/../sudoers"));
     assert!(!is_critical("rm -rf /root/test-dir"));
 }
+
+#[test]
+fn prompt_context_error_is_actionable_without_changing_delivery_evidence() {
+    use crate::fault::{BridgeFault, code, details};
+    assert_eq!(
+        code("not sent: context_changed: original input boundary not ready"),
+        "context_changed"
+    );
+    for sent in [Some(false), None] {
+        let error = anyhow::Error::new(BridgeFault {
+            message: "context_changed: original prompt not stable".into(),
+            sent,
+        });
+        let value = details(&error);
+        assert_eq!(value["error_code"], "context_changed");
+        assert_eq!(value["sent"], serde_json::json!(sent));
+        assert_eq!(
+            value["state"],
+            if sent == Some(false) {
+                "rejected"
+            } else {
+                "unknown"
+            }
+        );
+        assert_eq!(value["automatic_retry"], false);
+        assert!(
+            value["action"]
+                .as_str()
+                .unwrap()
+                .contains("original terminal")
+        );
+    }
+}

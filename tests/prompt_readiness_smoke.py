@@ -207,8 +207,10 @@ def run(binary):
             'timeout_ms': 1000, 'on_error': 'continue', 'operation_id': 'timeout-no-replay'}))
         assert result['state'] == 'stopped' and len(result['results']) == 2, result
         assert result['results'][1]['state'] == 'timed_out', result
-        refused = exec_one(h, aid, 'pwd')
+        refused = h.mcp.tool('exec', {'attachment_id': aid, 'command': 'pwd', 'mode': 'posix'},
+                             expect_error=True)['error']['data']
         assert refused['state'] == 'rejected' and refused['sent'] is False, refused
+        assert refused['error_code'] == 'busy_unresolved' and refused['automatic_retry'] is False, refused
         assert h.app.tabs[0].Screen.commands == ['hostname', 'never-completes']
         assert '\x03' not in h.app.tabs[0].Screen.sent
     finally:
