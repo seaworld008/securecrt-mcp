@@ -1,14 +1,32 @@
-# Architecture: persistent terminal connector
+# Architecture: unified persistent terminal connector
 
 ## Ownership boundaries
 
-MCP clients own approval. Rust owns local session/operation state, command boundaries, incremental parsing, output retention and auditing. The standard-library Python adapter owns only native SecureCRT calls and buffering/connection bookkeeping. All crt calls stay on its script thread. A future supported PTY backend can replace that boundary; a normal external Rust process cannot directly access the injected crt object.
+MCP clients own approval. Rust owns local session/operation state, command boundaries, incremental parsing, output retention and auditing. The current backends are `SecureCrtBackend` and the explicit opt-in `OpenSshBackend`. The standard-library Python adapter owns only native SecureCRT calls and buffering/connection bookkeeping; all crt calls stay on its script thread. OpenSSH runs through the system client and does not require access to the injected crt object.
 
 ## Runtime paths
 
-Native MCP: client -> one long-lived `serve` process -> retained Engine -> four persistent bounded bridge lanes -> adapter -> existing authenticated Tab.
+Native MCP: client -> one long-lived `serve` process -> retained Engine -> selected connector backend.
+
+SecureCRT path: Engine -> four persistent bounded bridge lanes -> adapter -> existing authenticated Tab.
+
+OpenSSH path: Engine -> persistent `ssh -T` or `ssh -tt` process -> remote host. The OpenSSH backend is explicit opt-in and does not silently replace SecureCRT.
 
 Repeated CLI: CLI or Python/PowerShell helper -> explicitly started authenticated localhost daemon -> one retained Engine -> same bridge protocol. No automatic daemon spawning, no fallback/replay after a failed call. These are separate Engine instances; do not mix their command/attachment IDs.
+
+```mermaid
+flowchart LR
+    A["MCP client"] --> B["Rust Engine"]
+    B --> C["SecureCRT backend"]
+    C --> D["Local Bridge"]
+    D --> E["Authenticated SecureCRT tab"]
+    B --> F["OpenSSH backend<br/>(explicit opt-in)"]
+    F --> G["Persistent ssh/PTY"]
+    G --> H["Remote host"]
+    E --> H
+    I["CLI / Python / PowerShell"] --> J["Loopback daemon"]
+    J --> B
+```
 
 ## State and scheduling
 
