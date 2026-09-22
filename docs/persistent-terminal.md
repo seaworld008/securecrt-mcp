@@ -1,6 +1,6 @@
 # 持久终端使用指南
 
-适用版本：0.3.0-preview.3。目标是复用 SecureCRT 已登录 Tab，减少连接器开销；不是创建第二条 SSH 连接，也不是修改 Codex/Claude 的权限。
+适用版本：0.3.0。目标是复用 SecureCRT 已登录 Tab，减少连接器开销；不是创建第二条 SSH 连接，也不是修改 Codex/Claude 的权限。
 
 ## 推荐：原生 MCP 常驻进程
 
@@ -29,7 +29,7 @@
 
 ## 命令完成后的提示符 readiness / rebase
 
-`completed` 表示 Rust 已验证本次 POSIX 命令的结束标记，不表示 SecureCRT 已将下一次输入提示符完全重绘。0.3.0-preview.3 将这两个时刻分开处理：原捕获的 `end(confirmed_complete=true)` 且带有该捕获自己的 completion marker、原生设置恢复成功时，才允许下一次 `prepare_and_begin` 使用有界的内部 readiness 检查。
+`completed` 表示 Rust 已验证本次 POSIX 命令的结束标记，不表示 SecureCRT 已将下一次输入提示符完全重绘。0.3.0 将这两个时刻分开处理：原捕获的 `end(confirmed_complete=true)` 且带有该捕获自己的 completion marker、原生设置恢复成功时，才允许下一次 `prepare_and_begin` 使用有界的内部 readiness 检查。
 
 先等待 **500ms**，同时服从该 Bridge 请求的剩余 deadline；如果期间只观察到空行、本次精确 marker 或原提示符光标尚未归位等安全过渡态，则只延长一次，整体最多 **1.5s**。每次使用 `crt.Sleep` 让出约 **10ms** 后重新采样。正常已就绪提示符只需一次采样间隔，不会无条件停满1.5s。必须连续两次观察到**原提示符文本、原输入光标列和原终端列数**一致，才能更新 attachment 的屏幕行位置。上一命令导致的滚屏可以改变 `cursor_row`；这不等于授权接受不同提示符，也不要求历史整页 digest 保持不变。
 

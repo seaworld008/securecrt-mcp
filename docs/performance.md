@@ -65,7 +65,7 @@ Default stream capture retains a rolling bounded tail rather than blocking Secur
 
 After an owned completion marker, the attachment waits briefly for the original prompt/input column rather than adopting a marker line as a new prompt. A changed prompt (including `cd` that changes prompt text), partially typed command, or uncertain input context requires explicit inspection/re-attachment; it is not silently trusted.
 
-## 0.3.0-preview.3: adaptive prompt readiness
+## 0.3.0: adaptive prompt readiness
 
 The native regression was a race between the owned completion marker and subsequent screen rendering, not a new SSH connection or a slow TCP pool. The previous guard accepted one matching sample immediately; a prompt with an unrestored cursor instead hit the unexpected-text branch and was rejected without waiting. Captured row movement and redraws after that first match made consecutive commands/batches fragile. The old doubles mostly kept a fully stable prompt visible and did not reproduce the intermediate cursor states.
 

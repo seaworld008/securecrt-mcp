@@ -69,7 +69,7 @@ class UXHandler(socketserver.StreamRequestHandler):
 
 
 SID = 'fake-instance/fake-session'
-VERSION = '0.2.0-preview.2'
+VERSION = '0.3.0'
 
 
 def run(binary):
