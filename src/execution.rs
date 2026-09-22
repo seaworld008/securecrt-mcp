@@ -3,6 +3,7 @@ use crate::{
     audit::AuditLog,
     bridge::BridgeClient,
     config::Config,
+    connector::ConnectorManager,
     model::{CaptureMode, ContextParams, ExecuteParams, OutputParams},
     policy::{Decision, PolicyEngine},
 };
@@ -115,6 +116,7 @@ struct Registry {
 #[derive(Clone)]
 pub struct Engine {
     pub bridge: BridgeClient,
+    pub connectors: ConnectorManager,
     pub audit: AuditLog,
     pub policy: PolicyEngine,
     pub config: Config,
@@ -133,6 +135,7 @@ impl Engine {
     ) -> Self {
         Self {
             bridge,
+            connectors: ConnectorManager::new(),
             audit,
             policy,
             config,

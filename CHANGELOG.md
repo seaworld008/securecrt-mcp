@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.0] - 2026-09-22
+
+- Add an opt-in unified `connector_*` API with persistent OpenSSH command sessions and native PTY sessions while preserving every existing `securecrt_*` tool.
+- Add long-lived `ssh -T` and `ssh -tt` transports, cursor-paginated bounded output, PTY resize/write/interrupt/close, explicit unknown/no-replay handling and operation-id deduplication.
+- Add connector timing and throughput metrics, binary-safe output previews, bounded stderr draining and short SecureCRT probe budgets when the Bridge is unavailable.
+- Improve SecureCRT bulk capture with an adaptive native drain window while preserving prompt/context safety and no automatic input or replay.
+- Add unified connector documentation, Codex tool configuration, OpenSSH/PTY smoke coverage and real SecureCRT read-only acceptance including MySQL metadata and multi-page large-log handling.
+- Credentials remain outside MCP configuration; OpenSSH uses the caller's ssh_config, Agent, ProxyJump and known_hosts. OpenSSH remote performance acceptance remains environment-specific and is opt-in.
+
 ## [0.3.0] - 2026-09-22
 
 - Promote the persistent SecureCRT session workflow from preview to a stable production release after cross-platform CI and real SecureCRT desktop acceptance.
