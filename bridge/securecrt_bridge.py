@@ -18,7 +18,7 @@ import time
 import uuid
 from pathlib import Path
 
-BRIDGE_VERSION = "0.4.0"
+BRIDGE_VERSION = "0.4.1"
 PROTOCOL_VERSION = 2
 MAX_FRAME = 262144
 MAX_CHUNK = 65536
@@ -32,6 +32,28 @@ PROMPT_SAMPLE_MS = 10
 
 def fail(message):
     raise ValueError(message)
+
+
+def notify(app, message, title):
+    """A missing active tab must not prevent the listener from starting."""
+    try:
+        app.Dialog.MessageBox(message, title)
+    except Exception:
+        # SecureCRT can expose a reduced UI object before the first tab exists.
+        pass
+
+
+def sleep(app, milliseconds):
+    try:
+        if int(app.GetTabCount()) == 0:
+            time.sleep(milliseconds / 1000.0)
+            return
+    except Exception:
+        # A reduced app object may not expose tab enumeration before the first tab.
+        time.sleep(milliseconds / 1000.0)
+        return
+    # Preserve SecureCRT cancellation errors when a real tab is present.
+    app.Sleep(milliseconds)
 
 
 def integer(value, name, low, high):
@@ -577,7 +599,7 @@ def serve(app, config, stop_event=None):
     except OSError as exc:
         listener.close()
         if exc.errno == errno.EADDRINUSE:
-            app.Dialog.MessageBox(
+            notify(app,
                 'SecureCRT MCP 已经在运行\n'
                 '本地连接服务已启动，无需重复运行脚本。\n'
                 '如需重启，请先关闭原脚本或重启 SecureCRT。',
@@ -591,10 +613,10 @@ def serve(app, config, stop_event=None):
         try: conn.close()
         except OSError: pass
     try:
-        app.Dialog.MessageBox(
+        notify(app,
             'SecureCRT MCP 已启动\n'
             '版本：' + BRIDGE_VERSION + '\n'
-            '本地连接服务已就绪，可开始使用已登录的 SecureCRT 会话。\n'
+            '本地连接服务已就绪；当前没有登录会话时，会话列表为空，登录后会自动发现。\n'
             '请点击“确定”继续。',
             'SecureCRT MCP 已就绪')
         while not (stop_event and stop_event.is_set()):
@@ -647,7 +669,7 @@ def serve(app, config, stop_event=None):
                 except OSError: close(conn)
             for conn,p in list(peers.items()):
                 if time.monotonic()>p['deadline']: close(conn)
-            app.Sleep(1)
+            sleep(app, 1)
     finally:
         for cid in list(adapter.captures): adapter.end(cid,False)
         for conn in list(peers): close(conn)

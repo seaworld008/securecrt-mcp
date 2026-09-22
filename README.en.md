@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/github/license/seaworld008/securecrt-mcp)](LICENSE)
 [中文说明](README.md)
 
-**securecrt-mcp 0.4.0** is a production-oriented Rust MCP server for operating SSH sessions that are already authenticated in SecureCRT from Codex, Claude, or another MCP client, with an explicit persistent OpenSSH/PTY connector option.
+**securecrt-mcp 0.4.1** is a production-oriented Rust MCP server for operating SSH sessions that are already authenticated in SecureCRT from Codex, Claude, or another MCP client, with an explicit persistent OpenSSH/PTY connector option.
 
 It reuses the operator's VPN, bastion, SSH key, and MFA flow. It does not create a second SSH connection or export server credentials. This project is independent of VanDyke Software.
 
@@ -27,7 +27,7 @@ It reuses the operator's VPN, bastion, SSH key, and MFA flow. It does not create
 
 ## Verified scope
 
-Before 0.4.0, Rust, Bridge, MCP stdio, batch, daemon, fault-injection, packaging, and connector tests passed. Real desktop acceptance was run on Windows x64 with SecureCRT 9.0.0 and embedded Python 3.8.10:
+Before 0.4.1, Rust, Bridge, MCP stdio, batch, daemon, fault-injection, packaging, and connector tests passed. Real desktop acceptance was run on Windows x64 with SecureCRT 9.0.0 and embedded Python 3.8.10:
 
 - Three Linux SSH tabs (`php_test`, `php_dev`, `k8s-master1`) completed `hostname`, `uptime`, and `pwd` batches after a SecureCRT restart.
 - Long output was read through cursor pagination.
@@ -42,7 +42,7 @@ These results do not claim native SSH equivalence. Validate the actual targets, 
 Download the Windows x64 archive and `SHA256SUMS` from the [latest Release](https://github.com/seaworld008/securecrt-mcp/releases/latest):
 
 ```powershell
-Get-FileHash .\securecrt-mcp-0.4.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256
+Get-FileHash .\securecrt-mcp-0.4.1-x86_64-pc-windows-msvc.zip -Algorithm SHA256
 Get-Content .\SHA256SUMS
 ```
 
@@ -53,7 +53,7 @@ Unpack and initialize:
 .\securecrt-mcp.exe paths
 ```
 
-In SecureCRT choose **Script -> Run** and run the Bridge path printed by `paths`. Dismiss the Chinese startup dialog, then verify:
+In SecureCRT choose **Script -> Run** and run the Bridge path printed by `paths`. The Bridge starts even when no server is logged in; the session list stays empty until a tab connects and is discovered live. Dismiss the Chinese startup dialog, then verify:
 
 ```powershell
 .\securecrt-mcp.exe doctor
