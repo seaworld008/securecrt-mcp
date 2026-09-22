@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0] - 2026-09-22
+
+- Promote the persistent SecureCRT session workflow from preview to a stable production release after cross-platform CI and real SecureCRT desktop acceptance.
+- Add a friendly Chinese startup dialog and a clear already-running response when the Bridge port is already occupied by the active SecureCRT script.
+- Validate repeated commands, three-command batches across three SSH tabs, long-output pagination, observe-mode refusal, bounded prompt readiness, and no-replay failure handling.
+- Document production installation, upgrade, client approval, target confirmation, interactive-shell boundaries, and the SecureCRT script lifecycle.
+
 ## [0.3.0-preview.3] - 2026-09-22
 
 - Extend confirmed-completion prompt readiness once, up to 1.5 seconds, only while SecureCRT remains in a safe repaint transition. Normal ready prompts keep the short sampling path; typed input, changed prompts and unknown contexts remain rejected without sending.

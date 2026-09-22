@@ -6,6 +6,7 @@
 All crt calls remain on the SecureCRT script thread. Rust owns command parsing,
 policy, lifecycle, output storage and audit. Native waits are at most one second.
 """
+import errno
 import hashlib
 import hmac
 import json
@@ -17,7 +18,7 @@ import time
 import uuid
 from pathlib import Path
 
-BRIDGE_VERSION = "0.3.0-preview.3"
+BRIDGE_VERSION = "0.3.0"
 PROTOCOL_VERSION = 2
 MAX_FRAME = 262144
 MAX_CHUNK = 65536
@@ -563,14 +564,31 @@ def serve(app, config, stop_event=None):
     adapter=NativeAdapter(app)
     listener=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE if sys.platform=='win32' else socket.SO_REUSEADDR,1)
-    listener.bind(('127.0.0.1',port)); listener.listen(32); listener.setblocking(False)
+    try:
+        listener.bind(('127.0.0.1',port))
+    except OSError as exc:
+        listener.close()
+        if exc.errno == errno.EADDRINUSE:
+            app.Dialog.MessageBox(
+                'SecureCRT MCP 已经在运行\n'
+                '本地连接服务已启动，无需重复运行脚本。\n'
+                '如需重启，请先关闭原脚本或重启 SecureCRT。',
+                'SecureCRT MCP')
+            return
+        raise
+    listener.listen(32); listener.setblocking(False)
     peers={}; next_maintenance=0
     def close(conn):
         peers.pop(conn,None)
         try: conn.close()
         except OSError: pass
     try:
-        app.Dialog.MessageBox('securecrt-mcp '+BRIDGE_VERSION+'\nClick OK to serve persistent local connections.','securecrt-mcp')
+        app.Dialog.MessageBox(
+            'SecureCRT MCP 已启动\n'
+            '版本：' + BRIDGE_VERSION + '\n'
+            '本地连接服务已就绪，可开始使用已登录的 SecureCRT 会话。\n'
+            '请点击“确定”继续。',
+            'SecureCRT MCP 已就绪')
         while not (stop_event and stop_event.is_set()):
             now=time.monotonic()
             if now>=next_maintenance:

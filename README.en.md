@@ -1,73 +1,155 @@
 # securecrt-mcp
 
-**0.3.0-preview.3 · persistent terminal preview · bridge protocol 2 · [中文](README.md)**
+[![CI](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/seaworld008/securecrt-mcp?display_name=tag)](https://github.com/seaworld008/securecrt-mcp/releases)
+[![License](https://img.shields.io/github/license/seaworld008/securecrt-mcp)](LICENSE)
+[中文说明](README.md)
 
-Control existing authenticated SecureCRT tabs from Codex, Claude or another MCP client. Reuse the operator's VPN, bastion, SSH authentication and MFA. No new SSH connection or exported server credentials. Independent of VanDyke Software.
+**securecrt-mcp 0.3.0** is a production-oriented Rust MCP server for operating SSH sessions that are already authenticated in SecureCRT from Codex, Claude, or another MCP client.
 
-## Persistent by design
+It reuses the operator's VPN, bastion, SSH key, and MFA flow. It does not create a second SSH connection or export server credentials. This project is independent of VanDyke Software.
 
-- Four bounded persistent NDJSON lanes, control/read separation and TCP_NODELAY; never replay a failed exchange.
-- Batched native buffered reads instead of one bridge RPC per newline; no fixed sleep while output makes progress.
-- Per-session execution/interlocks, retained attachments, atomic preparation/begin and bounded notification-driven output waits.
-- Explicit batches with independent command IDs/output/exit codes/audits; uncertainty always stops.
-- Incremental long-line parsing and continuous stream capture with a rolling tail and explicit cursor gaps.
-- Optional authenticated foreground daemon for standalone CLI clients that need one retained Engine across processes.
-- `doctor --latency`, actual command timing fields and reproducible comparative benchmarks.
+> **Production scope:** suitable for operations diagnostics, release checks, log inspection, and controlled changes. It is a SecureCRT session connector, not a native SSH/PTY implementation and not a second AI approval system. Client approval, remote account authorization, and human target confirmation remain required.
 
-The same-host synthetic test improved1600 lines/204801 bytes from12069.76ms to56.44ms, and20 short commands from1160.12ms to180.07ms. **Real Rust/TCP/adapter, simulated already-buffered native screens: not SSH, VPN, native desktop, approval or LLM latency.** [Method, scope and raw samples](docs/performance.md).
+## What it provides
 
-## Build and upgrade
+- Opaque session handles for existing SecureCRT tabs instead of mutable tab indexes.
+- `attach -> exec` reuse for repeated commands on one verified tab.
+- `exec_batch` with up to 20 explicit commands, independent output, exit codes, audits, and command IDs.
+- Batched native reads, incremental output, cursor pagination, and explicit truncation/gap reporting.
+- Per-session leases, capture interlocks, timeouts, interrupts, idle acknowledgement, and unresolved-work quarantine.
+- An optional loopback daemon for CLI, Python, and PowerShell clients that need one retained Engine.
+- A narrow catastrophic-operation guard; routine command decisions stay with the MCP client and remote account.
+- No automatic replay of unknown commands, implicit Ctrl+C, tab rebinding, or approval bypass.
 
-Stop existing captures only after resolving their status, stop a running daemon, cancel the old SecureCRT script and close clients holding the binary. Preserve SSH tabs and local Git changes.
+## Verified scope
 
-```sh
+Before 0.3.0, Rust, Bridge, MCP stdio, batch, daemon, fault-injection, packaging, and adapter tests passed. Real desktop acceptance was run on Windows x64 with SecureCRT 9.0.0 and embedded Python 3.8.10:
+
+- Three Linux SSH tabs (`php_test`, `php_dev`, `k8s-master1`) completed `hostname`, `uptime`, and `pwd` batches after a SecureCRT restart.
+- Long output was read through cursor pagination.
+- An `observe` attachment rejected execution with `sent=false`.
+- Slow or uncertain prompt redraw returns `context_changed` without sending the next command.
+- Running the Bridge script twice shows a friendly already-running message instead of a Python bind traceback.
+
+These results do not claim native SSH equivalence. Validate the actual targets, client approval UI, SecureCRT build, and business workflow in every production environment.
+
+## Install on Windows
+
+Download the Windows x64 archive and `SHA256SUMS` from the [latest Release](https://github.com/seaworld008/securecrt-mcp/releases/latest):
+
+```powershell
+Get-FileHash .\securecrt-mcp-0.3.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256
+Get-Content .\SHA256SUMS
+```
+
+Unpack and initialize:
+
+```powershell
+.\securecrt-mcp.exe init
+.\securecrt-mcp.exe paths
+```
+
+In SecureCRT choose **Script -> Run** and run the Bridge path printed by `paths`. Dismiss the Chinese startup dialog, then verify:
+
+```powershell
+.\securecrt-mcp.exe doctor
+.\securecrt-mcp.exe doctor --latency
+```
+
+Running the script again is harmless: the active Bridge reports that it is already running. To restart, resolve active or unresolved work first, then stop the script or restart SecureCRT.
+
+### Upgrade
+
+```powershell
 git pull --ff-only origin main
 cargo build --locked --release
-./target/release/securecrt-mcp upgrade
-./target/release/securecrt-mcp doctor --offline
-./target/release/securecrt-mcp paths
-./target/release/securecrt-mcp codex-config --toolset terminal --approval-mode auto
+.\target\release\securecrt-mcp.exe upgrade
+.\target\release\securecrt-mcp.exe doctor --offline
 ```
 
-Use init for first installation. Windows uses target\\release\\securecrt-mcp.exe. upgrade preserves installed policy/token and backs up the adapter; init --force is an explicit reset, not routine repair. Start the installed adapter using SecureCRT Script > Run, dismiss its dialog, then run doctor and doctor --latency. Default data home is ~/.securecrt-mcp; SECURECRT_MCP_HOME may override it with an absolute path.
+`upgrade` preserves the existing token, policy, and custom deny rules and backs up the previous Bridge. Restart the installed Bridge after upgrading; replacing the file does not replace a script already loaded in SecureCRT memory. Do not use `init --force` for routine upgrades.
 
-Merge client configuration without replacing unrelated settings. Older enabled_tools lists may hide new tools. Existing installations retain their selected policy: explicitly choose `[policy] mode="client"` for client-owned command approval with the narrow catastrophic guard. Custom deny rules are not erased.
+## MCP client setup
 
-## Tool workflow
+Generate additive Codex terminal configuration:
 
-List sessions, inspect target, attach once, then exec repeatedly or exec_batch. Detach does not exit SSH or kill work. Each execution tool remains non-read-only and potentially destructive; an attachment never grants permanent approval. `run_command` is retained as a compatible one-off wrapper and also uses fused preparation on capable adapters.
+```powershell
+.\securecrt-mcp.exe codex-config --toolset terminal --approval-mode prompt
+```
+
+Merge the output into the existing Codex configuration. Example for Claude Code:
+
+```powershell
+claude mcp add --transport stdio --scope user securecrt -- `
+  "C:\Tools\securecrt-mcp.exe" serve
+```
+
+Start with `prompt` while validating client rejection and zero terminal input, then choose the approval mode required by your operating policy.
+
+## Daily workflow
+
+1. List sessions and inspect the target screen.
+2. Attach once to the verified tab and retain the `attachment_id`.
+3. Reuse that attachment for `securecrt_exec`, or submit a small explicit `securecrt_exec_batch`.
+4. Check `state`, `sent`, `exit_code`, `error_code`, cursors, and audit fields on every result.
+5. Use `securecrt_shell_open/read` for long-running output and explicit `securecrt_interrupt` for a foreground process that must be interrupted.
 
 ```json
-{"attachment_id":"actual handle","command":"docker ps","mode":"posix","max_bytes":16384}
+{
+  "attachment_id": "actual attachment id",
+  "command": "hostname",
+  "mode": "posix",
+  "timeout_ms": 30000
+}
 ```
 
-Batch commands are all visible in the initial approval context. At most20 commands, stop/continue-on-confirmed-nonzero policy, always stop on uncertainty. Query batch_id; each result has its own command_id for output pagination. It is not an atomic remote transaction.
+Batch is not a transaction or permanent authorization. Every command must be visible in the first client approval context. Unknown, timed-out, changed-context, and transport-failed work stops without replay.
 
-Use shell_open for an explicit long-running command, shell_read for incremental data, and shell_close to stop capture without remote input. Explicit interrupt sends Ctrl+C. Raw shell_write requires allow_raw_send; arbitrary input fragments cannot be safely classified as complete shell commands. Default stream capture is10minutes, bounded by max_stream_timeout_ms (default1hour); capturing does not supervise all remote processes.
+## Safety boundaries
 
-Use [persistent terminal instructions](docs/persistent-terminal.md), [Claude setup](docs/clients/claude.md), [Codex setup](docs/clients/codex.en.md), and [migration](docs/migration-0.3.md).
+- The Bridge listens only on `127.0.0.1`, with a random token, request deadlines, and frame limits.
+- `client` mode delegates routine approval to Codex/Claude. The built-in guard blocks only a small set of catastrophic mistakes; it is not a shell parser or sandbox.
+- `shared`, `exclusive`, and `observe` are cooperative connector modes, not a SecureCRT keyboard lock. Human input, reconnects, and nested SSH targets still require operator confirmation.
+- Attachments are not permanent authorization, and daemon restart does not provide exactly-once durability.
+- A POSIX completion marker proves foreground return, not that background children terminated.
+- MySQL, pagers, REPLs, editors, and password prompts are not ordinary POSIX shells; inspect before sending shell commands.
 
-## CLI reuse
+See [security model](docs/security-model.md), [persistent terminal guide](docs/persistent-terminal.md), and the [production checklist](docs/production-readiness.md).
 
-Native MCP serve is already persistent and does not need a daemon. For repeated standalone CLI calls, explicitly start `securecrt-mcp daemon` in a separate terminal, then `session attach|exec|output --input request.json`. Existing run/sessions/screen route through a running daemon and never automatically fall back after failure. Python and PowerShell wrappers are in clients/. Use daemon --stop after all active/unresolved work is resolved. A stale endpoint can be explicitly cleaned only after a refused connection; this never clears remote/bridge state.
+## Production checklist
 
-## Safety and native boundaries
+- [ ] Run `doctor` on the target SecureCRT installation and confirm the Bridge version and capabilities.
+- [ ] Reject one harmless command in the real client approval UI and verify zero terminal input.
+- [ ] Complete repeated commands and a small batch on the same attachment.
+- [ ] Verify slow redraw fails closed with `context_changed` and never duplicates a command.
+- [ ] Distinguish POSIX shells from MySQL/REPL, pager, and editor contexts.
+- [ ] Protect the daemon endpoint, audit directory, and token backups with local OS permissions.
+- [ ] Start with a non-production tab before enabling production sessions.
 
-client mode delegates routine command decisions, retaining a narrow catastrophic mistake guard and explicit custom deny patterns. Ordinary file deletion, grep text and routine service operations are not inherently rejected by that default. Legacy safe/allowlist/unrestricted profiles remain optional and are not silently overwritten. This is not a shell sandbox; wrappers, dynamic code, aliases and raw input have limits. Remote account authorization remains necessary.
+## Documentation
 
-shared/exclusive/observe are cooperative connector modes, not a native keyboard lock. Sampled input/cursor context does not observe every keystroke. Configured endpoint hashes are not authenticated nested SSH fingerprints; the latter is explicitly null. No automatic unknown-command retry, implicit Ctrl+C, or acknowledgement. Session/operation IDs are not durable exactly-once state across process restarts.
+- [中文生产验收](docs/production-readiness.md)
+- [Persistent terminal](docs/persistent-terminal.md)
+- [Security model](docs/security-model.md)
+- [Architecture](docs/architecture.md) · [Bridge protocol](docs/bridge-protocol.md)
+- [Performance and limits](docs/performance.md)
+- [Troubleshooting](docs/troubleshooting.md)
+- [Codex](docs/clients/codex.en.md) · [Claude](docs/clients/claude.md)
+- [Release process](docs/releases.md)
 
-Native calls remain on SecureCRT's script thread. A quiet ReadString can wait one second and multiple quiet captures can queue; buffering optimizations do not create a raw-PTY event API. Long native strings are allocated by SecureCRT before Python can bound them. Retained output is bounded and loss/gaps are reported.
+## Development
 
-Historical Windows evidence: on2026-09-20, preview.1 protocol2 was exercised on Windows x64, SecureCRT9.0.0 x64 and embedded Python3.8.10, including session enumeration, read-screen, hostname and old policy rejection. This is not a validation claim for0.3 or other platforms. Final CI must pass cross-platform Rust/MCP/fault/daemon tests; actual native desktop and client approval behavior still require local acceptance.
+```powershell
+cargo fmt --all -- --check
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo test --locked --all-targets --all-features
+python -m pytest -q tests
+python scripts/validate_repository.py
+```
 
-[Architecture](docs/architecture.md) · [Protocol](docs/bridge-protocol.md) · [Security](docs/security-model.md) · [Performance](docs/performance.md) · [Testing](docs/testing.md) · [Releases](docs/releases.md) · [MIT](LICENSE)
+Contributions: [CONTRIBUTING.md](CONTRIBUTING.md). Private security reports: [SECURITY.md](SECURITY.md).
 
+## License
 
-## Audit durability / 审计持久化时机
-
-`audit.durability = "os_buffered"` is the default for configurations omitting this new field. The append handle is reused and each write is flushed to the operating system before dispatch; write/open failures still reject before sending. It does **not** fsync every event and may lose recent audit records on OS crash/power loss. Choose `"each_event"` to restore synchronous event durability, accepting local disk latency. This is a durability/performance choice, not a change to client permissions. Configure it explicitly when upgrading under an existing audit-compliance requirement. Log rotation that replaces the file requires restarting the MCP/daemon to reopen the handle; copy-truncate retains the handle but has the usual rotation races.
-
-默认省略新字段时使用操作系统缓冲，减少每次审计打开文件和同步刷盘的开销；这不保证断电时最近审计记录仍在磁盘。要求逐事件落盘时显式设置 `durability = "each_event"`。命令结果的 `timing.audit_dispatch_us` 用于区分审计开销和 Bridge/远端耗时。
-
-After an owned completion marker, the attachment waits briefly for the original prompt/input column rather than adopting a marker line as a new prompt. A changed prompt (including `cd` that changes prompt text), partially typed command, or uncertain input context requires explicit inspection/re-attachment; it is not silently trusted.
+MIT License. See [LICENSE](LICENSE).

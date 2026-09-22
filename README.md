@@ -1,167 +1,175 @@
 # securecrt-mcp
 
-[![CI](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml) · [MIT](LICENSE) · [English](README.en.md)
+[![CI](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/seaworld008/securecrt-mcp?display_name=tag)](https://github.com/seaworld008/securecrt-mcp/releases)
+[![License](https://img.shields.io/github/license/seaworld008/securecrt-mcp)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.88%2B-orange)](https://www.rust-lang.org/)
+[English](README.en.md)
 
-**0.3.0-preview.3 · 持久终端性能预览版 · Bridge 协议 2**
+**securecrt-mcp 0.3.0** 是一个面向生产环境的 Rust MCP Server：让 Codex、Claude 等 MCP 客户端安全、可审计地操作 SecureCRT 中已经登录的 SSH 会话。
 
-让 Codex、Claude 等 AI Agent 操作 **SecureCRT 中已经登录好的服务器会话**。保留现有 VPN、堡垒机、SSH 密钥和 MFA 流程，不重新登录、不导出服务器凭证。
+它复用操作员已经完成的 VPN、堡垒机、SSH 密钥和 MFA 流程，不建立第二条 SSH 连接，也不导出服务器凭据。项目独立于 VanDyke Software。
 
-```text
-Codex / Claude / MCP Client
-           │ 常驻 stdio
-           ▼
-    Rust 会话与执行引擎
-    attachments / batch / 增量输出 / 诊断
-           │ 有界持久 NDJSON 连接池
-           ▼
-    SecureCRT 内置 Python 适配器
-           │ 原生 crt 脚本 API
-           ▼
-    已登录的 SSH Tab
-```
+> **生产定位**：适合运维诊断、发布检查、日志查看和受控变更。它是 SecureCRT 会话连接层，不是原生 SSH/PTY，也不是第二套 AI 权限系统。客户端审批、远端账号权限和人工目标确认仍然有效。
 
-MCP 是连接与执行层，不是第二套 AI 审批系统。默认 `client` 模式允许常规操作，只保留狭窄的极高危防误操作过滤和用户自定义拒绝规则；命令批准由客户端配置，最终权限由服务器账号控制。项目独立于 VanDyke Software。
+## 能力概览
 
-## 本版为什么更快
+- 复用已登录的 SecureCRT Tab，按不透明会话句柄绑定目标，避免用 Tab 序号误操作。
+- `attach -> exec` 连续执行，减少重复建立连接、读屏和令牌开销。
+- `exec_batch` 支持最多 20 条命令，每条拥有独立输出、退出码、审计和 command ID；不确定结果始终停止。
+- 批量读取原生缓冲、增量输出和滚动游标，长日志明确报告截断或 gap。
+- per-session 捕获、lease、超时、interrupt、idle acknowledgement 和未决任务隔离。
+- 可选 loopback daemon，供 CLI、Python 和 PowerShell 高频调用复用同一个 Engine。
+- 默认仅做少量极高危防误操作过滤；普通命令由 MCP 客户端审批和远端账号权限决定。
+- 不自动重放未知命令，不自动 Ctrl+C，不自动切换到同名会话，不静默绕过客户端审批。
 
-之前的主要开销不是多一个函数，而是逐行 RPC、每次新建 TCP、固定暂停、窗口级全局互斥和 CLI 每次重建 Engine。本版对应修改了这些层：
+## 已验证范围
 
-| 旧路径 | 新路径 |
-|---|---|
-| 每个 Bridge 请求新建 TCP | 4条有界持久连接通道，控制与输出读取分离，TCP_NODELAY |
-| 每行日志返回一次 RPC | 按数量/时间预算批量读取原生缓冲，再按 UTF-8 块返回 |
-| 每次有数据也暂停5ms | 有进展即继续，调用者使用通知唤醒 |
-| 单个窗口只能一个 capture | 每个 Tab 独立执行、超时和未决状态 |
-| 每条命令重新外部传 Token | attach 一次后使用 exec；普通 run 也合并准备和发送 |
-| 超过64KiB单行直接未知 | 增量解析及分块，连续流提供滚动缓存和缺口标记 |
-| CLI 退出丢失缓存 | 可选常驻 daemon，跨 CLI/Python/PowerShell 调用保留同一个 Engine |
+0.3.0 发布前完成了 Rust、Bridge、MCP stdio、批量执行、daemon、故障注入、打包和适配器测试，并在 Windows x64 / SecureCRT 9.0.0 / 内嵌 Python 3.8.10 上进行了真实桌面验收：
 
-同一测试环境，1600行/约200KB的已缓冲输出从约12.07秒降到56毫秒；20条短命令总计从约1.16秒降到0.18秒。**这是实际 Rust/TCP/适配器 + 模拟原生屏幕的连接器基准，不是实际 SSH、VPN 或模型端到端性能保证。** [完整方法和原始结果](docs/performance.md)。
+- Linux SSH Tab：`hostname`、`uptime`、`pwd`、`id` 连续执行成功。
+- 四命令 batch 完成，逐条返回输出和退出码。
+- 慢重绘场景会等待有限预算；上下文仍不稳定时返回 `context_changed`，不发送下一条命令。
+- 长输出可按游标分页读取，观察模式 attachment 会拒绝执行且 `sent=false`。
+- 重复运行 Bridge 脚本时显示中文“已经在运行”提示，不再暴露 Python 端口异常。
 
-## 安装和升级
+测试成功不等于原生 SSH 等价。真实目标、客户端审批、SecureCRT 桌面行为和远端业务仍应在你的环境完成验收。
 
-需要 Rust 1.88 编译，以及能运行 Python 3 脚本的 SecureCRT。适配器只使用 Python 标准库，保持3.8语法兼容；兼容测试不意味着推荐过期运行时作为安全基线。
+## 安装（Windows）
 
-已有用户：先确认无活动/未决操作，停止已启动的 daemon，SecureCRT 中 Script → Cancel，退出占用旧程序的客户端，保留 SSH Tab。逐条执行，遇错停止：
+### 1. 下载并校验
+
+从 [最新 Release](https://github.com/seaworld008/securecrt-mcp/releases/latest) 下载 Windows x64 ZIP，同时下载 `SHA256SUMS`，在 PowerShell 中校验：
 
 ```powershell
-git status --short
-git switch main
+Get-FileHash .\securecrt-mcp-0.3.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256
+Get-Content .\SHA256SUMS
+```
+
+Release 包含可执行文件、许可证、中文说明和对应版本的 SecureCRT Bridge。校验和用于发现传输损坏，不代替发布者身份验证。
+
+### 2. 初始化 Bridge
+
+解压后运行：
+
+```powershell
+.\securecrt-mcp.exe init
+.\securecrt-mcp.exe paths
+```
+
+在 SecureCRT 中选择 **Script -> Run**，运行 `paths` 输出的 `securecrt_bridge.py`。首次启动会显示中文提示；点击“确定”后运行：
+
+```powershell
+.\securecrt-mcp.exe doctor
+.\securecrt-mcp.exe doctor --latency
+```
+
+如果重复点击脚本，提示“SecureCRT MCP 已经在运行”即可，不需要再次启动。需要重启时先确认没有活动或未决命令，再停止脚本或重启 SecureCRT。
+
+### 3. 升级
+
+普通升级不要使用 `init --force`：
+
+```powershell
 git pull --ff-only origin main
 cargo build --locked --release
 .\target\release\securecrt-mcp.exe upgrade
 .\target\release\securecrt-mcp.exe doctor --offline
-.\target\release\securecrt-mcp.exe paths
-.\target\release\securecrt-mcp.exe codex-config --toolset terminal --approval-mode auto
 ```
 
-本地修改先保存，不用强制 reset/clean。首次安装使用 `init`，普通升级不用 `init --force`。`upgrade` 保留配置/Token、备份被替换的适配器，并从当前 Rust 二进制释放相同版本脚本。
+`upgrade` 保留现有 Token、策略和自定义拒绝规则，并备份被替换的 Bridge。升级后必须重新运行安装目录中的 Bridge；旧脚本已加载在内存中时，仅替换文件不会改变运行版本。
 
-在 SecureCRT 中 Script → Run，运行 `paths` 返回的脚本；启动提示框点击 OK。然后：
+## MCP 客户端配置
+
+生成 Codex 终端工具配置：
 
 ```powershell
-.\target\release\securecrt-mcp.exe doctor
-.\target\release\securecrt-mcp.exe doctor --latency
+.\securecrt-mcp.exe codex-config --toolset terminal --approval-mode prompt
 ```
 
-确认运行中版本及 capabilities，不要只更新磁盘文件却继续运行旧脚本。macOS/Linux 使用 `./target/release/securecrt-mcp`。默认目录 `~/.securecrt-mcp`；可用绝对路径 `SECURECRT_MCP_HOME` 覆盖。适配器读取自身目录中的 bridge.json。
+将输出合并到现有 Codex 配置，不要覆盖其他 MCP。Claude Code 示例：
 
-**现有安装保留原 mode。** 使用客户端主导模式时，只修改 MCP 自己配置中现有 `[policy]` 的 `mode = "client"`；不要覆盖 Codex 的其他配置，也不要清空自己配置的 custom_deny_patterns。
-
-## 最短的日常路径
-
-原生 MCP 的启动命令是 `securecrt-mcp serve`，让它持续运行。先 list、核实目标，然后：
-
-```json
-{"session":"实际会话句柄","mode":"shared"}
+```powershell
+claude mcp add --transport stdio --scope user securecrt -- `
+  "C:\Tools\securecrt-mcp.exe" serve
 ```
 
-用上面的参数调用 `securecrt_attach`，取得 attachment_id。之后优先 `securecrt_exec`：
+客户端权限模式由操作者选择。生产环境建议先使用 `prompt` 完成拒绝路径验收，再按组织策略启用更宽松的客户端审批模式。
 
-```json
-{"attachment_id":"实际 attachment_id","command":"docker ps","mode":"posix","max_bytes":16384}
-```
+## 日常操作路径
 
-多步排查可用 `securecrt_exec_batch`：
+1. `securecrt_list_sessions` 列出会话，核对标题、目标和当前屏幕。
+2. 对确认无误的 Tab 调用 `securecrt_attach`，保存返回的 `attachment_id`。
+3. 复用同一个 attachment 调用 `securecrt_exec`；多步诊断使用 `securecrt_exec_batch`。
+4. 每次检查 `state`、`sent`、`exit_code`、`error_code`、输出游标和审计字段。
+5. 长日志使用 `securecrt_shell_open/read`；需要停止远端前台程序时显式调用 `securecrt_interrupt`。
+
+示例：
 
 ```json
 {
-  "attachment_id":"实际 attachment_id",
-  "commands":["hostname","uptime","df -h","docker ps"],
-  "operation_id":"diagnostic-001",
-  "on_error":"stop"
+  "attachment_id": "实际 attachment_id",
+  "command": "hostname",
+  "mode": "posix",
+  "timeout_ms": 30000
 }
 ```
 
-全部命令在客户端的同一个工具批准上下文中列出，每条有独立输出、退出码和审计记录。返回 batch_id 后查询 get_batch_status；不是每条再启动一个 CLI。非零退出可选择停止或继续，未知结果始终停止。
-
-长日志使用 shell_open/read；结束捕获用 shell_close，需要 Ctrl+C 则明确 interrupt。输出按 UTF-8 字节游标读取，落后导致数据淘汰时明确报告 gap。`run_command` 和低层工具仍保留兼容。[持久终端完整指南](docs/persistent-terminal.md)。
-
-## Codex / Claude
-
-将 `codex-config --toolset terminal` 打印的增量配置合并到原文件，避免重复表名或遗留旧 enabled_tools 隐藏新工具。`auto|prompt|writes|approve` 由操作者选择；生成器不改文件，不伪装只读工具绕过确认。
-
-Claude Code 可使用：
-
-```powershell
-claude mcp add --transport stdio --scope user securecrt -- "C:\Tools\securecrt-mcp.exe" serve
+```json
+{
+  "attachment_id": "实际 attachment_id",
+  "commands": ["hostname", "uptime", "df -h"],
+  "operation_id": "ops-check-20260922-001",
+  "on_error": "stop"
+}
 ```
 
-路径换成实际安装位置。详见 [Codex](docs/clients/codex.md) / [Claude](docs/clients/claude.md)。客户端权限和本地安全模式不能从文档自动获得，必须验证实际工具可见性和拒绝后的零发送。
+Batch 不是事务，也不是永久授权；所有命令应在客户端第一次批准时明确列出。未知、超时、上下文变化和传输失败始终停止，不自动重放。
 
-## 独立 CLI 高频调用
+## 安全边界
 
-原生 MCP 不需要 daemon。只有从 PowerShell/Python 反复独立调用 CLI、又要跨进程保留状态时，在独立终端显式启动：
+- Bridge 只监听 `127.0.0.1`，使用随机 Token、请求 deadline 和消息大小上限。
+- `client` 模式把日常命令审批交给 Codex/Claude 等客户端；内置规则只拦截少量关键破坏性命令，不是 Shell 静态分析器或沙箱。
+- `shared`、`exclusive`、`observe` 是连接器协作模式，不是 SecureCRT 键盘锁。人工输入、重连和嵌套 SSH 目标仍需操作员确认。
+- attachment 不等于永久授权；daemon 重启后不提供 exactly-once 保证。
+- POSIX 完成标记只证明前台命令返回，不证明后台子进程终止。
+- MySQL、pager、REPL、编辑器、密码框等非普通 POSIX 提示符应先读屏确认，不要直接发送 Shell batch。
+
+完整定义见 [安全模型](docs/security-model.md)、[持久终端指南](docs/persistent-terminal.md) 和 [生产验收清单](docs/production-readiness.md)。
+
+## 生产验收清单
+
+- [ ] 在目标 SecureCRT 版本运行 `doctor`，确认 Bridge 版本和 capabilities。
+- [ ] 在测试 Tab 中拒绝一次无害命令，确认客户端拒绝后 SecureCRT 没有输入回显。
+- [ ] 在同一 attachment 上完成连续命令和一个小 batch。
+- [ ] 验证一个慢重绘 Tab 会等待或安全返回 `context_changed`，不会重复执行。
+- [ ] 明确区分普通 shell、MySQL/REPL、pager 和编辑器上下文。
+- [ ] 为 daemon、审计目录和 Token 备份设置本机访问控制和备份策略。
+- [ ] 先在非生产 Tab 验证，再开放生产会话。
+
+## 文档导航
+
+- [中文生产验收](docs/production-readiness.md)
+- [持久终端与批量操作](docs/persistent-terminal.md)
+- [安全模型](docs/security-model.md)
+- [架构与协议](docs/architecture.md) · [Bridge 协议](docs/bridge-protocol.md)
+- [性能与已知限制](docs/performance.md)
+- [排障](docs/troubleshooting.md)
+- [Codex](docs/clients/codex.md) · [Claude](docs/clients/claude.md)
+- [发布流程](docs/releases.md)
+
+## 开发与验证
 
 ```powershell
-.\target\release\securecrt-mcp.exe daemon
-```
-
-另一个终端使用 `session attach|exec|output --input 文件.json`。旧 run/sessions/screen 也会优先使用已启动的 daemon。失败不会回退到新 Engine 重发。提供 [Python 客户端](clients/persistent_client.py) 和 [PowerShell 封装](clients/SecureCRT.Session.ps1)。daemon 和原生 MCP 是不同实例，不能混用它们的 attachment_id/command_id。
-
-## 可靠性与权限边界
-
-- 未知命令不自动重放，断线不自动 Ctrl+C，不自动 acknowledge_idle。连接重建只用于新的请求，不重试已失败交换。
-- attachment 绑定原生 Tab，不是永久授权。shared/exclusive 是合作式所有权；exclusive **不是原生键盘锁**。人工输入只通过上下文采样检测，不能保证捕获全部按键。
-- 配置端点指纹不是嵌套 SSH 的真实 Host Key；`authenticated_host_fingerprint` 返回 null。先核实目标。
-- POSIX 完成标记代表前台命令返回，不证明后台派生进程全部结束。snapshot 仍不代表完成。
-- command 状态、sent 三态、截断、游标缺口都要检查。原始交互写入需显式 allow_raw_send；碎片输入不能被当作完整 Shell 命令过滤。
-- 只监听回环地址，随机 Token、消息大小和截止时间仍保留。同用户恶意程序、被盗 Token 不是隔离边界。
-
-`client` 下允许 `rm -f /root/test.txt`、`rm -rf /root/test-dir`、grep 搜索文本和一般服务操作；极高危命令位置/目标如根目录清空、格式化、块设备写入、关机重启、防火墙清空仍被拒绝。它是有限防误操作规则，不是完整 Shell 静态分析或沙箱，动态脚本/别名等可能绕过。通过 `policy-check --input request.json` 查询实际原因，自定义规则仍可收紧。见 [安全模型](docs/security-model.md)。
-
-## 原生限制和验证状态
-
-所有 crt API 仍在 SecureCRT 脚本线程调用，多个静默 ReadString 可能增加排队时间；单次静默等待最多1秒，批量读取不等于原生 PTY 事件推送。没有为了跑分使用未验证的零/小数超时。原生返回字符串之前无法限制它的内部分配；持续流通过有界缓存明确报告丢失，而不是承诺无限保存。
-
-历史实测：2026-09-20，preview.1 协议2在 Windows x64、SecureCRT9.0.0 x64、内嵌Python3.8.10上验证了已登录会话、读屏、POSIX hostname 和旧策略拒绝路径。**这是旧版的用户实测记录，不自动认证0.3或其他平台。** 新版真实桌面仍需完成 [升级与验收](docs/migration-0.3.md)。
-
-CI 覆盖三平台 Rust/真实MCP stdio、适配器模拟接口、持久TCP、故障注入、daemon跨进程、PowerShell和打包检查。测试不会连接生产 SSH。没有 Release Tag 不代表已有公开预编译包；[发布流程](docs/releases.md)按验证通过的Tag执行。
-
-## 开发
-
-```sh
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-targets --all-features
-cargo build --locked
-python -m unittest discover -s tests -v
-python tests/mcp_smoke.py target/debug/securecrt-mcp
-python tests/performance_smoke.py target/debug/securecrt-mcp
-python tests/persistent_fault_smoke.py target/debug/securecrt-mcp
-python tests/daemon_smoke.py target/debug/securecrt-mcp
+python -m pytest -q tests
 python scripts/validate_repository.py
 ```
 
-Windows 二进制加.exe；综合测试脚本需Python3.12，适配器单元测试还覆盖Python3.8。贡献指南见 [CONTRIBUTING](CONTRIBUTING.md)。
+贡献方式见 [CONTRIBUTING.md](CONTRIBUTING.md)，安全问题请按 [SECURITY.md](SECURITY.md) 私下报告。
 
-[架构](docs/architecture.md) · [协议](docs/bridge-protocol.md) · [性能](docs/performance.md) · [Agent](docs/agent-usage.md) · [验收](docs/testing.md) · [排障](docs/troubleshooting.md) · [路线图](ROADMAP.md)
+## 许可证
 
-
-## Audit durability / 审计持久化时机
-
-`audit.durability = "os_buffered"` is the default for configurations omitting this new field. The append handle is reused and each write is flushed to the operating system before dispatch; write/open failures still reject before sending. It does **not** fsync every event and may lose recent audit records on OS crash/power loss. Choose `"each_event"` to restore synchronous event durability, accepting local disk latency. This is a durability/performance choice, not a change to client permissions. Configure it explicitly when upgrading under an existing audit-compliance requirement. Log rotation that replaces the file requires restarting the MCP/daemon to reopen the handle; copy-truncate retains the handle but has the usual rotation races.
-
-默认省略新字段时使用操作系统缓冲，减少每次审计打开文件和同步刷盘的开销；这不保证断电时最近审计记录仍在磁盘。要求逐事件落盘时显式设置 `durability = "each_event"`。命令结果的 `timing.audit_dispatch_us` 用于区分审计开销和 Bridge/远端耗时。
-
-After an owned completion marker, the attachment waits briefly for the original prompt/input column rather than adopting a marker line as a new prompt. A changed prompt (including `cd` that changes prompt text), partially typed command, or uncertain input context requires explicit inspection/re-attachment; it is not silently trusted.
+MIT License，详见 [LICENSE](LICENSE)。

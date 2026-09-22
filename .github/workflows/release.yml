@@ -1,4 +1,4 @@
-name: Release preview
+name: Release
 on:
   push:
     tags: ['v*']
@@ -9,7 +9,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: securecrt-preview-release
+  group: securecrt-release
   cancel-in-progress: false
 jobs:
   prepare:
@@ -185,8 +185,14 @@ jobs:
           sha256sum --check SHA256SUMS
           cp "../$NOTES" RELEASE_NOTES.md
           printf '\nSource commit: `%s`\n' "$SOURCE_SHA" >> RELEASE_NOTES.md
-          gh release create "$TAG" --target "$SOURCE_SHA" --prerelease --latest=false \
-            --title "securecrt-mcp $TAG — prompt readiness fix" \
-            --notes-file RELEASE_NOTES.md *.zip SHA256SUMS
+          if [[ "$TAG" == *-* ]]; then
+            gh release create "$TAG" --target "$SOURCE_SHA" --prerelease --latest=false \
+              --title "securecrt-mcp $TAG — preview" \
+              --notes-file RELEASE_NOTES.md *.zip SHA256SUMS
+          else
+            gh release create "$TAG" --target "$SOURCE_SHA" --latest \
+              --title "securecrt-mcp $TAG — production release" \
+              --notes-file RELEASE_NOTES.md *.zip SHA256SUMS
+          fi
           git fetch --no-tags origin "refs/tags/$TAG"
           test "$(git rev-parse 'FETCH_HEAD^{commit}')" = "$SOURCE_SHA"

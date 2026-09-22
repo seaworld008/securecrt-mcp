@@ -32,7 +32,7 @@ class FakeBridge(socketserver.ThreadingTCPServer):
     def method(self, name, p):
         with self.lock:
             if name == 'ping':
-                return {'bridge_version': '0.3.0-preview.3', 'protocol_version': 2}
+                return {'bridge_version': '0.3.0', 'protocol_version': 2}
             if name == 'list_sessions':
                 return {'sessions': [{'id': 'fake-instance/fake-session', 'caption': 'test', 'connected': True}]}
             if name == 'read_screen':
