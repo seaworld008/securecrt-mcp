@@ -5,16 +5,24 @@ on:
     paths: ['.github/workflows/prompt-readiness-dev.yml']
 permissions:
   contents: read
+concurrency:
+  group: prompt-readiness-assembly
+  cancel-in-progress: false
 jobs:
   readiness:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       contents: write
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
           ref: fix/prompt-readiness-rebase
+      - name: Refuse a moved branch rather than assembling different source
+        run: test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
       - uses: dtolnay/rust-toolchain@1.88.0
         with:
           components: rustfmt, clippy
@@ -23,11 +31,12 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install pytest
-      - name: Verify exact starting implementation and patch
+      - name: Verify exact starting implementation and existing patch
         run: |
           test "$(git hash-object bridge/securecrt_bridge.py)" = f555a2ebd336faec5e9a5c7c5fdae4d9e32fd167
           echo 'e3603fb998eb2d08ff2106300e8b411810870eb226e113f2ed0ef9d46a3742cf  .prompt-readiness.patch' | sha256sum --check
           git apply --check .prompt-readiness.patch
+          git apply --check .prompt-smoke-fixture.patch
           mkdir -p /tmp/readiness-evidence
       - name: Prove native redraw failures before implementation
         run: |
@@ -44,17 +53,19 @@ jobs:
           fi
           cat /tmp/readiness-evidence/rust-red.log
           grep -q 'test regression::prompt_context_error_is_actionable_without_changing_delivery_evidence ... FAILED' /tmp/readiness-evidence/rust-red.log
-      - name: Apply minimal verified patch
-        run: git apply --exclude=src/regression.rs .prompt-readiness.patch
+      - name: Apply the original implementation and existing error-fixture correction
+        run: |
+          git apply --exclude=src/regression.rs .prompt-readiness.patch
+          git apply .prompt-smoke-fixture.patch
       - run: cargo fmt --all
       - run: cargo fmt --all -- --check
       - run: cargo test --locked
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - run: python -m pytest -q tests | tee /tmp/readiness-evidence/python-green.log
+      - run: python -m unittest discover -s tests -v
       - run: cargo build --locked --release --target-dir target-latest-test
       - name: Compiled readiness, compatibility, failure and package checks
         run: |
-          set -o pipefail
           binary=target-latest-test/release/securecrt-mcp
           python tests/prompt_readiness_smoke.py "$binary" | tee /tmp/readiness-evidence/readiness-green.log
           python tests/mcp_smoke.py "$binary"
@@ -67,9 +78,10 @@ jobs:
           python scripts/validate_repository.py
           git diff --check
           git diff --stat
-      - name: Commit validated non-workflow sources on feature only
+      - name: Commit validated non-workflow sources on original feature branch only
         run: |
           test "$(git branch --show-current)" = fix/prompt-readiness-rebase
+          test "$(git ls-remote origin refs/heads/fix/prompt-readiness-rebase | cut -f1)" = "$GITHUB_SHA"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add bridge src tests docs Cargo.toml Cargo.lock README.md README.zh-CN.md README.en.md CHANGELOG.md
