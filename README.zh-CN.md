@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml) · [MIT](LICENSE) · [English](README.en.md)
 
-**0.3.0-preview.2 · 持久终端性能预览版 · Bridge 协议 2**
+**0.3.0-preview.3 · 持久终端性能预览版 · Bridge 协议 2**
 
 让 Codex、Claude 等 AI Agent 操作 **SecureCRT 中已经登录好的服务器会话**。保留现有 VPN、堡垒机、SSH 密钥和 MFA 流程，不重新登录、不导出服务器凭证。
 

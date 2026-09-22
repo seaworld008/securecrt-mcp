@@ -1,6 +1,6 @@
 # 持久终端使用指南
 
-适用版本：0.3.0-preview.2。目标是复用 SecureCRT 已登录 Tab，减少连接器开销；不是创建第二条 SSH 连接，也不是修改 Codex/Claude 的权限。
+适用版本：0.3.0-preview.3。目标是复用 SecureCRT 已登录 Tab，减少连接器开销；不是创建第二条 SSH 连接，也不是修改 Codex/Claude 的权限。
 
 ## 推荐：原生 MCP 常驻进程
 
@@ -29,9 +29,9 @@
 
 ## 命令完成后的提示符 readiness / rebase
 
-`completed` 表示 Rust 已验证本次 POSIX 命令的结束标记，不表示 SecureCRT 已将下一次输入提示符完全重绘。0.3.0-preview.2 将这两个时刻分开处理：原捕获的 `end(confirmed_complete=true)` 且带有该捕获自己的 completion marker、原生设置恢复成功时，才允许下一次 `prepare_and_begin` 使用有界的内部 readiness 检查。
+`completed` 表示 Rust 已验证本次 POSIX 命令的结束标记，不表示 SecureCRT 已将下一次输入提示符完全重绘。0.3.0-preview.3 将这两个时刻分开处理：原捕获的 `end(confirmed_complete=true)` 且带有该捕获自己的 completion marker、原生设置恢复成功时，才允许下一次 `prepare_and_begin` 使用有界的内部 readiness 检查。
 
-等待最多 **500ms**，同时服从该 Bridge 请求的剩余 deadline；每次使用 `crt.Sleep` 让出约 **10ms** 后重新采样。正常已就绪提示符只需一次采样间隔，不会无条件停满500ms。必须连续两次观察到**原提示符文本、原输入光标列和原终端列数**一致，才能更新 attachment 的屏幕行位置。上一命令导致的滚屏可以改变 `cursor_row`；这不等于授权接受不同提示符，也不要求历史整页 digest 保持不变。
+先等待 **500ms**，同时服从该 Bridge 请求的剩余 deadline；如果期间只观察到空行、本次精确 marker 或原提示符光标尚未归位等安全过渡态，则只延长一次，整体最多 **1.5s**。每次使用 `crt.Sleep` 让出约 **10ms** 后重新采样。正常已就绪提示符只需一次采样间隔，不会无条件停满1.5s。必须连续两次观察到**原提示符文本、原输入光标列和原终端列数**一致，才能更新 attachment 的屏幕行位置。上一命令导致的滚屏可以改变 `cursor_row`；这不等于授权接受不同提示符，也不要求历史整页 digest 保持不变。
 
 允许等待的过渡仅为：空输入行、本次捕获的精确结束标记行，或原提示符已经显示但光标仍未恢复到原输入边界。标记不是提示符。半行命令、提示符右侧额外输入（包括被文本去尾空白隐藏的空格）、密码/passphrase、pager、REPL、编辑器、其他捕获的标记、不同提示符或终端宽度变化，均不当成可恢复的就绪状态。采样到这些不确定内容就拒绝，不继续等待它被清除。等待中也会再次验证原 Tab 存活、绑定租约和请求 deadline。
 
@@ -41,7 +41,7 @@
 
 batch 的下一条命令使用同一 readiness 路径：上一条已确认完成且输入边界就绪才发送下一条；每条输出、退出码、command_id 和审计独立。`on_error=continue` 仅允许在确认完成的非零退出码后继续，**不会**跳过 `context_changed`、readiness 等待耗尽、未知结果、超时或未决状态。被拒绝的命令及它后面的命令不会被自动发送。
 
-这仍是采样式协调，而不是原子键盘锁。shared 模式不能可靠发现两次采样之间所有人工输入，exclusive 也仍只是连接器之间的合作式独占，observe 不能写入。请勿在同一 Shell 同时人工键入和让 Agent 执行。500ms 是连接器主动等待的预算，不保证 SecureCRT 原生 API 调用/桌面调度自身不会超时阻塞；本版不声称实现原生 PTY 或绝对 SSH 等价体验。
+这仍是采样式协调，而不是原子键盘锁。shared 模式不能可靠发现两次采样之间所有人工输入，exclusive 也仍只是连接器之间的合作式独占，observe 不能写入。请勿在同一 Shell 同时人工键入和让 Agent 执行。500ms 是快速路径，1.5s 是安全过渡态的总主动等待上限，不保证 SecureCRT 原生 API 调用/桌面调度自身不会超时阻塞；本版不声称实现原生 PTY 或绝对 SSH 等价体验。
 
 ## 批量排查
 

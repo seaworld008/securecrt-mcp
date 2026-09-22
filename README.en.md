@@ -1,6 +1,6 @@
 # securecrt-mcp
 
-**0.3.0-preview.2 · persistent terminal preview · bridge protocol 2 · [中文](README.md)**
+**0.3.0-preview.3 · persistent terminal preview · bridge protocol 2 · [中文](README.md)**
 
 Control existing authenticated SecureCRT tabs from Codex, Claude or another MCP client. Reuse the operator's VPN, bastion, SSH authentication and MFA. No new SSH connection or exported server credentials. Independent of VanDyke Software.
 

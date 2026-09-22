@@ -113,6 +113,18 @@ class PromptRebaseTests(unittest.TestCase):
         self.assertGreaterEqual(self.elapsed, 260)
         self.assertLessEqual(self.elapsed, 500)
 
+    def test_realistic_slow_tab_uses_one_safe_readiness_extension(self):
+        self.complete()
+        def delayed_prompt():
+            if self.elapsed >= 900:
+                self.view('user$ ', 8, 4)
+        self.during_sleep = delayed_prompt
+        result = self.next_request()
+        self.assertTrue(result['ok'], result)
+        self.assertGreaterEqual(self.elapsed, 910)
+        self.assertLessEqual(self.elapsed, 1500)
+        self.assertEqual(self.a.metrics['prompt_readiness_extensions'], 1)
+
     def test_only_owned_marker_can_be_waited_on(self):
         self.complete('END_other_capture 0', 8)
         self.frames = [('user$ ', 8, 3)]
@@ -124,8 +136,9 @@ class PromptRebaseTests(unittest.TestCase):
         result = self.next_request()
         self.assert_unsent(result)
         self.assertGreater(self.elapsed, 0)
-        self.assertLessEqual(self.elapsed, 500)
-        self.assertLessEqual(len(self.sleeps), 51)
+        self.assertLessEqual(self.elapsed, 1500)
+        self.assertEqual(self.a.metrics['prompt_readiness_extensions'], 1)
+        self.assertLessEqual(len(self.sleeps), 151)
         self.assertEqual(self.a.attachments[self.aid]['context']['current_line'], 'user$')
         # A NEW explicit invocation after a settled redraw reuses the original binding.
         self.view('user$ ', 8, 4)
