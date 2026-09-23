@@ -20,7 +20,8 @@ use bridge::BridgeClient;
 use clap::{Parser, Subcommand};
 use config::{
     BridgeSecret, Config, MAX_FRAME, PROTOCOL, app_dir, bridge_config_path, bridge_script_path,
-    config_path, load_bridge_secret,
+    config_path, load_bridge_secret, load_xshell_bridge_secret, xshell_bridge_config_path,
+    xshell_bridge_script_path, xshell_installed_script_path, xshell_script_dir_path,
 };
 use execution::Engine;
 use policy::PolicyEngine;
@@ -30,6 +31,7 @@ use std::{fs, io::Write, path::Path};
 use uuid::Uuid;
 
 const BRIDGE_SCRIPT: &str = include_str!("../bridge/securecrt_bridge.py");
+const XSHELL_BRIDGE_SCRIPT: &str = include_str!("../bridge/xshell_bridge.py");
 
 #[derive(Parser)]
 #[command(
@@ -121,10 +123,28 @@ async fn main() -> Result<()> {
             )
             .with_sync(config.audit.durability == "each_event");
             let policy = PolicyEngine::new(&config.policy)?;
-            let engine = Engine::new(bridge, audit, policy, config);
-            let service = SecureCrtServer::new(engine.clone()).serve(stdio()).await?;
+            let engine = Engine::new(bridge, audit.clone(), policy.clone(), config.clone());
+            let xshell = match load_xshell_bridge_secret() {
+                Ok(secret) => {
+                    let mut xshell_bridge_config = config.bridge.clone();
+                    xshell_bridge_config.port = secret.port;
+                    Some(Engine::new(
+                        BridgeClient::new(xshell_bridge_config, secret)?,
+                        audit,
+                        policy,
+                        config,
+                    ))
+                }
+                Err(_) => None,
+            };
+            let service = SecureCrtServer::new(engine.clone(), xshell.clone())
+                .serve(stdio())
+                .await?;
             let ended = service.waiting().await;
             engine.drain_on_disconnect().await;
+            if let Some(xshell) = xshell {
+                xshell.drain_on_disconnect().await;
+            }
             ended?;
         }
         Command::Init { force } => initialize(force)?,
@@ -156,6 +176,18 @@ async fn main() -> Result<()> {
             println!("config={}", config_path()?.display());
             println!("bridge_config={}", bridge_config_path()?.display());
             println!("bridge_script={}", bridge_script_path()?.display());
+            println!(
+                "xshell_bridge_config={}",
+                xshell_bridge_config_path()?.display()
+            );
+            println!(
+                "xshell_bridge_script={}",
+                xshell_bridge_script_path()?.display()
+            );
+            println!(
+                "xshell_installed_script={}",
+                xshell_installed_script_path()?.display()
+            );
         }
         Command::CodexConfig {
             approval_mode,
@@ -247,6 +279,30 @@ fn initialize(force: bool) -> Result<()> {
     secret.port = config.bridge.port;
     replace_with_backup(&secret_file, &serde_json::to_string_pretty(&secret)?)?;
     replace_with_backup(&bridge_script_path()?, BRIDGE_SCRIPT)?;
+    let xshell_secret_file = xshell_bridge_config_path()?;
+    let xshell_secret = if xshell_secret_file.exists() && !force {
+        load_xshell_bridge_secret()?
+    } else {
+        BridgeSecret {
+            host: config.bridge.host.clone(),
+            port: config
+                .bridge
+                .port
+                .checked_add(1)
+                .context("bridge port is too high for Xshell")?,
+            token: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
+            max_request_bytes: MAX_FRAME,
+        }
+    };
+    replace_with_backup(
+        &xshell_secret_file,
+        &serde_json::to_string_pretty(&xshell_secret)?,
+    )?;
+    replace_with_backup(&xshell_bridge_script_path()?, XSHELL_BRIDGE_SCRIPT)?;
+    let xshell_script_dir = xshell_script_dir_path()?;
+    reject_symlink(&xshell_script_dir)?;
+    fs::create_dir_all(&xshell_script_dir)?;
+    replace_with_backup(&xshell_installed_script_path()?, XSHELL_BRIDGE_SCRIPT)?;
     println!(
         "securecrt-mcp {} initialized at {}",
         env!("CARGO_PKG_VERSION"),
@@ -258,6 +314,10 @@ fn initialize(force: bool) -> Result<()> {
     println!(
         "Stop the old adapter with Script > Cancel, then Script > Run: {}",
         bridge_script_path()?.display()
+    );
+    println!(
+        "Xshell script is installed in its Script menu: {}",
+        xshell_installed_script_path()?.display()
     );
     println!(
         "Run doctor, reload Codex, list sessions again. Old session handles are intentionally invalid."
@@ -273,6 +333,12 @@ async fn doctor(offline: bool) -> Result<()> {
             .context("installed adapter missing; run upgrade")?
             == BRIDGE_SCRIPT,
         "installed adapter differs from this binary; run upgrade, then restart the script"
+    );
+    ensure!(
+        fs::read_to_string(xshell_installed_script_path()?)
+            .context("installed Xshell script missing; run upgrade")?
+            == XSHELL_BRIDGE_SCRIPT,
+        "installed Xshell script differs from this binary; run upgrade, then restart the script"
     );
     println!(
         "server_version={} protocol={PROTOCOL}",
@@ -320,89 +386,55 @@ fn print_codex_config(approval_mode: &str, toolset: &str) -> Result<()> {
     );
     if toolset == "terminal" {
         let names = [
-            "bridge_status",
-            "list_sessions",
-            "read_screen",
-            "run_command",
-            "get_command_status",
-            "get_command_output",
-            "interrupt",
-            "acknowledge_idle",
-            "attach",
-            "exec",
-            "exec_batch",
-            "get_batch_status",
-            "heartbeat",
-            "detach",
-            "shell_open",
-            "shell_read",
-            "shell_write",
-            "shell_close",
-            "latency",
             "connector_list",
             "connector_open",
             "connector_exec",
             "connector_exec_batch",
+            "connector_get_batch_status",
             "connector_get_status",
             "connector_read",
+            "connector_read_screen",
             "connector_stream_open",
             "connector_stream_read",
             "connector_stream_write",
             "connector_resize",
             "connector_interrupt",
             "connector_acknowledge",
+            "connector_heartbeat",
             "connector_close",
             "connector_metrics",
         ];
         let tools = names
             .iter()
-            .map(|n| {
-                let name = if n.starts_with("connector_") {
-                    (*n).to_owned()
-                } else {
-                    format!("securecrt_{n}")
-                };
-                toml::Value::String(name)
-            })
+            .map(|n| toml::Value::String((*n).to_owned()))
             .collect();
         println!("enabled_tools = {}", toml::Value::Array(tools));
     }
     if toolset == "basic" {
         println!(
-            "enabled_tools = [\"securecrt_bridge_status\", \"securecrt_list_sessions\", \"securecrt_read_screen\", \"securecrt_run_command\", \"securecrt_get_command_status\", \"securecrt_get_command_output\", \"securecrt_interrupt\", \"securecrt_acknowledge_idle\"]"
+            "enabled_tools = [\"connector_list\", \"connector_open\", \"connector_exec\", \"connector_get_status\", \"connector_read\", \"connector_close\"]"
         );
     }
     for name in [
-        "bridge_status",
-        "list_sessions",
-        "read_screen",
-        "get_command_status",
-        "get_command_output",
-        "get_batch_status",
-        "heartbeat",
-        "shell_read",
-        "latency",
         "connector_list",
         "connector_open",
         "connector_exec",
         "connector_exec_batch",
+        "connector_get_batch_status",
         "connector_get_status",
         "connector_read",
+        "connector_read_screen",
         "connector_stream_open",
         "connector_stream_read",
         "connector_stream_write",
         "connector_resize",
         "connector_interrupt",
         "connector_acknowledge",
+        "connector_heartbeat",
         "connector_close",
         "connector_metrics",
     ] {
-        let tool_name = if name.starts_with("connector_") {
-            name.to_owned()
-        } else {
-            format!("securecrt_{name}")
-        };
-        println!("\n[mcp_servers.securecrt.tools.{tool_name}]\napproval_mode = \"approve\"");
+        println!("\n[mcp_servers.securecrt.tools.{name}]\napproval_mode = \"approve\"");
     }
     println!(
         "\n# Requires a Codex version supporting these keys. Test rejection before enabling production sessions."

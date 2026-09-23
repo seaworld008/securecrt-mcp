@@ -146,10 +146,6 @@ impl Engine {
         }
     }
 
-    pub async fn submit(&self, p: ExecuteParams) -> Result<Value> {
-        self.submit_internal(p, None).await
-    }
-
     async fn submit_internal(
         &self,
         p: ExecuteParams,

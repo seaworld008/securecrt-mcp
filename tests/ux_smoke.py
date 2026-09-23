@@ -27,18 +27,21 @@ class UXBridge(FakeBridge):
         self.calls.append(name)
         if name == 'ping':
             return {'bridge_version': VERSION, 'protocol_version': 2,
-                    'unresolved': self.unresolved, 'capabilities': ['delivery_evidence']}
+                    'unresolved': self.unresolved,
+                    'capabilities': ['delivery_evidence', 'attachments', 'prepare_and_begin', 'poll_bulk']}
         if name == 'read_screen':
             self.token_index += 1
             return {'session': SID, 'text': 'previous output\n' + self.current_line,
                     'current_line': self.current_line, 'screen_token': 'view-' + str(self.token_index)}
-        if name == 'begin':
+        if name in ('begin', 'prepare_and_begin'):
             if self.unresolved:
                 raise ValueError('unresolved: inspect original session')
+            if self.current_line not in ('user$',):
+                raise ValueError('input_context_required: inspect terminal and provide expected_prompt')
             if self.fault == 'stale':
                 self.fault = None
                 raise ValueError('stale_screen: changed before send')
-            if p['screen_token'] != 'view-' + str(self.token_index):
+            if name == 'begin' and p['screen_token'] != 'view-' + str(self.token_index):
                 raise ValueError('stale_screen: reused token')
             if self.fault == 'lost':
                 self.fault = None
@@ -69,7 +72,7 @@ class UXHandler(socketserver.StreamRequestHandler):
 
 
 SID = 'fake-instance/fake-session'
-VERSION = '0.4.1'
+VERSION = '0.5.0'
 
 
 def run(binary):
@@ -89,9 +92,9 @@ def run(binary):
         threading.Thread(target=bridge.serve_forever, daemon=True).start()
         mcp = MCP(binary, env)
         tools = {t['name']: t for t in mcp.request('tools/list', {})['result']['tools']}
-        assert 'securecrt_run_command' in tools, 'securecrt_run_command high-level tool missing'
-        assert tools['securecrt_run_command']['annotations']['readOnlyHint'] is False
-        assert tools['securecrt_run_command']['annotations']['idempotentHint'] is False
+        assert 'connector_exec' in tools, 'connector_exec unified tool missing'
+        assert tools['connector_exec']['annotations']['readOnlyHint'] is False
+        assert tools['connector_exec']['annotations']['idempotentHint'] is False
         def call(command='printf hello', **kwargs):
             return mcp.tool('run_command', dict(session=SID, command=command, mode='posix', **kwargs))
         job = call(operation_id='one')
@@ -102,16 +105,19 @@ def run(binary):
         retry = call(operation_id='one', max_bytes=4)
         assert retry['command_id'] == job['command_id'] and len(bridge.sent) == before
         assert retry['next_cursor'] == 4
-        conflict = call('printf different', operation_id='one')
-        assert conflict['sent'] is False and conflict['error_code'] == 'operation_conflict', conflict
+        conflict = mcp.tool('run_command', dict(session=SID, command='printf different', mode='posix', operation_id='one'), expect_error=True)
+        assert conflict['error']['data']['sent'] is False and conflict['error']['data']['error_code'] == 'operation_conflict', conflict
         assert len(bridge.sent) == before
         for command in ["grep 'deny' nginx.conf", "grep 'shutdown' nginx.conf", 'grep deny nginx.conf',
                         'systemctl status nginx', 'systemctl stop test-only', 'rm -rf /tmp/FAKE-ONLY']:
             assert call(command)['state'] == 'completed'
         before = len(bridge.sent)
-        for extra in [dict(max_bytes=0), dict(timeout_ms=0), dict(wait_ms=60001)]:
-            invalid = call(**extra)
-            assert invalid['sent'] is False and invalid['state'] == 'rejected', invalid
+        invalid = mcp.tool('run_command', dict(session=SID, command='printf hello', mode='posix', max_bytes=0), expect_error=True)
+        assert invalid['error']['data']['sent'] is False and invalid['error']['data']['state'] == 'rejected', invalid
+        invalid = mcp.tool('run_command', dict(session=SID, command='printf hello', mode='posix', timeout_ms=0), expect_error=True)
+        assert invalid['error']['data']['sent'] is False and invalid['error']['data']['state'] == 'rejected', invalid
+        invalid = mcp.tool('run_command', dict(session=SID, command='printf hello', mode='posix', wait_ms=60001), expect_error=True)
+        assert invalid['error']['data']['sent'] is False and invalid['error']['data']['state'] == 'rejected', invalid
         assert len(bridge.sent) == before
         bridge.current_line = 'Password:'
         denied = call()
@@ -162,8 +168,8 @@ def run(binary):
         assert checked['mode'] == 'client' and checked['allowed'] is True
         settings = tomllib.loads(cli('codex-config'))['mcp_servers']['securecrt']
         assert settings['default_tools_approval_mode'] == 'auto'
-        assert 'securecrt_run_command' in settings['enabled_tools']
-        assert 'securecrt_execute_command' not in settings['enabled_tools']
+        assert 'connector_exec' in settings['enabled_tools']
+        assert all(not name.startswith('securecrt_') for name in settings['enabled_tools'])
         config = tomllib.loads(cli('codex-config', '--approval-mode', 'prompt', '--toolset', 'full'))
         assert 'enabled_tools' not in config['mcp_servers']['securecrt']
         preserved = config_file.read_text().replace('mode = "client"', 'mode = "safe"')

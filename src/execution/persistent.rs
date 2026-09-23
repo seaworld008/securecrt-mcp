@@ -8,6 +8,16 @@ pub(super) struct TerminalState {
     batches: HashMap<String, (String, Value)>,
 }
 impl Engine {
+    async fn attachment_value(&self, id: &str) -> Result<Value> {
+        self.terminal
+            .lock()
+            .await
+            .attachments
+            .get(id)
+            .cloned()
+            .context("stale_attachment: attach using this persistent MCP/daemon instance")
+    }
+
     pub async fn attach(&self, p: AttachParams) -> Result<Value> {
         ensure!(
             self.bridge.supports_fast().await?,
@@ -39,6 +49,52 @@ impl Engine {
         self.terminal.lock().await.attachments.remove(id);
         result
     }
+
+    pub async fn attachment_screen(&self, id: &str) -> Result<Value> {
+        let attachment = self.attachment_value(id).await?;
+        let session = attachment["session"]
+            .as_str()
+            .context("attachment has no native session")?;
+        self.bridge
+            .call("read_screen", json!({"session": session}))
+            .await
+    }
+
+    pub async fn attachment_heartbeat(&self, id: &str) -> Result<Value> {
+        self.attachment_value(id).await?;
+        self.bridge
+            .call("heartbeat", json!({"attachment_id": id}))
+            .await
+    }
+
+    pub async fn attachment_acknowledge(
+        &self,
+        id: &str,
+        screen_token: String,
+        expected_prompt: String,
+    ) -> Result<Value> {
+        let attachment = self.attachment_value(id).await?;
+        let session = attachment["session"]
+            .as_str()
+            .context("attachment has no native session")?
+            .to_owned();
+        self.acknowledge_idle(crate::model::ContextParams {
+            session,
+            screen_token,
+            expected_prompt,
+        })
+        .await
+    }
+
+    pub async fn attachment_status(&self, id: &str) -> Result<Value> {
+        let value = self.attachment_heartbeat(id).await?;
+        Ok(json!({
+            "session_id": format!("securecrt/{id}"),
+            "backend": "securecrt",
+            "mode": "exec",
+            "attachment": value,
+        }))
+    }
     pub async fn exec(&self, p: ExecParams) -> Result<Value> {
         let a = self
             .terminal
@@ -68,7 +124,7 @@ impl Engine {
         let fingerprint = format!(
             "attachment:{:x}",
             Sha256::digest(serde_json::to_vec(&json!({
-            "attachment":p.attachment_id,"command":p.command,"mode":p.mode,"timeout":timeout,"wait_for":p.wait_for}))?)
+            "attachment":p.attachment_id,"command":p.command,"mode":p.mode,"timeout":timeout,"wait_for":p.wait_for,"expected_prompt":p.expected_prompt}))?)
         );
         let job = self
             .submit_internal(
@@ -79,7 +135,7 @@ impl Engine {
                         .into(),
                     attachment_id: Some(p.attachment_id),
                     screen_token: String::new(),
-                    expected_prompt: String::new(),
+                    expected_prompt: p.expected_prompt.unwrap_or_default(),
                     operation_id: p.operation_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                     command: p.command,
                     mode: p.mode,
@@ -168,6 +224,7 @@ impl Engine {
                         attachment_id: p.attachment_id.clone(),
                         command: command.clone(),
                         mode: CaptureMode::Posix,
+                        expected_prompt: None,
                         operation_id: Some(op),
                         timeout_ms: p.timeout_ms,
                         wait_ms: Some(60000),

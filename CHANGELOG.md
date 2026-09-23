@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0] - 2026-09-23
+
+- Make `connector_*` the only public MCP namespace and select SecureCRT, Xshell,
+  or system OpenSSH through the backend field.
+- Add the Xshell Script Bridge with authenticated loopback transport, named
+  session-file discovery, multi-tab probing, and automatic installation into
+  Xshell's standard Scripts directory during `init` and `upgrade`.
+- Keep SecureCRT compatibility during development while removing the old
+  `securecrt_*` MCP surface from the final API.
+- Reject stale or explicitly mismatched terminal prompts before any native input
+  is sent, with regression coverage for both desktop bridges.
+- Add unified connector, Xshell discovery, deployment, and user setup guidance.
+
 ## [0.4.1] - 2026-09-22
 
 - Keep the SecureCRT Bridge listener available when SecureCRT has no active or connected tabs.

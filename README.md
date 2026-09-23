@@ -6,13 +6,13 @@
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange)](https://www.rust-lang.org/)
 [English](README.en.md)
 
-**securecrt-mcp 0.4.1** 是一个面向生产环境的 Rust MCP Server：让 Codex、Claude 等 MCP 客户端安全、可审计地操作 SecureCRT 中已经登录的 SSH 会话，并可显式选择持久 OpenSSH/PTY 连接器。
+**securecrt-mcp 0.5.0** 是一个面向生产环境的 Rust MCP Server：让 Codex、Claude 等 MCP 客户端通过统一的 `connector_*` 接口安全、可审计地操作 SecureCRT、Xshell 中已经登录的 SSH 会话，以及系统 OpenSSH/PTY 连接器。
 
 它复用操作员已经完成的 VPN、堡垒机、SSH 密钥和 MFA 流程，不建立第二条 SSH 连接，也不导出服务器凭据。项目独立于 VanDyke Software。
 
 > **生产定位**：适合运维诊断、发布检查、日志查看和受控变更。它是 SecureCRT 会话连接层，不是原生 SSH/PTY，也不是第二套 AI 权限系统。客户端审批、远端账号权限和人工目标确认仍然有效。
 
-> **高性能连接器（opt-in）**：新增 `connector_*` 工具可显式打开系统 OpenSSH 的长期命令会话或 PTY 会话。SecureCRT 仍是默认后端；OpenSSH 使用现有 `ssh_config`、Agent、ProxyJump 和 known_hosts，不在 MCP 中保存密码。详见 [统一连接器](docs/connectors.md)。
+> **统一连接器**：所有后端都使用 `connector_*` 工具；调用 `connector_open` 时显式指定 `backend`。SecureCRT/Xshell 复用已有桌面登录，OpenSSH 使用现有 `ssh_config`、Agent、ProxyJump 和 known_hosts，不在 MCP 中保存密码。详见 [统一连接器](docs/connectors.md)。
 
 ## 能力概览
 
@@ -31,12 +31,15 @@
 ```mermaid
 flowchart LR
     A["Codex / Claude / MCP 客户端<br/>审批、风险判断、凭据使用"] -->|MCP stdio| B["securecrt-mcp Rust Server<br/>统一 API、会话、输出、审计"]
-    B --> C["SecureCRT 后端<br/>securecrt_* / connector_*"]
+    B --> C["SecureCRT 后端<br/>connector_*"]
     C -->|protocol 2 / 127.0.0.1| D["SecureCRT Bridge<br/>原生脚本线程"]
     D --> E["已登录 SecureCRT Tab<br/>屏幕采样、上下文校验、原生输入"]
-    B --> F["OpenSSH 后端（显式 opt-in）<br/>connector_*"]
-    F --> G["系统 OpenSSH<br/>持久 ssh -T / ssh -tt + PTY"]
+    B --> F["Xshell 后端<br/>connector_*"]
+    F --> G["Xshell Script Bridge<br/>发现并探测 .xsh Tab"]
+    B --> I["OpenSSH 后端<br/>connector_*"]
+    I --> J["系统 OpenSSH<br/>持久 ssh -T / ssh -tt + PTY"]
     G --> H["远端服务器"]
+    J --> H
     E --> H
     I["CLI / Python / PowerShell"] -->|可选 loopback daemon| B
 ```
@@ -49,15 +52,17 @@ MCP 客户端（Codex / Claude）
         v
 Rust securecrt-mcp（统一会话、输出、状态和 no-replay 语义）
         +--> SecureCRT 后端 --> 127.0.0.1 Bridge --> 已登录 SecureCRT Tab
-        \--> OpenSSH 后端（显式 opt-in）--> 持久 ssh/PTY --> 远端服务器
+        +--> Xshell 后端 --> 127.0.0.1 Bridge --> 已登录 Xshell Tab
+        \--> OpenSSH 后端 --> 持久 ssh/PTY --> 远端服务器
 ```
 
 | 后端 | 主要工具 | 连接方式 | 适用场景 |
 | --- | --- | --- | --- |
-| SecureCRT | `securecrt_*`（兼容）或 `connector_*` | 复用 SecureCRT 已登录 Tab，经本机 Bridge 调用 | 复用现有 VPN、堡垒机、MFA 和桌面会话 |
+| SecureCRT | `connector_*` | 复用 SecureCRT 已登录 Tab，经本机 Bridge 调用 | 复用现有 VPN、堡垒机、MFA 和桌面会话 |
+| Xshell | `connector_*` | Xshell Script Bridge 发现并复用 `.xsh` 命名 Tab | 单进程模式下按会话文件名探测连接状态；不读取会话内容 |
 | OpenSSH/PTY | `connector_*` | 系统 OpenSSH 的持久 `ssh -T` 或 `ssh -tt` 会话 | 高频命令、长驻流、REPL、分页和原始 PTY 交互 |
 
-默认后端仍是 SecureCRT；OpenSSH 必须显式指定 `backend: "openssh"`，不会在两个后端之间自动切换。OpenSSH 使用本机 `ssh_config`、Agent、ProxyJump 和 `known_hosts`，MCP 不托管密码，也不默认绕过主机密钥校验。上层模型负责审批、危险判断和凭据使用；MCP 负责连接生命周期、输出流、退出状态、分页和未知结果不重放。
+SecureCRT、Xshell 和 OpenSSH 都必须显式指定 `backend`，不会在后端之间自动切换。上层模型负责审批、危险判断和凭据使用；MCP 负责连接生命周期、输出流、退出状态、分页和未知结果不重放。
 
 OpenSSH 示例：
 
@@ -72,11 +77,11 @@ OpenSSH 示例：
 }
 ```
 
-返回的 `session_id` 可继续用于 `connector_exec`、`connector_exec_batch`、`connector_read` 或 PTY 流工具。需要继续使用现有 SecureCRT Tab 时，仍按下方的 `securecrt_list_sessions -> securecrt_attach -> securecrt_exec` 路径操作。
+返回的 `session_id` 可继续用于 `connector_exec`、`connector_exec_batch`、`connector_read` 或 PTY 流工具。SecureCRT/Xshell 的 screen-backed 会话还可使用 `connector_read_screen`、`connector_heartbeat` 和 `connector_acknowledge`。
 
 ## 已验证范围
 
-0.4.1 发布前完成了 Rust、Bridge、MCP stdio、批量执行、daemon、故障注入、打包和连接器测试，并在 Windows x64 / SecureCRT 9.0.0 / 内嵌 Python 3.8.10 上进行了真实桌面验收：
+0.5.0 的 Rust、Bridge、MCP stdio、批量执行、daemon、故障注入、打包和连接器自动化测试已通过。真实桌面验收需要在当前 SecureCRT/Xshell 进程重新加载对应脚本后完成：
 
 - Linux SSH Tab：`hostname`、`uptime`、`pwd`、`id` 连续执行成功。
 - 四命令 batch 完成，逐条返回输出和退出码。
@@ -84,7 +89,7 @@ OpenSSH 示例：
 - 长输出可按游标分页读取，观察模式 attachment 会拒绝执行且 `sent=false`。
 - 重复运行 Bridge 脚本时显示中文“已经在运行”提示，不再暴露 Python 端口异常。
 
-测试成功不等于原生 SSH 等价。真实目标、客户端审批、SecureCRT 桌面行为和远端业务仍应在你的环境完成验收。
+测试成功不等于原生 SSH 等价。真实目标、客户端审批、SecureCRT/Xshell 桌面行为和远端业务仍应在你的环境完成验收；磁盘上的脚本更新不会替换客户端内存中的旧脚本。
 
 ## 安装（Windows）
 
@@ -93,7 +98,7 @@ OpenSSH 示例：
 从 [最新 Release](https://github.com/seaworld008/securecrt-mcp/releases/latest) 下载 Windows x64 ZIP，同时下载 `SHA256SUMS`，在 PowerShell 中校验：
 
 ```powershell
-Get-FileHash .\securecrt-mcp-0.4.1-x86_64-pc-windows-msvc.zip -Algorithm SHA256
+Get-FileHash .\securecrt-mcp-0.5.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256
 Get-Content .\SHA256SUMS
 ```
 
@@ -109,6 +114,11 @@ Release 包含可执行文件、许可证、中文说明和对应版本的 Secur
 ```
 
 在 SecureCRT 中选择 **Script -> Run**，运行 `paths` 输出的 `securecrt_bridge.py`。即使当前没有登录任何服务器，Bridge 也会先启动监听；此时会话列表为空，后续登录服务器后会自动发现。首次启动会显示中文提示；点击“确定”后运行：
+
+Xshell 使用同一个 `init` 自动部署流程。初始化会把最新的
+`securecrt-mcp-xshell.py` 复制到 Xshell 的标准 `Scripts` 目录，并保留 Token
+配置在 MCP 私有目录。打开 Xshell 的 **Tools -> Script -> Run** 后，直接选择
+`securecrt-mcp-xshell.py`；不需要浏览 MCP 安装目录或手工复制脚本。需要发现多个已登录标签时，先在 Xshell 的高级选项中启用单进程模式。
 
 ```powershell
 .\securecrt-mcp.exe doctor
@@ -149,11 +159,11 @@ claude mcp add --transport stdio --scope user securecrt -- `
 
 ## 日常操作路径
 
-1. `securecrt_list_sessions` 列出会话，核对标题、目标和当前屏幕。
-2. 对确认无误的 Tab 调用 `securecrt_attach`，保存返回的 `attachment_id`。
-3. 复用同一个 attachment 调用 `securecrt_exec`；多步诊断使用 `securecrt_exec_batch`。
+1. `connector_list` 列出各后端会话，核对后端、标题、目标和当前屏幕。
+2. 对确认无误的会话调用 `connector_open`，保存返回的 `session_id`。
+3. 复用同一个 `session_id` 调用 `connector_exec`；多步诊断使用 `connector_exec_batch`。
 4. 每次检查 `state`、`sent`、`exit_code`、`error_code`、输出游标和审计字段。
-5. 长日志使用 `securecrt_shell_open/read`；需要停止远端前台程序时显式调用 `securecrt_interrupt`。
+5. OpenSSH 长日志使用 `connector_stream_*`；需要停止远端前台程序时显式调用 `connector_interrupt`。
 
 示例：
 
@@ -206,6 +216,7 @@ Batch 不是事务，也不是永久授权；所有命令应在客户端第一�
 - [架构与协议](docs/architecture.md) · [Bridge 协议](docs/bridge-protocol.md)
 - [性能与已知限制](docs/performance.md)
 - [统一连接器与 OpenSSH/PTY](docs/connectors.md)
+- [连接器顶层架构与 Xshell](docs/connector-architecture.md)
 - [排障](docs/troubleshooting.md)
 - [Codex](docs/clients/codex.md) · [Claude](docs/clients/claude.md)
 - [发布流程](docs/releases.md)

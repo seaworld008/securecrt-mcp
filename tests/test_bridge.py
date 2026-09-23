@@ -138,6 +138,15 @@ class AdapterTests(unittest.TestCase):
             self.adapter.begin(**params)
         self.assertFalse(self.crt.tabs[0].Screen.sent)
 
+    def test_attachment_expected_prompt_rejects_before_send(self):
+        attachment = self.adapter.attach(self.sid, expected_prompt='user$')
+        with self.assertRaisesRegex(Exception, 'prompt_mismatch'):
+            self.adapter.prepare_and_begin(
+                text='printf should-not-send', capture_id='attachment-op',
+                runtime_ms=10000, attachment_id=attachment['attachment_id'],
+                expected_prompt='root#')
+        self.assertFalse(self.crt.tabs[0].Screen.sent)
+
     def test_expired_screen_rejects_before_send(self):
         params = self.params(); self.time += 31000
         with self.assertRaisesRegex(Exception, 'stale_screen'):

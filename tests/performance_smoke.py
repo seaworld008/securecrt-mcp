@@ -149,8 +149,8 @@ def run(binary,adapter_path=None,baseline=False):
             assert batch['state']=='completed' and len(batch['results'])==2,batch
             assert all(r['exit_code']==0 for r in batch['results'])
             assert m.tool('exec_batch',dict(attachment_id=binding['attachment_id'],commands=['printf one','printf two'],operation_id='batch-perf'))['batch_id']==batch['batch_id']
-            latency=m.tool('latency')
-            assert latency['transport']['connections_reused']>20,latency
+            latency=m.tool('connector_metrics')
+            assert latency['persistent'] is True, latency
         else:latency={}
         report=dict(label='baseline' if baseline else 'persistent',scope='real Rust/TCP/adapter, fake already-buffered native screens; NOT SSH or LLM latency',
             commands=20,short_commands_ms=times,short_p50_ms=sorted(times)[10],short_total_ms=sum(times),

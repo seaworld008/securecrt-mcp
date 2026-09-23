@@ -56,28 +56,12 @@ pub struct ExecuteParams {
 
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct JobParams {
-    pub command_id: String,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct OutputParams {
     pub command_id: String,
     /// UTF-8 byte cursor, from the previous response. Defaults to zero.
     pub cursor: Option<usize>,
     /// Maximum response bytes, 4..65536 (default 16384).
     pub max_bytes: Option<usize>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SendTextParams {
-    pub session: String,
-    pub screen_token: String,
-    pub expected_prompt: String,
-    pub text: String,
-    pub append_enter: Option<bool>,
 }
 
 /// Agent-oriented command submission. Response budgets do not change operation identity.
