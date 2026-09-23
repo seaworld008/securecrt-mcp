@@ -118,7 +118,7 @@ Release 包含可执行文件、许可证、中文说明和对应版本的 Secur
 Xshell 使用同一个 `init` 自动部署流程。初始化会把最新的
 `securecrt-mcp-xshell.py` 复制到 Xshell 的标准 `Scripts` 目录，并保留 Token
 配置在 MCP 私有目录。打开 Xshell 的 **Tools -> Script -> Run** 后，直接选择
-`securecrt-mcp-xshell.py`；不需要浏览 MCP 安装目录或手工复制脚本。需要发现多个已登录标签时，先在 Xshell 的高级选项中启用单进程模式。
+`securecrt-mcp-xshell.py`；不需要浏览 MCP 安装目录或手工复制脚本。需要发现多个已登录标签时，先在 Xshell 的高级选项中启用单进程模式。Xshell 脚本通过 MCP 私有目录中的文件 IPC 与 Rust 通信，不依赖内嵌 Python 的网络模块。SecureCRT、Xshell 和 OpenSSH 可以同时连接；同一 Xshell Bridge 内部按标签焦点串行执行。
 
 ```powershell
 .\securecrt-mcp.exe doctor

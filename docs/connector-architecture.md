@@ -79,6 +79,12 @@ probes each name with `SelectTabName`, and restores the original tab. This is
 reported as `enumeration: "named_files"`; unlisted unsaved tabs still require
 an explicit known session name.
 
+The embedded Python environment does not provide socket modules, so this
+adapter uses the private authenticated file IPC directory created by `init`.
+Requests and responses use unique IDs and atomic file replacement. Xshell
+processes one request at a time because tab selection and native screen focus
+are process-global; SecureCRT and OpenSSH remain independently concurrent.
+
 System OpenSSH uses the user's `ssh_config`, Agent, ProxyJump and known_hosts.
 It is the backend for native PTY, resize, raw input, REPL and pager workflows.
 The MCP server does not add `StrictHostKeyChecking=no`, capture passwords, or
@@ -88,7 +94,7 @@ silently fall back to a desktop client.
 
 1. Run `securecrt-mcp.exe init` once. This creates the private bridge files and
    installs `securecrt-mcp-xshell.py` into Xshell's standard `Scripts` folder.
-   The separate loopback token remains in the MCP private directory.
+   The separate file-IPC token and directory remain in the MCP private directory.
 2. Enable Xshell's single-process mode when more than the current tab must be
    discovered or selected.
 3. Run `securecrt-mcp-xshell.py` from Xshell's Script menu while a connected

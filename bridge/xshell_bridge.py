@@ -4,20 +4,18 @@
 """Xshell 8 native connector bridge.
 
 Run this file from Xshell's Script menu. It exposes the same authenticated
-loopback NDJSON contract as the SecureCRT bridge while keeping all xsh calls
-on Xshell's script thread. Xshell does not expose a connected-tab collection,
+request/response contract as the SecureCRT bridge through private file IPC
+while keeping all xsh calls on Xshell's script thread. Xshell does not expose a connected-tab collection,
 so discovery uses the current session file's directory as a name index and
 then probes those names through SelectTabName in single-process mode. Session
 file contents are never read.
 """
 
-import errno
 import hashlib
 import hmac
 import json
 import os
 import platform
-import socket
 import sys
 import time
 import uuid
@@ -379,78 +377,72 @@ def handle_request(adapter, request, token):
 
 
 def serve(app, config):
-    if config.get("host") != "127.0.0.1":
-        fail("bridge host must be 127.0.0.1")
-    port = int(config["port"])
+    ipc_dir = Path(string(config.get("ipc_dir"), "ipc_dir", 1024))
+    if not ipc_dir.is_absolute():
+        fail("Xshell IPC directory must be absolute")
     token = string(config["token"], "token", 256)
     if len(token) < 32:
         fail("bridge token too short")
-    adapter = NativeAdapter(app)
-    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE if sys.platform == "win32" else socket.SO_REUSEADDR, 1)
-    try:
-        listener.bind(("127.0.0.1", port))
-    except OSError as exc:
-        listener.close()
-        if exc.errno == errno.EADDRINUSE:
+    if not ipc_dir.exists():
+        ipc_dir.mkdir(parents=True)
+    for path in ipc_dir.iterdir():
+        if path.is_file() and (path.name.endswith(".request.json") or
+                               path.name.endswith(".response.json") or
+                               path.name.endswith(".request.tmp") or
+                               path.name == "ready.json"):
             try:
-                app.Dialog.MessageBox("Xshell MCP 已经在运行，无需重复启动。", "Xshell MCP")
-            except Exception:
+                path.unlink()
+            except OSError:
                 pass
-            return
-        raise
-    listener.listen(32)
-    listener.setblocking(False)
-    peers = {}
+    adapter = NativeAdapter(app)
+    ready = ipc_dir / "ready.json"
+    ready.write_text(json.dumps({"bridge_instance": adapter.instance,
+                                 "bridge_version": BRIDGE_VERSION,
+                                 "protocol_version": PROTOCOL_VERSION,
+                                 "started_ms": now_ms()}, ensure_ascii=False), encoding="utf-8")
     try:
         try:
             app.Dialog.MessageBox("Xshell MCP 已启动；当前脚本只控制已连接的命名会话。", "Xshell MCP")
         except Exception:
             pass
         while True:
+            requests = sorted((p for p in ipc_dir.iterdir() if p.name.endswith(".request.json")),
+                              key=lambda p: p.name)
+            for request_path in requests:
+                try:
+                    request = json.loads(request_path.read_text(encoding="utf-8"))
+                    request_path.unlink()
+                    response = handle_request(adapter, request, token)
+                    request_id = string(request.get("id"), "id", 128)
+                    response_path = ipc_dir / (request_id + ".response.json")
+                    temporary = ipc_dir / ("." + request_id + ".response.tmp")
+                    temporary.write_text(json.dumps(response, ensure_ascii=False), encoding="utf-8")
+                    os.replace(str(temporary), str(response_path))
+                except Exception as exc:
+                    try:
+                        request_path.unlink()
+                    except OSError:
+                        pass
+                    error_path = ipc_dir / (request_path.name.replace(".request.json", ".response.json"))
+                    try:
+                        error_path.write_text(json.dumps({"id": "", "protocol_version": PROTOCOL_VERSION,
+                                                          "bridge_instance": adapter.instance, "ok": False,
+                                                          "error": str(exc), "sent": None}), encoding="utf-8")
+                    except OSError:
+                        pass
             try:
-                client, _ = listener.accept()
-                client.setblocking(False)
-                client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-                peers[client] = dict(buffer=bytearray(), out=b"", deadline=time.monotonic() + 5, keep=False)
-                adapter.metrics["connections"] += 1
-            except BlockingIOError:
+                ready.write_text(json.dumps({"bridge_instance": adapter.instance,
+                                             "bridge_version": BRIDGE_VERSION,
+                                             "protocol_version": PROTOCOL_VERSION,
+                                             "last_poll_ms": now_ms()}, ensure_ascii=False), encoding="utf-8")
+            except OSError:
                 pass
-            for conn, peer in list(peers.items()):
-                peer = peers.get(conn)
-                if not peer:
-                    continue
-                if not peer["out"]:
-                    try:
-                        chunk = conn.recv(MAX_FRAME + 1 - len(peer["buffer"]))
-                    except BlockingIOError:
-                        chunk = None
-                    if chunk == b"":
-                        conn.close(); peers.pop(conn, None); continue
-                    if chunk:
-                        peer["buffer"].extend(chunk)
-                        if len(peer["buffer"]) > MAX_FRAME or b"\n" not in peer["buffer"]:
-                            continue
-                        line = bytes(peer["buffer"]).split(b"\n", 1)[0]
-                        peer["buffer"].clear()
-                        request = json.loads(line.decode("utf-8"))
-                        response = handle_request(adapter, request, token)
-                        peer["keep"] = bool(response.get("ok") and request.get("keep_alive") is True)
-                        response["persistent"] = peer["keep"]
-                        peer["out"] = (json.dumps(response, ensure_ascii=False) + "\n").encode("utf-8")
-                if peer["out"]:
-                    try:
-                        sent = conn.send(peer["out"])
-                    except BlockingIOError:
-                        sent = 0
-                    peer["out"] = peer["out"][sent:]
-                if not peer["out"] and not peer["keep"]:
-                    conn.close(); peers.pop(conn, None)
-            app.Session.Sleep(1)
+            app.Session.Sleep(50)
     finally:
-        for conn in list(peers):
-            conn.close()
-        listener.close()
+        try:
+            ready.unlink()
+        except OSError:
+            pass
 
 
 def load_config(script):

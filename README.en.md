@@ -108,6 +108,11 @@ In SecureCRT choose **Script -> Run** and run the Bridge path printed by `paths`
 .\securecrt-mcp.exe doctor --latency
 ```
 
+Xshell uses the script installed by `init` in its standard Scripts directory.
+Its embedded Python communicates with Rust through private file IPC, not Python
+network modules. SecureCRT, Xshell, and OpenSSH may be active at the same time;
+only requests sharing one Xshell Bridge are serialized around native tab focus.
+
 Running the script again is harmless: the active Bridge reports that it is already running. To restart, resolve active or unresolved work first, then stop the script or restart SecureCRT.
 
 ### Upgrade

@@ -3,6 +3,8 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import threading
+import time
 
 
 SCRIPT = Path(__file__).parents[1] / "bridge" / "xshell_bridge.py"
@@ -239,3 +241,67 @@ def test_xshell_stale_screen_and_authentication_fail_closed():
     )
     assert acknowledged["ok"] is False
     assert "stale_screen" in acknowledged["error"]
+
+
+def test_xshell_file_ipc_server_round_trip_without_socket_modules():
+    with tempfile.TemporaryDirectory() as directory:
+        ipc = Path(directory, "ipc")
+        app = FakeXshell()
+        stop = threading.Event()
+        errors = []
+        original_sleep = app.Session.Sleep
+
+        def sleep(milliseconds):
+            if stop.is_set():
+                raise RuntimeError("test stop")
+            original_sleep(milliseconds)
+
+        app.Session.Sleep = sleep
+
+        def run():
+            try:
+                MODULE.serve(app, {"ipc_dir": str(ipc), "token": "t" * 32})
+            except RuntimeError as exc:
+                if not stop.is_set():
+                    errors.append(str(exc))
+            except Exception as exc:
+                errors.append(repr(exc))
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        ready = ipc / "ready.json"
+        for _ in range(100):
+            if ready.exists():
+                break
+            time.sleep(0.01)
+        assert ready.exists()
+
+        request_id = "file-ipc-test"
+        request = {
+            "protocol_version": MODULE.PROTOCOL_VERSION,
+            "id": request_id,
+            "token": "t" * 32,
+            "client_id": "pytest",
+            "keep_alive": True,
+            "deadline_ms": MODULE.now_ms() + 30_000,
+            "method": "ping",
+            "params": {},
+        }
+        temporary = ipc / ".file-ipc-test.request.tmp"
+        temporary.write_text(json.dumps(request), encoding="utf-8")
+        os.replace(str(temporary), str(ipc / (request_id + ".request.json")))
+        response_path = ipc / (request_id + ".response.json")
+        for _ in range(100):
+            if response_path.exists():
+                break
+            time.sleep(0.01)
+        assert response_path.exists()
+        response = json.loads(response_path.read_text(encoding="utf-8"))
+        assert response["ok"] is True
+        assert response["id"] == request_id
+        assert response["result"]["bridge_version"] == MODULE.BRIDGE_VERSION
+        assert not errors
+        stop.set()
+        thread.join(1)
+        assert not thread.is_alive()
+        assert not ready.exists()

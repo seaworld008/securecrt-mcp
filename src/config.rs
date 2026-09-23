@@ -98,6 +98,8 @@ pub struct BridgeSecret {
     pub port: u16,
     pub token: String,
     pub max_request_bytes: usize,
+    #[serde(default)]
+    pub ipc_dir: Option<String>,
 }
 
 pub fn app_dir() -> Result<PathBuf> {
@@ -125,6 +127,9 @@ pub fn bridge_script_path() -> Result<PathBuf> {
 }
 pub fn xshell_bridge_config_path() -> Result<PathBuf> {
     Ok(app_dir()?.join("xshell_bridge.json"))
+}
+pub fn xshell_ipc_dir_path() -> Result<PathBuf> {
+    Ok(app_dir()?.join("xshell-ipc"))
 }
 pub fn xshell_bridge_script_path() -> Result<PathBuf> {
     Ok(app_dir()?.join(XSHELL_BRIDGE_SCRIPT_FILE))

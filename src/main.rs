@@ -21,7 +21,8 @@ use clap::{Parser, Subcommand};
 use config::{
     BridgeSecret, Config, MAX_FRAME, PROTOCOL, app_dir, bridge_config_path, bridge_script_path,
     config_path, load_bridge_secret, load_xshell_bridge_secret, xshell_bridge_config_path,
-    xshell_bridge_script_path, xshell_installed_script_path, xshell_script_dir_path,
+    xshell_bridge_script_path, xshell_installed_script_path, xshell_ipc_dir_path,
+    xshell_script_dir_path,
 };
 use execution::Engine;
 use policy::PolicyEngine;
@@ -129,7 +130,11 @@ async fn main() -> Result<()> {
                     let mut xshell_bridge_config = config.bridge.clone();
                     xshell_bridge_config.port = secret.port;
                     Some(Engine::new(
-                        BridgeClient::new(xshell_bridge_config, secret)?,
+                        BridgeClient::new_file(
+                            xshell_bridge_config,
+                            secret,
+                            xshell_ipc_dir_path()?,
+                        )?,
                         audit,
                         policy,
                         config,
@@ -188,6 +193,7 @@ async fn main() -> Result<()> {
                 "xshell_installed_script={}",
                 xshell_installed_script_path()?.display()
             );
+            println!("xshell_ipc_dir={}", xshell_ipc_dir_path()?.display());
         }
         Command::CodexConfig {
             approval_mode,
@@ -272,6 +278,7 @@ fn initialize(force: bool) -> Result<()> {
             port: config.bridge.port,
             token: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
             max_request_bytes: MAX_FRAME,
+            ipc_dir: None,
         }
     };
     // A changed localhost port follows configuration without rotating the existing secret.
@@ -280,7 +287,7 @@ fn initialize(force: bool) -> Result<()> {
     replace_with_backup(&secret_file, &serde_json::to_string_pretty(&secret)?)?;
     replace_with_backup(&bridge_script_path()?, BRIDGE_SCRIPT)?;
     let xshell_secret_file = xshell_bridge_config_path()?;
-    let xshell_secret = if xshell_secret_file.exists() && !force {
+    let mut xshell_secret = if xshell_secret_file.exists() && !force {
         load_xshell_bridge_secret()?
     } else {
         BridgeSecret {
@@ -292,8 +299,18 @@ fn initialize(force: bool) -> Result<()> {
                 .context("bridge port is too high for Xshell")?,
             token: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
             max_request_bytes: MAX_FRAME,
+            ipc_dir: Some(xshell_ipc_dir_path()?.display().to_string()),
         }
     };
+    xshell_secret.ipc_dir = Some(xshell_ipc_dir_path()?.display().to_string());
+    reject_symlink(&xshell_ipc_dir_path()?)?;
+    fs::create_dir_all(xshell_ipc_dir_path()?)?;
+    for entry in fs::read_dir(xshell_ipc_dir_path()?)? {
+        let path = entry?.path();
+        if path.is_file() {
+            fs::remove_file(path)?;
+        }
+    }
     replace_with_backup(
         &xshell_secret_file,
         &serde_json::to_string_pretty(&xshell_secret)?,
