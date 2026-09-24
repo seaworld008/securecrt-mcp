@@ -21,10 +21,12 @@ explicit session:
 }
 ```
 
-The Xshell backend discovers `.xsh` names below the current session's folder,
-then probes those names with `SelectTabName` in single-process mode. Its
-`connector_list` result reports `enumeration: "named_files"`; session file
-contents are never read. Both
+The Xshell backend discovers `.xsh` names below each current session's folder,
+then probes those names with `SelectTabName`. Every Xshell process registers an
+isolated file-IPC instance; Rust aggregates live instances and routes
+attachments back to their originating process. Its `connector_list` result
+reports `enumeration: "instance_registry"`; session file contents are never
+read. Both
 backends return an attachment-backed `session_id` and support
 `connector_exec`, `connector_exec_batch`, `connector_read_screen`,
 `connector_heartbeat`, `connector_interrupt`, `connector_acknowledge`, and

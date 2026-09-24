@@ -73,17 +73,19 @@ acknowledgement, but no native PTY.
 Xshell uses `bridge/xshell_bridge.py`, run from Xshell's Script menu. Xshell's
 script API exposes `SessionName`, `TabText`, `Path`, `RemoteAddress`,
 `Screen.Get`, `Screen.Send`, `WaitForStrings`, and `SelectTabName`.
-Multi-session selection requires Xshell single-process mode. The adapter uses
-the current session file's folder as a name index, reads only `.xsh` filenames,
-probes each name with `SelectTabName`, and restores the original tab. This is
-reported as `enumeration: "named_files"`; unlisted unsaved tabs still require
-an explicit known session name.
+Each Xshell process registers an isolated file-IPC instance. Rust aggregates
+live instances and routes attachments back to their originating process. The
+adapter uses the current session file's folder as a name index, reads only
+`.xsh` filenames, probes each name with `SelectTabName`, and restores the
+original tab. This is reported as `enumeration: "instance_registry"`; unlisted
+unsaved tabs still require an explicit known session name.
 
 The embedded Python environment does not provide socket modules, so this
 adapter uses the private authenticated file IPC directory created by `init`.
 Requests and responses use unique IDs and atomic file replacement. Xshell
 processes one request at a time because tab selection and native screen focus
-are process-global; SecureCRT and OpenSSH remain independently concurrent.
+are process-global. Separate Xshell processes use independent lanes and remain
+concurrently usable with SecureCRT and OpenSSH.
 
 System OpenSSH uses the user's `ssh_config`, Agent, ProxyJump and known_hosts.
 It is the backend for native PTY, resize, raw input, REPL and pager workflows.
@@ -95,19 +97,54 @@ silently fall back to a desktop client.
 1. Run `securecrt-mcp.exe init` once. This creates the private bridge files and
    installs `securecrt-mcp-xshell.py` into Xshell's standard `Scripts` folder.
    The separate file-IPC token and directory remain in the MCP private directory.
-2. Enable Xshell's single-process mode when more than the current tab must be
-   discovered or selected.
-3. Run `securecrt-mcp-xshell.py` from Xshell's Script menu while a connected
-   tab is selected. The file is already in the menu's standard folder.
-4. Call `connector_list` and verify the returned `backend`, `session_name`,
+2. Run `securecrt-mcp-xshell.py` from Xshell's Script menu in every Xshell
+   process that should be controlled. Single-process mode is optional.
+3. Call `connector_list` and verify the returned `backend`, `session_name`,
    `remote_address`, `enumeration`, and `capabilities` before opening it.
-5. Use the returned `xshell/<attachment>` handle for `connector_exec` or
+4. Use the returned `xshell/<attachment>` handle for `connector_exec` or
    `connector_exec_batch`; use `connector_read_screen` before an explicit
    acknowledgement.
 
 The first live acceptance uses harmless `hostname`, `pwd`, and a fixed probe
 string on each test tab. It must verify output, exit state, no duplicate send
 after the same `operation_id`, and a rejected stale-screen acknowledgement.
+
+The Xshell bridge writes one bounded JSONL lifecycle log per running script to
+`%USERPROFILE%\.securecrt-mcp\xshell-ipc\logs`. Entries include startup,
+detached notice creation, request method and result, host-yield failures,
+cancel, and final cleanup; tokens and terminal contents are never logged. The
+development regression suite also runs two fake Xshell instances concurrently
+and verifies that both stop cleanly:
+
+The idle loop uses Xshell's `Session.Sleep(1)` host wait. The one-millisecond
+wait returns control to Xshell's message pump frequently enough for multiple
+bridge instances while keeping **Tools -> Script -> Cancel** responsive. On
+cancellation, Xshell may return an unstructured `NoneType`/`TypeError` from that
+COM call; the bridge records the host-wait failure, treats it as a normal stop,
+and removes the IPC registration. A normal Python `time.sleep` must not be used
+for the Xshell production path because it can leave XshellCore waiting on the
+embedded script and produce a Windows `AppHangXProcB1` report. The bridge does
+not change `Screen.Synchronous` for its entire lifetime because that property
+can also raise an unstructured host `SystemError` during cancellation. Command
+execution manages synchronization only around its own `Screen.Send` operation.
+`Screen.WaitForStrings` remains a diagnostic capability check; it is not used
+as the idle loop because this Xshell build exposes it without a timeout
+argument. Startup notices run in one foreground `wscript.exe` process and use a
+temporary lock so repeated launches cannot stack duplicate dialogs. The popup
+has a finite timeout as a crash safety net, and the bridge keeps the process
+handle for its own popup so it can close it silently during normal cleanup. The
+notice marker is scoped to the Xshell process ID, so a second script in the same
+Xshell process is suppressed while a new Xshell process gets a fresh startup
+notice.
+
+If a lifecycle log contains `host_wait_failed` with a `NoneType` or `TypeError`
+message, that is the expected cancellation signature on the affected Xshell
+build, not a bridge request failure. If it appears during startup without a
+script cancellation, stop the script and inspect the Xshell application log.
+
+```powershell
+python -m pytest -q tests/test_xshell_bridge.py
+```
 
 ## Future adapters
 

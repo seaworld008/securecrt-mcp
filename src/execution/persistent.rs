@@ -8,12 +8,17 @@ pub(super) struct TerminalState {
     batches: HashMap<String, (String, Value)>,
 }
 impl Engine {
+    fn attachment_cache_key(id: &str) -> &str {
+        id.rsplit_once('/').map_or(id, |(_, local)| local)
+    }
+
     async fn attachment_value(&self, id: &str) -> Result<Value> {
-        self.terminal
-            .lock()
-            .await
+        let key = Self::attachment_cache_key(id);
+        let terminal = self.terminal.lock().await;
+        terminal
             .attachments
             .get(id)
+            .or_else(|| terminal.attachments.get(key))
             .cloned()
             .context("stale_attachment: attach using this persistent MCP/daemon instance")
     }
@@ -46,7 +51,9 @@ impl Engine {
             .call("detach", json!({"attachment_id":id}))
             .await;
         // Explicitly forget an unusable local handle even if the native lease expired.
-        self.terminal.lock().await.attachments.remove(id);
+        let mut terminal = self.terminal.lock().await;
+        terminal.attachments.remove(id);
+        terminal.attachments.remove(Self::attachment_cache_key(id));
         result
     }
 
@@ -97,12 +104,8 @@ impl Engine {
     }
     pub async fn exec(&self, p: ExecParams) -> Result<Value> {
         let a = self
-            .terminal
-            .lock()
+            .attachment_value(&p.attachment_id)
             .await
-            .attachments
-            .get(&p.attachment_id)
-            .cloned()
             .context("stale_attachment: attach using this persistent MCP/daemon instance")?;
         ensure!(
             a["mode"] != "observe",
@@ -167,14 +170,9 @@ impl Engine {
             ["stop", "continue"].contains(&policy),
             "on_error must be stop or continue"
         );
-        ensure!(
-            self.terminal
-                .lock()
-                .await
-                .attachments
-                .contains_key(&p.attachment_id),
-            "stale_attachment"
-        );
+        self.attachment_value(&p.attachment_id)
+            .await
+            .context("stale_attachment")?;
         for command in &p.commands {
             let d = self.policy.classify_command(command);
             ensure!(

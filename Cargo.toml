@@ -16,6 +16,7 @@ anyhow = "1"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 clap = { version = "4.5", features = ["derive"] }
+futures = "0.3"
 regex = "1"
 rmcp = { version = "3.4.0", features = ["server", "transport-io"] }
 schemars = "1"

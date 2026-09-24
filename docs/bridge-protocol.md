@@ -1,6 +1,6 @@
 # Bridge protocol 2: capability-negotiated persistent extension
 
-SecureCRT uses loopback TCP with UTF-8 NDJSON and a maximum frame of 262144 bytes. Xshell uses the same protocol-2 envelope through a private file IPC directory because its embedded Python runtime does not provide socket modules. SecureCRT has a bounded four-lane pool; Xshell serializes one request at a time because native tab focus is process-global. Responses match request IDs. No replay follows any ambiguous write/result.
+SecureCRT uses loopback TCP with UTF-8 NDJSON and a maximum frame of 262144 bytes. Xshell uses the same protocol-2 envelope through a private file IPC directory because its embedded Python runtime does not provide socket modules. SecureCRT has a bounded four-lane pool; Xshell serializes one request at a time within each process because native tab focus is process-global, while separate Xshell processes use independent lanes. Responses match request IDs. No replay follows any ambiguous write/result.
 
 Request fields: protocol_version=2, id, token, client_id, deadline_ms, method, and params. Response fields: protocol_version, bridge_instance, id, ok, result/error, and sent evidence. TCP may add persistent=true for a retained connection. File IPC writes `<uuid>.request.json` through a temporary file and atomic rename; the Xshell script writes the matching `<uuid>.response.json` the same way. Credentials and deadlines are validated per request. A timed-out file request remains an unknown exchange and is never replayed automatically.
 

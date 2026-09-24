@@ -83,7 +83,10 @@ impl SecureCrtServer {
                 }
                 if let Some(xshell) = &self.xshell {
                     match timeout(
-                        Duration::from_millis(250),
+                        // Xshell fans out to every live process. The calls are
+                        // concurrent, but Windows file polling and a cold
+                        // Xshell script can still need more than one second.
+                        Duration::from_millis(3000),
                         xshell.bridge.call("list_sessions", json!({})),
                     )
                     .await
@@ -148,6 +151,15 @@ impl SecureCrtServer {
                         .as_str()
                         .unwrap_or_default()
                         .to_owned();
+                    let instance = value["bridge_instance"].as_str().unwrap_or_default();
+                    let attachment = if !instance.is_empty()
+                        && !attachment.starts_with(&(instance.to_owned() + "/"))
+                    {
+                        format!("{instance}/{attachment}")
+                    } else {
+                        attachment
+                    };
+                    value["attachment_id"] = json!(attachment);
                     value["session_id"] = json!(format!("xshell/{attachment}"));
                     value["backend"] = json!("xshell");
                     value

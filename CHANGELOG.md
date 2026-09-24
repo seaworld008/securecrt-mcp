@@ -12,6 +12,7 @@
 - Reject stale or explicitly mismatched terminal prompts before any native input
   is sent, with regression coverage for both desktop bridges.
 - Add unified connector, Xshell discovery, deployment, and user setup guidance.
+- Harden Xshell startup and cancellation with an external one-shot notice, per-process lifecycle logs, and a short host-owned wait that keeps Script > Cancel responsive without crashing XshellCore.
 
 ## [0.4.1] - 2026-09-22
 

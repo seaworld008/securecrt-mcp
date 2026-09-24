@@ -59,7 +59,7 @@ Rust securecrt-mcp（统一会话、输出、状态和 no-replay 语义）
 | 后端 | 主要工具 | 连接方式 | 适用场景 |
 | --- | --- | --- | --- |
 | SecureCRT | `connector_*` | 复用 SecureCRT 已登录 Tab，经本机 Bridge 调用 | 复用现有 VPN、堡垒机、MFA 和桌面会话 |
-| Xshell | `connector_*` | Xshell Script Bridge 发现并复用 `.xsh` 命名 Tab | 单进程模式下按会话文件名探测连接状态；不读取会话内容 |
+| Xshell | `connector_*` | Xshell Script Bridge 发现并复用 `.xsh` 命名 Tab | 每个 Xshell 进程独立注册，MCP 自动汇总；不读取会话内容 |
 | OpenSSH/PTY | `connector_*` | 系统 OpenSSH 的持久 `ssh -T` 或 `ssh -tt` 会话 | 高频命令、长驻流、REPL、分页和原始 PTY 交互 |
 
 SecureCRT、Xshell 和 OpenSSH 都必须显式指定 `backend`，不会在后端之间自动切换。上层模型负责审批、危险判断和凭据使用；MCP 负责连接生命周期、输出流、退出状态、分页和未知结果不重放。
@@ -118,7 +118,7 @@ Release 包含可执行文件、许可证、中文说明和对应版本的 Secur
 Xshell 使用同一个 `init` 自动部署流程。初始化会把最新的
 `securecrt-mcp-xshell.py` 复制到 Xshell 的标准 `Scripts` 目录，并保留 Token
 配置在 MCP 私有目录。打开 Xshell 的 **Tools -> Script -> Run** 后，直接选择
-`securecrt-mcp-xshell.py`；不需要浏览 MCP 安装目录或手工复制脚本。需要发现多个已登录标签时，先在 Xshell 的高级选项中启用单进程模式。Xshell 脚本通过 MCP 私有目录中的文件 IPC 与 Rust 通信，不依赖内嵌 Python 的网络模块。SecureCRT、Xshell 和 OpenSSH 可以同时连接；同一 Xshell Bridge 内部按标签焦点串行执行。
+`securecrt-mcp-xshell.py`；不需要浏览 MCP 安装目录或手工复制脚本。每个需要接入的 Xshell 进程都运行一次脚本，单进程模式可开可关，MCP 会自动汇总活跃实例。同一进程内按标签焦点串行执行，不同进程可并发执行。Xshell 脚本通过 MCP 私有目录中的文件 IPC 与 Rust 通信，不依赖内嵌 Python 的网络模块。SecureCRT、Xshell 和 OpenSSH 可以同时连接。
 
 ```powershell
 .\securecrt-mcp.exe doctor
@@ -126,6 +126,14 @@ Xshell 使用同一个 `init` 自动部署流程。初始化会把最新的
 ```
 
 如果重复点击脚本，提示“SecureCRT MCP 已经在运行”即可，不需要再次启动。需要重启时先确认没有活动或未决命令，再停止脚本或重启 SecureCRT。
+
+Xshell 首次运行脚本会显示一次独立的启动提示；提示关闭后脚本继续运行。点击“取消脚本”时不显示关闭弹窗，脚本应直接退出并清理本地 IPC 状态。
+每个脚本实例的生命周期日志会写入
+`%USERPROFILE%\.securecrt-mcp\xshell-ipc\logs\xshell-<实例>.jsonl`，记录启动、请求、取消和清理结果，不记录 Token 或终端内容。开发回归测试会并发模拟两个 Xshell 实例：
+
+```powershell
+python -m pytest -q tests/test_xshell_bridge.py
+```
 
 ### 3. 升级
 

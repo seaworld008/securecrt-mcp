@@ -2,8 +2,10 @@
 use crate::config::{BridgeConfig, BridgeSecret, MAX_FRAME, PROTOCOL};
 use crate::fault::BridgeFault;
 use anyhow::{Context, Result, ensure};
+use futures::future::join_all;
 use serde_json::{Value, json};
 use std::{
+    collections::HashMap,
     hash::{Hash, Hasher},
     path::PathBuf,
     sync::{
@@ -31,9 +33,14 @@ enum Transport {
         lanes: Vec<Mutex<Option<Connection>>>,
     },
     File {
-        ipc_dir: PathBuf,
-        lane: Mutex<()>,
+        state: Arc<FileTransport>,
     },
+}
+
+struct FileTransport {
+    root: PathBuf,
+    lanes: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    routes: Mutex<HashMap<String, String>>,
 }
 
 #[derive(Default)]
@@ -86,8 +93,11 @@ impl BridgeClient {
             config,
             secret,
             Transport::File {
-                ipc_dir,
-                lane: Mutex::new(()),
+                state: Arc::new(FileTransport {
+                    root: ipc_dir,
+                    lanes: Mutex::new(HashMap::new()),
+                    routes: Mutex::new(HashMap::new()),
+                }),
             },
         ))
     }
@@ -144,9 +154,7 @@ impl BridgeClient {
             async {
                 match self.transport.as_ref() {
                     Transport::Tcp { lanes } => self.call_tcp(method, params, lane, lanes).await,
-                    Transport::File { ipc_dir, lane } => {
-                        self.call_file(method, params, ipc_dir, lane).await
-                    }
+                    Transport::File { state } => self.call_file(method, params, state).await,
                 }
             },
         )
@@ -243,13 +251,161 @@ impl BridgeClient {
         self.finish_response(serde_json::from_slice(&frame)?, &id)
     }
 
-    async fn call_file(
+    async fn file_instances(&self, state: &FileTransport) -> Result<Vec<(String, PathBuf)>> {
+        let instances = state.root.join("instances");
+        let mut result = Vec::new();
+        let mut entries = match fs::read_dir(&instances).await {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(result),
+            Err(error) => return Err(error.into()),
+        };
+        while let Some(entry) = entries.next_entry().await? {
+            if !entry.file_type().await?.is_dir() {
+                continue;
+            }
+            let ready_path = entry.path().join("ready.json");
+            let bytes = match fs::read(&ready_path).await {
+                Ok(bytes) => bytes,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error.into()),
+            };
+            let ready: Value = match serde_json::from_slice(&bytes) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let Some(instance) = ready["bridge_instance"].as_str() else {
+                continue;
+            };
+            if ready["protocol_version"].as_u64() != Some(PROTOCOL as u64) {
+                continue;
+            }
+            let heartbeat = ready["last_poll_ms"]
+                .as_u64()
+                .or(ready["started_ms"].as_u64());
+            let Some(heartbeat) = heartbeat else { continue };
+            let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
+            if now.saturating_sub(heartbeat) > 5_000 {
+                continue;
+            }
+            result.push((instance.to_owned(), entry.path()));
+        }
+        result.sort_by(|left, right| left.0.cmp(&right.0));
+        Ok(result)
+    }
+
+    async fn file_lane(&self, state: &FileTransport, instance: &str) -> Arc<Mutex<()>> {
+        let mut lanes = state.lanes.lock().await;
+        lanes
+            .entry(instance.to_owned())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
+    async fn call_file(&self, method: &str, params: Value, state: &FileTransport) -> Result<Value> {
+        let instances = self.file_instances(state).await?;
+        ensure!(
+            !instances.is_empty(),
+            "Xshell bridge is not running; start the script in each Xshell process"
+        );
+        if method == "list_sessions" {
+            let mut sessions = Vec::new();
+            let mut errors = Vec::new();
+            let mut capabilities = Vec::new();
+            let mut active = Vec::new();
+            let calls = instances.iter().map(|(instance, dir)| {
+                let params = params.clone();
+                async move {
+                    (
+                        instance.clone(),
+                        self.call_file_instance(method, params, state, instance, dir)
+                            .await,
+                    )
+                }
+            });
+            for (instance, result) in join_all(calls).await {
+                match result {
+                    Ok(value) => {
+                        active.push(instance.clone());
+                        if let Some(items) = value["sessions"].as_array() {
+                            sessions.extend(items.iter().cloned());
+                        }
+                        if let Some(items) = value["capabilities"].as_array() {
+                            for item in items {
+                                if !capabilities.contains(item) {
+                                    capabilities.push(item.clone());
+                                }
+                            }
+                        }
+                        if let Some(items) = value["discovery"]["errors"].as_array() {
+                            errors.extend(items.iter().cloned());
+                        }
+                    }
+                    Err(error) => {
+                        errors.push(json!({"instance":instance,"error":error.to_string()}))
+                    }
+                }
+            }
+            return Ok(
+                json!({"bridge_instance":"aggregated","enumeration":"instance_registry",
+                "sessions":sessions,"capabilities":capabilities,
+                "discovery":{"method":"instance_registry","instances":active,"errors":errors}}),
+            );
+        }
+        if method == "ping" {
+            let (instance, dir) = &instances[0];
+            let mut value = self
+                .call_file_instance(method, params, state, instance, dir)
+                .await?;
+            value["instances"] = json!(instances.iter().map(|(id, _)| id).collect::<Vec<_>>());
+            return Ok(value);
+        }
+        let route_key = ["session", "attachment_id", "capture_id"]
+            .iter()
+            .find_map(|key| params[*key].as_str())
+            .map(str::to_owned);
+        let selected = if let Some(key) = route_key.as_deref() {
+            let routes = state.routes.lock().await;
+            key.split('/')
+                .next()
+                .and_then(|prefix| instances.iter().find(|(id, _)| id == prefix).cloned())
+                .or_else(|| {
+                    routes.get(key).and_then(|id| {
+                        instances
+                            .iter()
+                            .find(|(candidate, _)| candidate == id)
+                            .cloned()
+                    })
+                })
+        } else {
+            None
+        };
+        let selected = selected.or_else(|| (instances.len() == 1).then(|| instances[0].clone()))
+            .context("Xshell instance route is ambiguous; use a session or attachment returned by connector_list/connector_open")?;
+        let value = self
+            .call_file_instance(method, params.clone(), state, &selected.0, &selected.1)
+            .await?;
+        if let Some(key) = route_key {
+            state.routes.lock().await.insert(key, selected.0.clone());
+        }
+        if let Some(key) = value["capture_id"].as_str() {
+            state
+                .routes
+                .lock()
+                .await
+                .insert(key.to_owned(), selected.0.clone());
+        }
+        Ok(value)
+    }
+
+    async fn call_file_instance(
         &self,
         method: &str,
         params: Value,
+        state: &FileTransport,
+        instance: &str,
         ipc_dir: &PathBuf,
-        lane: &Mutex<()>,
     ) -> Result<Value> {
+        let lane = self.file_lane(state, instance).await;
         let _guard = lane.lock().await;
         fs::create_dir_all(ipc_dir).await?;
         let id = Uuid::new_v4().to_string();
@@ -266,6 +422,10 @@ impl BridgeClient {
                     let response: Value = serde_json::from_slice(&bytes)
                         .context("invalid Xshell IPC response; exchange outcome unknown")?;
                     let _ = fs::remove_file(&response_path).await;
+                    ensure!(
+                        response["bridge_instance"].as_str() == Some(instance),
+                        "Xshell IPC response came from the wrong bridge instance"
+                    );
                     return self.finish_response(response, &id);
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -297,6 +457,12 @@ impl BridgeClient {
             }
             .into());
         }
-        Ok(response["result"].clone())
+        let mut result = response["result"].clone();
+        if let Some(object) = result.as_object_mut() {
+            object
+                .entry("bridge_instance")
+                .or_insert_with(|| response["bridge_instance"].clone());
+        }
+        Ok(result)
     }
 }

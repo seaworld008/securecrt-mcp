@@ -16,18 +16,31 @@ import hmac
 import json
 import os
 import platform
+import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
 
-BRIDGE_VERSION = "0.5.0"
+BRIDGE_VERSION = "0.5.1"
 PROTOCOL_VERSION = 2
 MAX_FRAME = 262144
 MAX_CHUNK = 65536
 LEASE_MS = 120000
 SCREEN_MS = 30000
 DISCOVERY_LIMIT = 128
+STARTUP_NOTICE = "Xshell MCP 已启动；当前脚本只控制已连接的命名会话。"
+STALE_INSTANCE_MS = 300_000
+STARTUP_NOTICE_STYLE = 0x50040  # information + foreground + topmost
+STARTUP_NOTICE_TIMEOUT_SECONDS = 15
+# Xshell's script host must own the idle wait so Tools -> Script -> Cancel can
+# interrupt the script without hanging XshellCore. On this build a long
+# Session.Sleep call can return an unstructured NoneType exception during
+# cancellation; one-millisecond host waits avoid that cancellation window while
+# still yielding to Xshell's message pump. The exception is handled below as a
+# normal stop.
+HOST_WAIT_MS = 1
 
 
 def fail(message):
@@ -44,6 +57,255 @@ def now_ms():
     return int(time.time() * 1000)
 
 
+def yield_to_xshell(app, milliseconds, logger=None):
+    """Yield through Xshell's message pump and tolerate Script > Cancel."""
+    session_sleep = getattr(getattr(app, "Session", None), "Sleep", None)
+    if callable(session_sleep):
+        try:
+            # A one-millisecond host wait is intentional. It is the smallest
+            # stable wait on Xshell 8 and keeps cancellation outside a long COM
+            # call. Xshell may raise ``TypeError: NoneType is not callable``
+            # when the operator cancels the script; that is a normal stop.
+            session_sleep(HOST_WAIT_MS)
+            return True
+        except (KeyboardInterrupt, SystemExit):
+            if logger:
+                logger("host_wait_cancelled", method="Session.Sleep")
+            return False
+        except Exception as exc:
+            if logger:
+                logger("host_wait_failed", method="Session.Sleep", error=str(exc)[:256])
+            return False
+
+    # Older/non-Xshell hosts may not expose Session.Sleep. Keep a bounded
+    # fallback for diagnostics; the Xshell production path above is the only
+    # path that can service the host message pump and support safe cancellation.
+    try:
+        time.sleep(max(0, milliseconds) / 1000.0)
+        return True
+    except (KeyboardInterrupt, SystemExit):
+        if logger:
+            logger("fallback_wait_cancelled", method="time.sleep")
+        return False
+
+def make_logger(ipc_root, instance):
+    """Create a bounded JSONL lifecycle log for one Xshell script instance."""
+    log_dir = ipc_root / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    path = log_dir / ("xshell-" + instance + ".jsonl")
+
+    def log(event, **fields):
+        record = dict(ts_ms=now_ms(), event=str(event), instance=instance)
+        record.update(fields)
+        try:
+            if path.exists() and path.stat().st_size > 2 * 1024 * 1024:
+                path.write_text("", encoding="utf-8")
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except OSError:
+            # Diagnostics must never prevent the bridge from serving or
+            # shutting down cleanly.
+            pass
+
+    return log, path
+
+
+def write_json_atomic(path, value):
+    temporary = path.with_name("." + path.name + ".tmp")
+    temporary.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+    try:
+        os.replace(str(temporary), str(path))
+    except OSError:
+        # A concurrent registry read may briefly hold the previous manifest
+        # open on Windows. Keeping the last complete heartbeat is safe; the
+        # next loop retries with a fresh timestamp.
+        try:
+            temporary.unlink()
+        except OSError:
+            pass
+
+
+def cleanup_stale_instances(ipc_root, now=None):
+    """Remove abandoned instance folders left by a force-cancelled script."""
+    instances = ipc_root / "instances"
+    if not instances.is_dir():
+        return
+    now = now if now is not None else now_ms()
+    for directory in list(instances.iterdir()):
+        if not directory.is_dir():
+            continue
+        ready = directory / "ready.json"
+        try:
+            value = json.loads(ready.read_text(encoding="utf-8"))
+            heartbeat = int(value.get("last_poll_ms", value.get("started_ms", 0)))
+        except (OSError, TypeError, ValueError):
+            heartbeat = 0
+        if heartbeat and now - heartbeat <= STALE_INSTANCE_MS:
+            continue
+        try:
+            for path in directory.iterdir():
+                if path.is_file() or path.is_symlink():
+                    path.unlink()
+            directory.rmdir()
+        except OSError:
+            # A concurrently finishing adapter owns the directory; leave it for
+            # its own finally block and retry on the next startup.
+            pass
+
+
+def _show_startup_notice_process(logger=None):
+    """Show the notice in a detached Windows Script Host process."""
+    lock_path = None
+    script_path = None
+    try:
+        windir = os.environ.get("WINDIR", r"C:\Windows")
+        wscript = Path(windir) / "System32" / "wscript.exe"
+        if not wscript.is_file():
+            if logger:
+                logger("startup_notice_unavailable", reason="wscript_missing")
+            return False
+        temp_dir = Path(tempfile.gettempdir())
+        cutoff = time.time() - 86400
+        for stale in temp_dir.glob("securecrt-mcp-xshell-notice-*.vbs"):
+            try:
+                if stale.stat().st_mtime < cutoff:
+                    stale.unlink()
+            except OSError:
+                pass
+        host_pid = os.getpid()
+        lock_path = temp_dir / ("securecrt-mcp-xshell-notice-" + str(host_pid) + ".lock")
+        try:
+            if lock_path.exists():
+                try:
+                    owner_pid = int(lock_path.read_text(encoding="ascii").strip())
+                except (OSError, TypeError, ValueError):
+                    owner_pid = None
+                if owner_pid == host_pid:
+                    if logger:
+                        logger("startup_notice_suppressed_host", host_pid=host_pid)
+                    return {"owned": False, "reason": "host"}
+                # A different Xshell process owns this marker. Its PID is not
+                # reused as the current host identity, so this is an old marker
+                # left by a previous Xshell lifetime and can be replaced.
+                lock_path.unlink()
+            descriptor = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(descriptor, "w", encoding="ascii") as handle:
+                handle.write(str(host_pid))
+        except FileExistsError:
+            if logger:
+                logger("startup_notice_suppressed_race", host_pid=host_pid)
+            return {"owned": False, "reason": "race"}
+        # WScript owns the modal UI and exits after the operator dismisses it.
+        # UTF-16 keeps the Chinese notice intact in the embedded Windows host.
+        script_path = temp_dir / (
+            "securecrt-mcp-xshell-notice-" + str(uuid.uuid4()) + ".vbs"
+        )
+        message = STARTUP_NOTICE.replace('"', '""')
+        script = (
+            'Option Explicit\r\n'
+            'Dim shell, fso, scriptPath\r\n'
+            'Set shell = CreateObject("WScript.Shell")\r\n'
+            f'shell.Popup "{message}", {STARTUP_NOTICE_TIMEOUT_SECONDS}, "Xshell MCP", {STARTUP_NOTICE_STYLE}\r\n'
+            'scriptPath = WScript.ScriptFullName\r\n'
+            'Set fso = CreateObject("Scripting.FileSystemObject")\r\n'
+            'On Error Resume Next\r\n'
+            'fso.DeleteFile scriptPath, True\r\n'
+        )
+        script_path.write_text(script, encoding="utf-16")
+        flags = (getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) |
+                 getattr(subprocess, "DETACHED_PROCESS", 0))
+        process = subprocess.Popen(
+            [str(wscript), "//nologo", str(script_path)],
+            close_fds=True,
+            creationflags=flags,
+        )
+        if logger:
+            logger("startup_notice_process_started", pid=getattr(process, "pid", None),
+                   host_pid=host_pid, host="wscript", script=str(script_path))
+        return {
+            "owned": True,
+            "process": process,
+            "script_path": str(script_path),
+            "lock_path": str(lock_path),
+        }
+    except Exception as exc:
+        try:
+            if script_path is not None:
+                script_path.unlink()
+        except OSError:
+            pass
+        try:
+            if lock_path is not None:
+                lock_path.unlink()
+        except OSError:
+            pass
+        if logger:
+            logger("startup_notice_process_failed", error=str(exc)[:256])
+        return None
+
+
+def dismiss_startup_notice(notice, logger=None):
+    """Silently close the bridge-owned popup when Xshell cancels the script.
+
+    The popup runs outside Xshell so startup never enters the host's modal
+    Dialog API.  That also means the detached WScript process must be tied to
+    the bridge explicitly; otherwise it can remain modal after Script > Cancel
+    and be mistaken for a second startup popup during the host's cancellation
+    path.
+    """
+    if not isinstance(notice, dict) or not notice.get("owned"):
+        return
+    process = notice.get("process")
+    stopped = False
+    try:
+        if process is not None:
+            poll = getattr(process, "poll", None)
+            running = poll() is None if callable(poll) else True
+            if running:
+                terminate = getattr(process, "terminate", None)
+                if callable(terminate):
+                    terminate()
+                wait = getattr(process, "wait", None)
+                if callable(wait):
+                    try:
+                        wait(timeout=0.5)
+                    except TypeError:
+                        wait()
+                    except Exception:
+                        # The process may have exited between terminate and
+                        # wait.  Cleanup below remains safe and idempotent.
+                        pass
+                stopped = True
+        if logger:
+            logger("startup_notice_stopped" if stopped else "startup_notice_already_stopped")
+    except Exception as exc:
+        if logger:
+            logger("startup_notice_stop_failed", error=str(exc)[:256])
+    # The host-scoped marker intentionally survives popup dismissal and script
+    # cancellation. It suppresses a second prompt when another Xshell script
+    # starts in the same process; a new Xshell PID replaces the old marker.
+    for key in ("script_path",):
+        value = notice.get(key)
+        if not value:
+            continue
+        try:
+            Path(value).unlink()
+        except OSError:
+            pass
+
+
+def show_startup_notice(logger=None):
+    """Show startup status without entering Xshell's modal Dialog API."""
+    notice = _show_startup_notice_process(logger)
+    if notice:
+        return notice
+    # Never fall back to a modal call owned by Xshell.  That call is exactly
+    # what can turn Script > Cancel into a host-level crash.
+    if logger:
+        logger("startup_notice_unavailable")
+    return None
+
+
 class NativeAdapter:
     def __init__(self, app):
         self.app = app
@@ -54,6 +316,7 @@ class NativeAdapter:
         self.attachments = {}
         self.unresolved = {}
         self.owner = "legacy"
+        self.logger = None
         self.metrics = dict(requests=0, native_reads=0, native_read_ms=0,
                             connections=0, context_rejections=0)
 
@@ -191,7 +454,16 @@ class NativeAdapter:
     def _capabilities(self):
         return ["session_leases", "screen_tokens", "attachments", "prepare_and_begin",
                 "per_session_capture", "interrupt", "ack_fresh_view",
-                "named_session_discovery"]
+                "named_session_discovery", "poll_bulk"]
+
+    def _attachment_key(self, attachment_id):
+        value = string(attachment_id, "attachment_id")
+        prefix = self.instance + "/"
+        if value.startswith(prefix):
+            return value[len(prefix):]
+        if "/" in value:
+            fail("wrong_bridge_instance")
+        return value
 
     def read_screen(self, session):
         sid, entry = self._entry(session)
@@ -239,7 +511,7 @@ class NativeAdapter:
                     current_line=self._screen()["current_line"], capabilities=self._capabilities())
 
     def heartbeat(self, attachment_id):
-        attachment = self.attachments.get(string(attachment_id, "attachment_id"))
+        attachment = self.attachments.get(self._attachment_key(attachment_id))
         if not attachment:
             fail("stale_attachment")
         self._select(attachment["entry"]["metadata"]["session_name"])
@@ -248,12 +520,12 @@ class NativeAdapter:
                     unresolved=self.unresolved.get(attachment["session"]))
 
     def detach(self, attachment_id):
-        self.attachments.pop(string(attachment_id, "attachment_id"), None)
+        self.attachments.pop(self._attachment_key(attachment_id), None)
         return dict(detached=True, attachment_id=attachment_id)
 
     def prepare_and_begin(self, session, attachment_id, expected_prompt, text, capture_id,
                           runtime_ms, completion_marker=None):
-        aid = string(attachment_id, "attachment_id")
+        aid = self._attachment_key(attachment_id)
         attachment = self.attachments.get(aid)
         if not attachment:
             fail("stale_attachment")
@@ -302,11 +574,12 @@ class NativeAdapter:
                 break
             if now_ms() >= capture["until"]:
                 break
-            self.app.Session.Sleep(20)
+            if not yield_to_xshell(self.app, 20, self.logger):
+                break
             if (time.monotonic() - started) >= 1.0:
                 break
         expired = now_ms() >= capture["until"]
-        return dict(text=chunk, overflow=False, expired=expired,
+        return dict(text=chunk, current_line=self._screen()["current_line"], overflow=False, expired=expired,
                     capture_may_be_incomplete=expired and not (capture["marker"] and capture["marker"] in chunk))
 
     def end(self, capture_id, confirmed_complete=False):
@@ -350,7 +623,8 @@ METHODS = ("ping", "list_sessions", "read_screen", "focus_session", "prepare_and
 
 
 def handle_request(adapter, request, token):
-    response = dict(id="", protocol_version=PROTOCOL_VERSION, ok=False, result=None, error=None)
+    response = dict(id="", protocol_version=PROTOCOL_VERSION,
+                    bridge_instance=adapter.instance, ok=False, result=None, error=None)
     try:
         if not isinstance(request, dict):
             fail("invalid request")
@@ -376,15 +650,26 @@ def handle_request(adapter, request, token):
     return response
 
 
-def serve(app, config):
-    ipc_dir = Path(string(config.get("ipc_dir"), "ipc_dir", 1024))
-    if not ipc_dir.is_absolute():
+def serve(app, config, stop_event=None):
+    ipc_root = Path(string(config.get("ipc_dir"), "ipc_dir", 1024))
+    if not ipc_root.is_absolute():
         fail("Xshell IPC directory must be absolute")
     token = string(config["token"], "token", 256)
     if len(token) < 32:
         fail("bridge token too short")
-    if not ipc_dir.exists():
-        ipc_dir.mkdir(parents=True)
+    ipc_root.mkdir(parents=True, exist_ok=True)
+    cleanup_stale_instances(ipc_root)
+    adapter = NativeAdapter(app)
+    logger, log_path = make_logger(ipc_root, adapter.instance)
+    adapter.logger = logger
+    logger("serve_start", log_path=str(log_path), has_stop_event=bool(stop_event))
+    logger("xshell_runtime", version=str(getattr(app, "Version", "unknown")),
+           python=sys.version.split()[0], host_pid=os.getpid())
+    logger("host_wait_capability",
+           screen_wait_for_strings=callable(getattr(getattr(app, "Screen", None), "WaitForStrings", None)),
+           session_sleep=callable(getattr(getattr(app, "Session", None), "Sleep", None)))
+    ipc_dir = ipc_root / "instances" / adapter.instance
+    ipc_dir.mkdir(parents=True, exist_ok=True)
     for path in ipc_dir.iterdir():
         if path.is_file() and (path.name.endswith(".request.json") or
                                path.name.endswith(".response.json") or
@@ -394,31 +679,41 @@ def serve(app, config):
                 path.unlink()
             except OSError:
                 pass
-    adapter = NativeAdapter(app)
     ready = ipc_dir / "ready.json"
-    ready.write_text(json.dumps({"bridge_instance": adapter.instance,
-                                 "bridge_version": BRIDGE_VERSION,
-                                 "protocol_version": PROTOCOL_VERSION,
-                                 "started_ms": now_ms()}, ensure_ascii=False), encoding="utf-8")
+    write_json_atomic(ready, {"bridge_instance": adapter.instance,
+                              "bridge_version": BRIDGE_VERSION,
+                              "protocol_version": PROTOCOL_VERSION,
+                              "started_ms": now_ms(),
+                              "last_poll_ms": now_ms()})
+    notice = None
     try:
-        try:
-            app.Dialog.MessageBox("Xshell MCP 已启动；当前脚本只控制已连接的命名会话。", "Xshell MCP")
-        except Exception:
-            pass
-        while True:
+        # Do not set Screen.Synchronous for the lifetime of the bridge. Older
+        # Xshell builds can raise SystemError without an exception object when
+        # this property is changed during Script > Cancel. Command execution
+        # manages synchronization only around its own Screen.Send operation.
+        logger("screen_synchronous_unmanaged")
+        notice = show_startup_notice(logger)
+        logger("startup_notice_dispatched")
+        next_heartbeat = time.monotonic() + 5.0
+        while not (stop_event and stop_event.is_set()):
             requests = sorted((p for p in ipc_dir.iterdir() if p.name.endswith(".request.json")),
                               key=lambda p: p.name)
             for request_path in requests:
                 try:
                     request = json.loads(request_path.read_text(encoding="utf-8"))
                     request_path.unlink()
+                    logger("request_received", request_id=str(request.get("id", ""))[:128],
+                           method=str(request.get("method", ""))[:64])
                     response = handle_request(adapter, request, token)
                     request_id = string(request.get("id"), "id", 128)
                     response_path = ipc_dir / (request_id + ".response.json")
                     temporary = ipc_dir / ("." + request_id + ".response.tmp")
                     temporary.write_text(json.dumps(response, ensure_ascii=False), encoding="utf-8")
                     os.replace(str(temporary), str(response_path))
+                    logger("request_completed", request_id=request_id,
+                           method=str(request.get("method", ""))[:64], ok=bool(response.get("ok")))
                 except Exception as exc:
+                    logger("request_failed", request_id=request_path.name[:128], error=str(exc)[:256])
                     try:
                         request_path.unlink()
                     except OSError:
@@ -431,18 +726,35 @@ def serve(app, config):
                     except OSError:
                         pass
             try:
-                ready.write_text(json.dumps({"bridge_instance": adapter.instance,
-                                             "bridge_version": BRIDGE_VERSION,
-                                             "protocol_version": PROTOCOL_VERSION,
-                                             "last_poll_ms": now_ms()}, ensure_ascii=False), encoding="utf-8")
+                write_json_atomic(ready, {"bridge_instance": adapter.instance,
+                                          "bridge_version": BRIDGE_VERSION,
+                                          "protocol_version": PROTOCOL_VERSION,
+                                          "last_poll_ms": now_ms()})
             except OSError:
                 pass
-            app.Session.Sleep(50)
+            if time.monotonic() >= next_heartbeat:
+                logger("heartbeat", requests=adapter.metrics["requests"])
+                next_heartbeat = time.monotonic() + 5.0
+            if not yield_to_xshell(app, 50, logger):
+                logger("host_yield_stopped")
+                break
+    except (KeyboardInterrupt, SystemExit):
+        logger("script_cancelled")
+    except Exception as exc:
+        logger("serve_error", error=str(exc)[:512])
+        raise
     finally:
+        logger("serve_finally", requests=adapter.metrics["requests"])
+        dismiss_startup_notice(notice, logger)
         try:
             ready.unlink()
         except OSError:
             pass
+        try:
+            ipc_dir.rmdir()
+        except OSError:
+            pass
+        logger("serve_stopped")
 
 
 def load_config(script):
@@ -467,7 +779,12 @@ def main():
         fail("Run this script inside Xshell via Tools > Script > Run")
     script = Path(globals().get("__file__", "xshell_bridge.py")).resolve()
     config = load_config(script)
-    serve(xsh, config)
+    try:
+        serve(xsh, config)
+    except (KeyboardInterrupt, SystemExit):
+        # Script > Cancel is a normal lifecycle event. Do not turn it into an
+        # exception dialog after the bridge has already released its IPC state.
+        return
 
 
 if "xsh" in globals():
