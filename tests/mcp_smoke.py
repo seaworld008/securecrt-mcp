@@ -15,7 +15,10 @@ import sys
 import tempfile
 import threading
 import time
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    import tomli as tomllib
 
 
 class FakeBridge(socketserver.ThreadingTCPServer):
