@@ -1,10 +1,15 @@
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
-use std::{env, fs, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 pub const PROTOCOL: u32 = 2;
 pub const MAX_FRAME: usize = 262_144;
 pub const BRIDGE_SCRIPT_FILE: &str = "securecrt_bridge.py";
+pub const XSHELL_BRIDGE_SCRIPT_FILE: &str = "xshell_bridge.py";
+pub const XSHELL_INSTALLED_SCRIPT_FILE: &str = "securecrt-mcp-xshell.py";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -93,6 +98,8 @@ pub struct BridgeSecret {
     pub port: u16,
     pub token: String,
     pub max_request_bytes: usize,
+    #[serde(default)]
+    pub ipc_dir: Option<String>,
 }
 
 pub fn app_dir() -> Result<PathBuf> {
@@ -117,6 +124,45 @@ pub fn bridge_config_path() -> Result<PathBuf> {
 }
 pub fn bridge_script_path() -> Result<PathBuf> {
     Ok(app_dir()?.join(BRIDGE_SCRIPT_FILE))
+}
+pub fn xshell_bridge_config_path() -> Result<PathBuf> {
+    Ok(app_dir()?.join("xshell_bridge.json"))
+}
+pub fn xshell_ipc_dir_path() -> Result<PathBuf> {
+    Ok(app_dir()?.join("xshell-ipc"))
+}
+pub fn xshell_bridge_script_path() -> Result<PathBuf> {
+    Ok(app_dir()?.join(XSHELL_BRIDGE_SCRIPT_FILE))
+}
+pub fn xshell_script_dir_path() -> Result<PathBuf> {
+    if env::var_os("SECURECRT_MCP_HOME").is_some() {
+        return Ok(app_dir()?.join("xshell-scripts"));
+    }
+    let home = env::var_os("USERPROFILE")
+        .or_else(|| env::var_os("HOME"))
+        .context("HOME/USERPROFILE is unavailable")?;
+    let home = PathBuf::from(home);
+    let candidates = [
+        home.join("Documents")
+            .join("NetSarang Computer")
+            .join("8")
+            .join("Xshell")
+            .join("Scripts"),
+        home.join("OneDrive")
+            .join("Documents")
+            .join("NetSarang Computer")
+            .join("8")
+            .join("Xshell")
+            .join("Scripts"),
+    ];
+    Ok(candidates
+        .iter()
+        .find(|path| path.is_dir())
+        .cloned()
+        .unwrap_or_else(|| candidates[0].clone()))
+}
+pub fn xshell_installed_script_path() -> Result<PathBuf> {
+    Ok(xshell_script_dir_path()?.join(XSHELL_INSTALLED_SCRIPT_FILE))
 }
 
 impl Config {
@@ -185,9 +231,17 @@ impl Config {
 }
 
 pub fn load_bridge_secret() -> Result<BridgeSecret> {
+    load_bridge_secret_at(&bridge_config_path()?, "bridge.json")
+}
+
+pub fn load_xshell_bridge_secret() -> Result<BridgeSecret> {
+    load_bridge_secret_at(&xshell_bridge_config_path()?, "xshell_bridge.json")
+}
+
+fn load_bridge_secret_at(path: &Path, name: &str) -> Result<BridgeSecret> {
     let secret: BridgeSecret = serde_json::from_str(
-        &fs::read_to_string(bridge_config_path()?)
-            .context("bridge.json missing: run securecrt-mcp init")?,
+        &fs::read_to_string(path)
+            .with_context(|| format!("{name} missing: run securecrt-mcp init"))?,
     )?;
     if secret.host != "127.0.0.1"
         || secret.port < 1024

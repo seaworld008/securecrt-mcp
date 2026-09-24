@@ -15,7 +15,10 @@ import sys
 import tempfile
 import threading
 import time
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python < 3.11
+    import tomli as tomllib
 
 
 class FakeBridge(socketserver.ThreadingTCPServer):
@@ -30,13 +33,29 @@ class FakeBridge(socketserver.ThreadingTCPServer):
         self.lock = threading.Lock()
 
     def method(self, name, p):
+        if name == 'poll_bulk':
+            name = 'poll'
         with self.lock:
             if name == 'ping':
-                return {'bridge_version': '0.4.1', 'protocol_version': 2}
+                return {'bridge_version': '0.5.0', 'protocol_version': 2,
+                        'capabilities': ['persistent_ndjson', 'attachments', 'prepare_and_begin', 'poll_bulk']}
             if name == 'list_sessions':
                 return {'sessions': [{'id': 'fake-instance/fake-session', 'caption': 'test', 'connected': True}]}
             if name == 'read_screen':
                 return {'text': 'test output\nuser$ ', 'current_line': 'user$', 'screen_token': 'test-token'}
+            if name == 'attach':
+                return {'attachment_id': 'fake-attachment', 'session': p['session'],
+                        'mode': p.get('mode', 'shared'), 'current_line': 'user$'}
+            if name == 'heartbeat':
+                return {'attachment_id': p['attachment_id'], 'session': SID,
+                        'unresolved': None}
+            if name == 'detach':
+                return {'detached': True, 'attachment_id': p['attachment_id']}
+            if name == 'prepare_and_begin':
+                if self.active:
+                    raise ValueError('busy')
+                self.sent.append(p['text']); self.active = p
+                return {'sent': True, 'capture_id': p['capture_id']}
             if name == 'begin':
                 if self.active:
                     raise ValueError('busy')
@@ -103,6 +122,7 @@ class MCP:
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                         text=True, encoding='utf-8', env=env)
         self.lines = queue.Queue(); self.index = 0
+        self.bindings = {}
         self.errors = []
         def read_errors():
             for line in self.process.stderr:
@@ -135,15 +155,109 @@ class MCP:
         raise AssertionError('MCP response timeout')
 
     def tool(self, name, params=None, expect_error=False):
-        wire_name = name if name.startswith('connector_') else 'securecrt_' + name
-        response = self.request('tools/call', {'name': wire_name, 'arguments': params or {}})
+        original_name = name
+        params = dict(params or {})
+        legacy_session = params.get('session')
+        if not name.startswith('connector_'):
+            if name == 'list_sessions':
+                value = self.tool('connector_list')
+                return {'sessions': value['securecrt']}
+            if name == 'read_screen':
+                return self.tool('connector_read_screen', {'session_id': params['session']})
+            if name == 'attach':
+                opened = self.tool('connector_open', {
+                    'backend': 'securecrt', 'target': params['session'], 'mode': 'exec'
+                })
+                self.bindings[params['session']] = opened['session_id']
+                return {'attachment_id': opened['session_id'].split('/', 1)[1], **opened}
+            if name == 'exec':
+                name = 'connector_exec'
+                params = {
+                    'session_id': 'securecrt/' + params['attachment_id'],
+                    'command': params['command'],
+                    'mode': params.get('mode'),
+                    'expected_prompt': params.get('expected_prompt'),
+                    'wait_for': params.get('wait_for'),
+                    'operation_id': params.get('operation_id'),
+                    'timeout_ms': params.get('timeout_ms'),
+                    'wait_ms': params.get('wait_ms'),
+                    'max_bytes': params.get('max_bytes'),
+                }
+            elif name == 'exec_batch':
+                name = 'connector_exec_batch'
+                params = {
+                    'session_id': 'securecrt/' + params['attachment_id'],
+                    'commands': params['commands'],
+                    'operation_id': params.get('operation_id'),
+                    'on_error': params.get('on_error'),
+                    'timeout_ms': params.get('timeout_ms'),
+                }
+            elif name == 'get_batch_status':
+                name = 'connector_get_batch_status'
+                batch_id = params.get('batch_id')
+                if isinstance(batch_id, str) and '/' not in batch_id:
+                    params['batch_id'] = 'securecrt/' + batch_id
+            elif name == 'latency':
+                name = 'connector_metrics'
+            if name in ('connector_exec', 'connector_exec_batch',
+                        'connector_get_batch_status', 'connector_metrics'):
+                pass
+            elif name in ('execute_command', 'run_command'):
+                session_id = params.get('session_id') or self.bindings.get(params.get('session'))
+                if not session_id:
+                    opened = self.tool('connector_open', {
+                        'backend': 'securecrt', 'target': params['session'], 'mode': 'exec'
+                    })
+                    session_id = opened['session_id']
+                    self.bindings[params['session']] = session_id
+                params = {
+                    'session_id': session_id,
+                    'command': params['command'],
+                    'mode': params.get('mode'),
+                    'expected_prompt': params.get('expected_prompt'),
+                    'wait_for': params.get('wait_for'),
+                    'operation_id': params.get('operation_id'),
+                    'timeout_ms': params.get('timeout_ms'),
+                    'wait_ms': params.get('wait_ms'),
+                    'max_bytes': params.get('max_bytes'),
+                }
+                name = 'connector_exec'
+            elif name == 'get_command_status':
+                name, params = 'connector_get_status', {'command_id': params['command_id']}
+            elif name == 'get_command_output':
+                name = 'connector_read'
+            elif name == 'acknowledge_idle':
+                session_id = self.bindings.get(params.get('session'), 'securecrt/' + params.get('session', ''))
+                params = {'session_id': session_id, 'confirmed_idle': True,
+                          'screen_token': params.get('screen_token'),
+                          'expected_prompt': params.get('expected_prompt')}
+                name = 'connector_acknowledge'
+            elif name == 'interrupt':
+                name, params = 'connector_interrupt', {'command_id': params['command_id']}
+            elif name == 'send_text':
+                session_id = self.bindings.get(params.get('session'), 'securecrt/' + params.get('session', ''))
+                name, params = 'connector_stream_write', {
+                    'session_id': session_id, 'text': params.get('text', ''),
+                    'append_enter': params.get('append_enter', False)
+                }
+            elif name == 'bridge_status':
+                return {'protocol_version': 2}
+            else:
+                raise AssertionError('legacy test alias has no connector mapping: ' + name)
+        wire_name = name
+        response = self.request('tools/call', {'name': wire_name, 'arguments': params})
         failed = 'error' in response or response.get('result', {}).get('isError', False)
         if expect_error:
             assert failed, response
             return response
+        if failed and response.get('error', {}).get('data', {}).get('state'):
+            return response['error']['data']
         assert not failed, response
         content = response['result']['content']
-        return json.loads(next(c['text'] for c in content if c['type'] == 'text'))
+        value = json.loads(next(c['text'] for c in content if c['type'] == 'text'))
+        if original_name == 'acknowledge_idle':
+            self.bindings.pop(legacy_session, None)
+        return value
 
     def done(self, command_id):
         until = time.monotonic() + 8
@@ -202,6 +316,7 @@ def run(binary):
         for connector_name in (
             'connector_list', 'connector_open', 'connector_exec',
             'connector_exec_batch', 'connector_read', 'connector_get_status',
+            'connector_read_screen', 'connector_get_batch_status', 'connector_heartbeat',
             'connector_stream_open', 'connector_stream_read',
             'connector_stream_write', 'connector_resize', 'connector_interrupt',
             'connector_acknowledge', 'connector_close', 'connector_metrics',
@@ -213,9 +328,9 @@ def run(binary):
         connector_metrics = mcp.tool('connector_metrics')
         assert connector_metrics['backend'] == 'openssh'
         assert connector_metrics['sessions'] == 0
-        assert names['securecrt_execute_command']['annotations']['readOnlyHint'] is False
-        assert names['securecrt_execute_command']['annotations']['destructiveHint'] is True
-        assert names['securecrt_read_screen']['annotations']['readOnlyHint'] is True
+        assert names['connector_exec']['annotations']['readOnlyHint'] is False
+        assert names['connector_exec']['annotations']['destructiveHint'] is True
+        assert names['connector_read_screen']['annotations']['readOnlyHint'] is True
         sid = mcp.tool('list_sessions')['sessions'][0]['id']
         counter = 0
         def command(text, timeout=5000, mode='posix'):
@@ -226,7 +341,8 @@ def run(binary):
                         operation_id='smoke-' + str(counter), command=text, mode=mode, timeout_ms=timeout)
         params = command('printf hello')
         job = mcp.tool('execute_command', params)
-        assert mcp.done(job['command_id'])['state'] == 'completed'
+        completed = mcp.done(job['command_id'])
+        assert completed['state'] == 'completed', completed
         page = mcp.tool('get_command_output', {'command_id': job['command_id']})
         assert page['text'] == 'hello\n', page
         sent = len(bridge.sent)

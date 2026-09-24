@@ -1,15 +1,16 @@
 //! Backend-neutral connector sessions.
 //!
-//! The existing `securecrt_*` tools deliberately keep their protocol-2
-//! semantics.  This module adds an opt-in OpenSSH backend with long-lived
-//! command and PTY sessions so a command does not pay a new SSH handshake.
+//! The MCP surface is intentionally backend-neutral. SecureCRT and Xshell
+//! reuse an in-process screen bridge; OpenSSH owns a local persistent process.
 
+use crate::model::CaptureMode;
 use anyhow::{Context, Result, anyhow, ensure};
 use base64::Engine as _;
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use rmcp::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::Digest;
 use std::{
     collections::{HashMap, VecDeque},
     io::{Read, Write},
@@ -37,6 +38,7 @@ const MAX_PAGE: usize = 65_536;
 pub enum ConnectorBackend {
     Securecrt,
     Openssh,
+    Xshell,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
@@ -76,6 +78,28 @@ pub struct ConnectorStatusParams {
 pub struct ConnectorAcknowledgeParams {
     pub session_id: String,
     pub confirmed_idle: bool,
+    /// Required by screen-backed connectors after a fresh screen inspection.
+    pub screen_token: Option<String>,
+    pub expected_prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorInterruptParams {
+    pub session_id: Option<String>,
+    pub command_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorScreenParams {
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorHeartbeatParams {
+    pub session_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -83,8 +107,13 @@ pub struct ConnectorAcknowledgeParams {
 pub struct ConnectorExecParams {
     pub session_id: String,
     pub command: String,
+    /// Screen-backed capture mode. OpenSSH exec always uses its marker mode.
+    pub mode: Option<CaptureMode>,
+    pub expected_prompt: Option<String>,
+    pub wait_for: Option<String>,
     pub operation_id: Option<String>,
     pub timeout_ms: Option<u64>,
+    pub wait_ms: Option<u64>,
     pub max_bytes: Option<usize>,
 }
 
@@ -118,6 +147,12 @@ pub struct ConnectorResizeParams {
 pub struct ConnectorBatchParams {
     pub session_id: String,
     pub commands: Vec<String>,
+    /// Stable caller identity for retrying the same batch without replaying
+    /// commands that already reached the remote shell.
+    pub operation_id: Option<String>,
+    /// stop (default) or continue after a confirmed nonzero exit. Unknown
+    /// outcomes always stop the batch.
+    pub on_error: Option<String>,
     pub timeout_ms: Option<u64>,
 }
 
@@ -257,6 +292,11 @@ impl ConnectorManager {
                 "target": session.target,
                 "mode": session.mode,
                 "age_ms": session.created.elapsed().as_millis(),
+                "capabilities": if session.mode == ConnectorMode::Pty {
+                    json!(["stream", "pty", "resize", "interrupt", "screen_read"])
+                } else {
+                    json!(["exec", "batch", "interrupt", "acknowledge"])
+                },
             }));
         }
         Ok(json!({"sessions": result, "backend": "openssh"}))
@@ -306,6 +346,11 @@ impl ConnectorManager {
             "cols": p.cols.unwrap_or(160),
             "persistent": true,
             "remote_termination_confirmed": false,
+            "capabilities": if p.mode == ConnectorMode::Pty {
+                json!(["stream", "pty", "resize", "interrupt", "screen_read"])
+            } else {
+                json!(["exec", "batch", "interrupt", "acknowledge"])
+            },
         }))
     }
 
@@ -381,26 +426,51 @@ impl ConnectorManager {
             !p.commands.is_empty() && p.commands.len() <= 20,
             "batch needs 1..20 commands"
         );
+        let on_error = p.on_error.as_deref().unwrap_or("stop");
+        ensure!(
+            ["stop", "continue"].contains(&on_error),
+            "on_error must be stop or continue"
+        );
+        let batch_id = p
+            .operation_id
+            .clone()
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
         let mut results = Vec::with_capacity(p.commands.len());
         let mut state = "completed";
         for (index, command) in p.commands.into_iter().enumerate() {
+            let operation_id = p.operation_id.as_ref().map(|base| {
+                format!(
+                    "batch-{:x}",
+                    sha2::Sha256::digest(format!("{base}:{index}").as_bytes())
+                )
+            });
             let result = self
                 .exec(ConnectorExecParams {
                     session_id: p.session_id.clone(),
                     command,
-                    operation_id: None,
+                    mode: None,
+                    expected_prompt: None,
+                    wait_for: None,
+                    operation_id,
                     timeout_ms: p.timeout_ms,
+                    wait_ms: None,
                     max_bytes: Some(1024),
                 })
                 .await?;
-            let failed = result["state"] != "completed" || result["exit_code"] != 0;
+            let unknown_or_failed =
+                result["state"] != "completed" || result["exit_code"].as_i64() != Some(0);
             results.push(json!({"index": index, "result": result}));
-            if failed {
+            if unknown_or_failed && (result["state"] != "completed" || on_error == "stop") {
                 state = "stopped";
                 break;
             }
         }
-        Ok(json!({"state": state, "results": results, "automatic_retry": false}))
+        Ok(json!({
+            "batch_id": batch_id,
+            "state": state,
+            "results": results,
+            "automatic_retry": false
+        }))
     }
 
     pub async fn read(&self, p: ConnectorReadParams) -> Result<Value> {

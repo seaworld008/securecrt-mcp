@@ -17,13 +17,13 @@ class ReviewBridge(UXBridge):
         self.grace_until = 0
 
     def method(self, name, p):
-        if name == 'begin' and self.fault == 'no-send-evidence':
+        if name in ('begin', 'prepare_and_begin') and self.fault == 'no-send-evidence':
             self.fault = None
             super().method(name, p)
             return {}
-        if name == 'begin' and 'grace-command' in p['text']:
+        if name in ('begin', 'prepare_and_begin') and 'grace-command' in p['text']:
             self.grace_until = time.monotonic()+0.25
-        if name == 'poll' and time.monotonic() < self.grace_until:
+        if name in ('poll', 'poll_bulk') and time.monotonic() < self.grace_until:
             time.sleep(0.03)
             return {'text':'','overflow':False,'expired':False,'capture_may_be_incomplete':True}
         return super().method(name, p)
@@ -47,8 +47,8 @@ def run(binary):
         for i in range(12):
             assert call(operation_id='cache-'+str(i))['state']=='completed'
         before=len(bridge.sent)
-        old=call(operation_id='original')
-        assert old['sent'] is None and len(bridge.sent)==before, 'eviction allowed replay'
+        old=mcp.tool('run_command', dict(session=SID, command='printf hello', mode='posix', operation_id='original'), expect_error=True)
+        assert old['error']['data']['error_code'] == 'command_not_found' and len(bridge.sent)==before, 'eviction allowed replay'
         active=mcp.tool('run_command',dict(session=SID,command='slow-command',mode='posix',timeout_ms=1000,wait_ms=0))
         assert mcp.done(active['command_id'])['state']=='timed_out'
         view=mcp.tool('read_screen',dict(session=SID))

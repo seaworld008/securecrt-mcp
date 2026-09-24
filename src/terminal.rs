@@ -26,6 +26,7 @@ pub struct ExecParams {
     pub command: String,
     /// Explicit terminal dialect. posix is only for an already confirmed POSIX shell.
     pub mode: CaptureMode,
+    pub expected_prompt: Option<String>,
     pub operation_id: Option<String>,
     pub timeout_ms: Option<u64>,
     pub wait_ms: Option<u64>,

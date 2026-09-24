@@ -146,10 +146,6 @@ impl Engine {
         }
     }
 
-    pub async fn submit(&self, p: ExecuteParams) -> Result<Value> {
-        self.submit_internal(p, None).await
-    }
-
     async fn submit_internal(
         &self,
         p: ExecuteParams,
@@ -481,10 +477,19 @@ impl Engine {
             }
             if p.mode == CaptureMode::Prompt {
                 prompt_tail.push_str(chunk);
+                let wait_for = p.wait_for.as_deref().unwrap_or("");
+                let prompt_observed = literal_prompt_observed(&prompt_tail, wait_for)
+                    || response["current_line"]
+                        .as_str()
+                        .is_some_and(|line| !wait_for.is_empty() && line.trim_end() == wait_for);
                 if let Some(index) = prompt_tail.rfind('\n') {
                     prompt_tail = prompt_tail[index + 1..].to_owned();
                 }
-                if prompt_tail.trim_end_matches('\r') == p.wait_for.as_deref().unwrap_or("") {
+                // Commands such as `printf` can leave their output on the same terminal
+                // line as the returned shell prompt. The prompt was supplied explicitly
+                // by the caller, so accepting it as a suffix preserves the guard while
+                // matching how screen-backed terminals actually render the line.
+                if prompt_observed {
                     break (
                         State::Completed,
                         None,
@@ -714,6 +719,13 @@ fn prefix_len(text: &str, max: usize) -> usize {
     count
 }
 
+fn literal_prompt_observed(prompt_tail: &str, wait_for: &str) -> bool {
+    !wait_for.is_empty()
+        && prompt_tail
+            .trim_end_matches(['\r', '\n', ' '])
+            .ends_with(wait_for)
+}
+
 pub fn envelope(command: &str, begin: &str, end: &str) -> String {
     let quoted = command.replace('\'', "'\\''");
     // No subshell: cd/export persist. Explicit POSIX opt-in; exit/exec/set -e may prevent the marker.
@@ -805,5 +817,18 @@ mod tests {
         let text = envelope("printf hello", "BEGIN_x", "END_x");
         assert!(text.contains("printf '\\nEND_x %s\\n'"));
         assert!(!text.starts_with('('));
+    }
+    #[test]
+    fn literal_prompt_accepts_same_line_command_output() {
+        assert!(literal_prompt_observed(
+            "printf output[root@test ~]# ",
+            "[root@test ~]#"
+        ));
+        assert!(literal_prompt_observed(
+            "[root@test ~]#\r",
+            "[root@test ~]#"
+        ));
+        assert!(!literal_prompt_observed("[root@test ~]$", "[root@test ~]#"));
+        assert!(!literal_prompt_observed("[root@test ~]#", ""));
     }
 }

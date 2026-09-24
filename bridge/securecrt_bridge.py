@@ -18,7 +18,7 @@ import time
 import uuid
 from pathlib import Path
 
-BRIDGE_VERSION = "0.4.1"
+BRIDGE_VERSION = "0.5.0"
 PROTOCOL_VERSION = 2
 MAX_FRAME = 262144
 MAX_CHUNK = 65536
@@ -510,6 +510,11 @@ class NativeAdapter:
             session = a['session']
             token = 'attachment:' + attachment_id
             prompt = a['context']['current_line']
+            if expected_prompt is not None:
+                expected = string(expected_prompt, 'expected_prompt', 512).rstrip()
+                current = self._input(a['entry'])['current_line']
+                if current != expected:
+                    fail('prompt_mismatch')
         else:
             view = self.read_screen(session)
             prompt, token = view['current_line'], view['screen_token']

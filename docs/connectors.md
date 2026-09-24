@@ -1,9 +1,38 @@
 # Unified Connectors
 
-The stable `securecrt_*` tools continue to control already authenticated
-SecureCRT tabs. They use the existing screen-context checks and never become a
-native PTY. The opt-in `connector_*` tools add persistent OpenSSH
-sessions; the `securecrt_` prefix is the MCP server namespace.
+The only public MCP namespace is `connector_*`. SecureCRT, Xshell and system
+OpenSSH are selected by `backend` and expose their supported capabilities in
+the returned session object. The old `securecrt_*` names are no longer
+registered by the server.
+
+For the complete backend contract and Xshell setup, see
+[connector architecture](connector-architecture.md).
+
+## Screen-backed desktop session
+
+Use `connector_list` to inspect SecureCRT or Xshell sessions, then open an
+explicit session:
+
+```json
+{
+  "backend": "securecrt",
+  "target": "opaque-session-id-from-connector_list",
+  "mode": "exec"
+}
+```
+
+The Xshell backend discovers `.xsh` names below each current session's folder,
+then probes those names with `SelectTabName`. Every Xshell process registers an
+isolated file-IPC instance; Rust aggregates live instances and routes
+attachments back to their originating process. Its `connector_list` result
+reports `enumeration: "instance_registry"`; session file contents are never
+read. Both
+backends return an attachment-backed `session_id` and support
+`connector_exec`, `connector_exec_batch`, `connector_read_screen`,
+`connector_heartbeat`, `connector_interrupt`, `connector_acknowledge`, and
+`connector_close`. Neither backend is a native PTY. The unified list result
+exposes discovery as `xshell_enumeration` and reports probe counts and
+per-name errors in `xshell_discovery`.
 
 ## OpenSSH command session
 
@@ -52,8 +81,7 @@ termination.
 The backend uses the user's OpenSSH configuration, Agent, ProxyJump and
 known_hosts by default. `config_path` is an optional explicit `ssh_config`
 path. The connector does not add `StrictHostKeyChecking=no`, store passwords,
-or silently fall back to SecureCRT. Select the backend explicitly; the default
-application path remains SecureCRT for compatibility.
+or silently fall back to another backend. Select the backend explicitly.
 
 ## Limits and measurements
 

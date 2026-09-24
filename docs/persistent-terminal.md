@@ -6,10 +6,10 @@
 
 客户端只需启动 `securecrt-mcp serve` 一次。不要为每条命令重新启动它。连续排查使用：
 
-1. `securecrt_list_sessions`：选择、核实目标。
-2. `securecrt_attach`：建立短期绑定，返回 `attachment_id`。
-3. 多次 `securecrt_exec`，或一次 `securecrt_exec_batch`。
-4. 不再使用时 `securecrt_detach`。这不会退出 SSH、杀进程或确认未决状态。
+1. `connector_list`：选择、核实目标。
+2. `connector_open`：建立短期绑定，返回带后端前缀的 `session_id`。
+3. 多次 `connector_exec`，或一次 `connector_exec_batch`。
+4. 不再使用时 `connector_close`。这不会退出 SSH、杀进程或确认未决状态。
 
 示例 attach：
 
@@ -25,7 +25,7 @@
 {"attachment_id":"实际 attachment_id","command":"docker ps","mode":"posix","timeout_ms":30000,"max_bytes":16384}
 ```
 
-高层 `securecrt_run_command` 继续支持一次性诊断；新版也会使用合并后的 `prepare_and_begin`，但连续工作建议复用 attachment。低层 execute/read_screen 接口作为兼容和精细控制入口保留。
+高层 `connector_exec` 支持一次性诊断；底层会使用合并后的 `prepare_and_begin`，连续工作建议复用返回的 `session_id`。屏幕读取和恢复使用统一的 `connector_read_screen`、`connector_acknowledge`。
 
 ## 命令完成后的提示符 readiness / rebase
 
@@ -55,7 +55,7 @@ batch 的下一条命令使用同一 readiness 路径：上一条已确认完成
 }
 ```
 
-调用 `securecrt_exec_batch`，再用 `securecrt_get_batch_status` 查询 `batch_id`。最多20条命令，所有命令在第一次调用的批准上下文中明确列出；每条独立发送、审计、退出码和 command_id。每条内联输出最多1024字节；完整已保留输出按 command_id 分页读取。
+调用 `connector_exec_batch`，再用 `connector_get_batch_status` 查询 `batch_id`。最多20条命令，所有命令在第一次调用的批准上下文中明确列出；每条独立发送、审计、退出码和 command_id。每条内联输出最多1024字节；完整已保留输出按 command_id 分页读取。
 
 `stop` 遇到非零退出码停止；`continue` 仅在确认完成且退出非零时继续。未知、超时、未决、传输失败始终停止。批量不是数据库事务，也不承诺排他占用整个远端 Shell；不要与人工或其他客户端在同一 Tab 交叉操作。
 
@@ -63,7 +63,7 @@ batch 的下一条命令使用同一 readiness 路径：上一条已确认完成
 
 ## 持续日志与交互输入
 
-`securecrt_shell_open` 接受和 exec 类似的参数，原样启动明确指定的长命令，立即返回 command_id：
+OpenSSH 的 `connector_stream_open` 接受和 exec 类似的参数，原样启动明确指定的长命令，立即返回 command_id：
 
 ```json
 {"attachment_id":"实际 attachment_id","command":"tail -f /var/log/nginx/error.log","mode":"stream"}
@@ -75,13 +75,13 @@ batch 的下一条命令使用同一 readiness 路径：上一条已确认完成
 {"command_id":"实际 command_id","cursor":0,"max_bytes":16384,"wait_ms":1000}
 ```
 
-这是 `securecrt_shell_read`。有增量数据即可返回，没有数据时可以等待；不会要求模型每秒发送一套 begin/end。它使用持续捕获和有界滚动缓存，**不是 SecureCRT 原生 PTY 的事件推送接口**。
+这是 `connector_stream_read`。有增量数据即可返回，没有数据时可以等待；不会要求模型每秒发送一套 begin/end。它使用持续捕获和有界滚动缓存，**只适用于 OpenSSH PTY**。
 
 游标为绝对 UTF-8 字节偏移。消费者落后时返回 `gap`、`dropped_bytes` 和实际 `cursor`，不能把有缺口的日志称为全量。已完成命令保留头部上限，stream 保留最新尾部上限；两者均明确标注截断。
 
-`securecrt_shell_write` 是显式交互原始输入，默认仍需本机 `allow_raw_send=true`。键入碎片不是完整 Shell 命令，因此不能声称极高危命令过滤可以覆盖任意 REPL/编辑器输入。开启此能力就授予了这项更底层的控制，客户端应明确批准。
+`connector_stream_write` 是显式交互原始输入，默认仍需本机 `allow_raw_send=true`。键入碎片不是完整 Shell 命令，因此不能声称极高危命令过滤可以覆盖任意 REPL/编辑器输入。开启此能力就授予了这项更底层的控制，客户端应明确批准。
 
-`securecrt_shell_close` 只停止本地捕获，**不发送 Ctrl+C**。需要打断远端命令时调用 `securecrt_interrupt`；之后检查原始终端，并明确 `acknowledge_idle`。不自动清除未知结果，不自动重试。
+`connector_stream_close` 只停止本地捕获，**不发送 Ctrl+C**。需要打断远端命令时调用 `connector_interrupt`；之后检查原始终端，并明确 `connector_acknowledge`。不自动清除未知结果，不自动重试。
 
 stream 默认捕获10分钟，受 `bridge.max_stream_timeout_ms` 约束（默认最大1小时）。这不是 SSH 连接寿命：捕获超时不自动终止远端进程。普通命令仍默认受 `max_command_timeout_ms` 限制。需要更长会话时让客户端在绑定空闲期间定期 heartbeat，而不是重复创建绑定。
 

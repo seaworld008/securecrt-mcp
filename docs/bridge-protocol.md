@@ -1,10 +1,13 @@
 # Bridge protocol 2: capability-negotiated persistent extension
 
-Transport is loopback TCP, UTF-8 NDJSON, maximum frame262144 bytes. One in-flight exchange per connection lane; a Rust client uses a bounded four-lane pool, not arbitrary request multiplexing. Responses match request IDs. No replay after any ambiguous write/result.
+SecureCRT uses loopback TCP with UTF-8 NDJSON and a maximum frame of 262144 bytes. Xshell uses the same protocol-2 envelope through a private file IPC directory because its embedded Python runtime does not provide socket modules. SecureCRT has a bounded four-lane pool; Xshell serializes one request at a time within each process because native tab focus is process-global, while separate Xshell processes use independent lanes. Responses match request IDs. No replay follows any ambiguous write/result.
 
-Request fields: protocol_version=2, id, token, client_id, deadline_ms, method, params and optional keep_alive=true. Response fields: protocol_version, bridge_instance, id, ok, result/error, sent evidence, and persistent=true when the socket remains available for the next sequential exchange. Credentials and deadlines are validated per frame. Multiple pipelined frames are rejected. Fragmented frames are supported within frame/time limits. Idle connections expire; a new request may reconnect, not resubmit the failed exchange.
+Request fields: protocol_version=2, id, token, client_id, deadline_ms, method, and params. Response fields: protocol_version, bridge_instance, id, ok, result/error, and sent evidence. TCP may add persistent=true for a retained connection. File IPC writes `<uuid>.request.json` through a temporary file and atomic rename; the Xshell script writes the matching `<uuid>.response.json` the same way. Credentials and deadlines are validated per request. A timed-out file request remains an unknown exchange and is never replayed automatically.
 
-Legacy clients omit keep_alive and receive a one-shot response. Legacy adapters do not advertise new capabilities, so compatible run_command uses its old path. New attachment interfaces require upgraded runtime capabilities. Version mismatch diagnostics should always include restarting the installed script, not just rewriting its file.
+The protocol-2 envelope is the only supported bridge contract. A version or
+transport mismatch requires upgrading the installed script and restarting it;
+rewriting the file alone does not replace a script already loaded in client
+memory.
 
 Original methods remain: ping, list_sessions, read_screen, focus_session, begin, poll, end, interrupt, acknowledge_idle, send_text.
 

@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/github/license/seaworld008/securecrt-mcp)](LICENSE)
 [中文说明](README.md)
 
-**securecrt-mcp 0.4.1** is a production-oriented Rust MCP server for operating SSH sessions that are already authenticated in SecureCRT from Codex, Claude, or another MCP client, with an explicit persistent OpenSSH/PTY connector option.
+**securecrt-mcp 0.5.0** is a production-oriented Rust MCP server for operating SSH sessions that are already authenticated in SecureCRT or Xshell from Codex, Claude, or another MCP client, with an explicit persistent OpenSSH/PTY connector option.
 
 It reuses the operator's VPN, bastion, SSH key, and MFA flow. It does not create a second SSH connection or export server credentials. This project is independent of VanDyke Software.
 
@@ -30,7 +30,7 @@ It reuses the operator's VPN, bastion, SSH key, and MFA flow. It does not create
 ```mermaid
 flowchart LR
     A["Codex / Claude / MCP client<br/>approval, risk and credential decisions"] -->|MCP stdio| B["securecrt-mcp Rust server<br/>unified API, sessions, output and audit"]
-    B --> C["SecureCRT backend<br/>securecrt_* / connector_*"]
+    B --> C["SecureCRT backend<br/>connector_*"]
     C -->|protocol 2 / 127.0.0.1| D["SecureCRT Bridge<br/>native script thread"]
     D --> E["Authenticated SecureCRT tab<br/>screen sampling, context checks and input"]
     B --> F["OpenSSH backend (explicit opt-in)<br/>connector_*"]
@@ -71,11 +71,11 @@ OpenSSH example:
 }
 ```
 
-Use the returned `session_id` with `connector_exec`, `connector_exec_batch`, `connector_read` or the PTY stream tools. To reuse an existing SecureCRT tab, follow `securecrt_list_sessions -> securecrt_attach -> securecrt_exec` below.
+Use the returned `session_id` with `connector_exec`, `connector_exec_batch`, `connector_read` or the PTY stream tools. To reuse an existing SecureCRT or Xshell tab, select the matching backend in `connector_open`.
 
 ## Verified scope
 
-Before 0.4.1, Rust, Bridge, MCP stdio, batch, daemon, fault-injection, packaging, and connector tests passed. Real desktop acceptance was run on Windows x64 with SecureCRT 9.0.0 and embedded Python 3.8.10:
+The 0.5.0 Rust, Bridge, MCP stdio, batch, daemon, fault-injection, packaging, and connector automation tests pass. Real desktop acceptance must be completed after the current SecureCRT/Xshell processes reload the matching scripts:
 
 - Three Linux SSH tabs (`php_test`, `php_dev`, `k8s-master1`) completed `hostname`, `uptime`, and `pwd` batches after a SecureCRT restart.
 - Long output was read through cursor pagination.
@@ -83,14 +83,14 @@ Before 0.4.1, Rust, Bridge, MCP stdio, batch, daemon, fault-injection, packaging
 - Slow or uncertain prompt redraw returns `context_changed` without sending the next command.
 - Running the Bridge script twice shows a friendly already-running message instead of a Python bind traceback.
 
-These results do not claim native SSH equivalence. Validate the actual targets, client approval UI, SecureCRT build, and business workflow in every production environment.
+These results do not claim native SSH equivalence. Validate the actual targets, client approval UI, SecureCRT/Xshell build, and business workflow in every production environment; replacing a script file does not replace a script already loaded in client memory.
 
 ## Install on Windows
 
 Download the Windows x64 archive and `SHA256SUMS` from the [latest Release](https://github.com/seaworld008/securecrt-mcp/releases/latest):
 
 ```powershell
-Get-FileHash .\securecrt-mcp-0.4.1-x86_64-pc-windows-msvc.zip -Algorithm SHA256
+Get-FileHash .\securecrt-mcp-0.5.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256
 Get-Content .\SHA256SUMS
 ```
 
@@ -107,6 +107,11 @@ In SecureCRT choose **Script -> Run** and run the Bridge path printed by `paths`
 .\securecrt-mcp.exe doctor
 .\securecrt-mcp.exe doctor --latency
 ```
+
+Xshell uses the script installed by `init` in its standard Scripts directory.
+Its embedded Python communicates with Rust through private file IPC, not Python
+network modules. SecureCRT, Xshell, and OpenSSH may be active at the same time;
+only requests sharing one Xshell Bridge are serialized around native tab focus.
 
 Running the script again is harmless: the active Bridge reports that it is already running. To restart, resolve active or unresolved work first, then stop the script or restart SecureCRT.
 
