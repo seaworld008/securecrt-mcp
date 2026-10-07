@@ -606,7 +606,9 @@ class NativeAdapter:
         sid, entry = self._entry(session)
         value = self._screen()
         token = str(uuid.uuid4())
-        self.tokens[token] = dict(session=sid, digest=value.pop("digest"), expires=now_ms() + SCREEN_MS)
+        self.tokens[token] = dict(session=sid, digest=value.pop("digest"), expires=now_ms() + SCREEN_MS,
+                                 context={key: value[key] for key in
+                                          ("current_line", "cursor_row", "cursor_column", "columns")})
         value.update(session=sid, screen_token=token, token_expires_ms=now_ms() + SCREEN_MS,
                      configured_endpoint=entry["metadata"],
                      context_warning="Configured endpoint is not proof of the current nested SSH target.")
@@ -795,8 +797,16 @@ class NativeAdapter:
     def acknowledge_idle(self, session, screen_token, expected_prompt):
         if any(c["session"] == session for c in self.captures.values()):
             fail("busy: cannot acknowledge active capture")
+        token = self.tokens.get(screen_token)
         sid, _ = self._guard(session, screen_token, expected_prompt)
         self.unresolved.pop(sid, None)
+        # The explicit, fresh screen acknowledgement authorizes this new input
+        # boundary only for attachments owned by the requesting client.
+        for attachment in self.attachments.values():
+            if attachment["session"] == sid and attachment["owner"] == self.owner:
+                attachment["context"] = dict(token["context"])
+                attachment["awaiting_prompt"] = False
+                attachment.pop("completion_marker", None)
         return dict(idle_acknowledged=True, session=sid, remote_termination_confirmed=False)
 
     def focus_session(self, session):

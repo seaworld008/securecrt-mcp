@@ -245,3 +245,32 @@ def test_unsafe_embedded_python_rejects_interrupt_before_native_send(monkeypatch
     monkeypatch.setattr(app.Screen, "Send", lambda text: calls.append(text))
     response = request(adapter, "interrupt", session=sid, capture_id="capture")
     assert not response["ok"] and response["sent"] is False and calls == []
+
+
+def test_explicit_idle_ack_refreshes_owned_attachment_after_timeout_redraw():
+    app, adapter, sid, aid = opened()
+    assert begin(adapter, sid, aid)["ok"]
+    app.Screen.pending = None
+    app.Screen.text = "php-test# old_command\n^C\nphp-test# "
+    request(adapter, "end", capture_id="capture", confirmed_complete=False)
+    screen = request(adapter, "read_screen", session=sid)["result"]
+    assert request(adapter, "acknowledge_idle", session=sid,
+                   screen_token=screen["screen_token"], expected_prompt=screen["current_line"])["ok"]
+    resumed = begin(adapter, sid, aid)
+    assert resumed["ok"], resumed
+
+
+def test_idle_ack_does_not_refresh_another_clients_attachment():
+    app, adapter, sid, aid = opened()
+    adapter.owner = "other-client"
+    other = adapter.attach(sid, mode="observe")["attachment_id"]
+    before = dict(adapter.attachments[other]["context"])
+    assert begin(adapter, sid, aid)["ok"]
+    app.Screen.pending = None
+    app.Screen.text = "php-test# old_command\n^C\nphp-test# "
+    request(adapter, "end", capture_id="capture", confirmed_complete=False)
+    screen = request(adapter, "read_screen", session=sid)["result"]
+    assert request(adapter, "acknowledge_idle", session=sid,
+                   screen_token=screen["screen_token"], expected_prompt=screen["current_line"])["ok"]
+    assert adapter.attachments[other]["context"] == before
+    assert adapter.attachments[aid]["context"]["cursor_row"] == screen["cursor_row"]

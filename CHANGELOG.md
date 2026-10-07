@@ -4,6 +4,8 @@
 
 ## [0.5.1] - 2026-10-08
 
+- Refresh only the requesting client’s attachment from the validated idle screen after explicit recovery; preserve other clients’ input boundaries.
+
 - Reject native writes on the reproduced unsafe Xshell embedded Python combination, provide the vendor external Python recovery path, and expose binding safety to doctor.
 - Preserve Unicode POSIX command bytes through the observed ANSI input binding; use the Xshell Main script entry point.
 
