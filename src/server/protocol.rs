@@ -4,8 +4,8 @@ use super::SecureCrtServer;
 use rmcp::{
     ErrorData, RoleServer, ServerHandler,
     model::{
-        InitializeRequestParams, InitializeResult, ProtocolVersion, ServerCapabilities,
-        ServerConfig,
+        Implementation, InitializeRequestParams, InitializeResult, ProtocolVersion,
+        ServerCapabilities, ServerConfig,
     },
     service::RequestContext,
 };
@@ -19,6 +19,10 @@ impl ServerHandler for SecureCrtServer {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_protocol_version(ProtocolVersion::V_2025_11_25)
+            .with_server_info(Implementation::new(
+                env!("CARGO_PKG_NAME"),
+                env!("CARGO_PKG_VERSION"),
+            ))
     }
 
     fn supported_protocol_versions(&self) -> Cow<'static, [ProtocolVersion]> {
@@ -32,6 +36,12 @@ impl ServerHandler for SecureCrtServer {
     ) -> Result<InitializeResult, ErrorData> {
         // The legacy entry point is deliberately pinned; newer revisions use
         // server/discover or inline requests rather than an initialize fallback.
+        if request.protocol_version == ProtocolVersion::V_2026_07_28 {
+            return Err(ErrorData::invalid_request(
+                "2026-07-28 uses server/discover or per-request metadata; initialize requires 2025-11-25",
+                None,
+            ));
+        }
         if request.protocol_version != ProtocolVersion::V_2025_11_25 {
             return Err(ErrorData::unsupported_protocol_version(
                 request.protocol_version,

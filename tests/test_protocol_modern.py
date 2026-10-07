@@ -6,9 +6,11 @@ def test_modern_discovery_and_inline_tools_without_initialize():
         discovered = client.request('server/discover', {'_meta': modern_meta()})['result']
         assert discovered['supportedVersions'] == SUPPORTED, discovered
         assert discovered['resultType'] == 'complete'
+        assert discovered['_meta']['io.modelcontextprotocol/serverInfo']['name'] == 'securecrt-mcp'
         assert discovered['cacheScope'] == 'private' and discovered['ttlMs'] == 0
         tools = client.request('tools/list', {'_meta': modern_meta()})['result']
         assert len(tools['tools']) == 17
+        assert tools['resultType'] == 'complete'
         denied = client.request('tools/call', {'_meta': modern_meta(), 'name': 'connector_open',
             'arguments': {'backend': 'openssh', 'target': '-untrusted-option', 'mode': 'exec'}})
         assert denied['error']['code'] == -32602
