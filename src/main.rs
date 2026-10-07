@@ -422,8 +422,11 @@ async fn doctor(offline: bool) -> Result<()> {
     );
     support::validate_runtime("securecrt", &info)?;
     ensure!(
-        support::report("securecrt", Some(&info))["tier"] != "unsupported",
-        "unsupported runtime: repair the missing native API or restart the upgraded bridge; see support report"
+        matches!(
+            support::report("securecrt", Some(&info))["tier"].as_str(),
+            Some("tier_1" | "tier_2")
+        ),
+        "unsupported or incomplete runtime: inspect capability/version report and repair before claiming readiness"
     );
     ensure!(
         info["bridge_version"].as_str() == Some(env!("CARGO_PKG_VERSION")),
@@ -466,7 +469,7 @@ async fn doctor_xshell(offline: bool) -> Result<()> {
         let validation = runtime.map(|info| support::validate_runtime("xshell", info));
         if runtime.is_none()
             || validation.as_ref().is_some_and(|v| v.is_err())
-            || support_report["tier"] == "unsupported"
+            || !matches!(support_report["tier"].as_str(), Some("tier_1" | "tier_2"))
         {
             failed = true;
         }
