@@ -713,7 +713,10 @@ impl ConnectorManager {
 
 fn validate_target(target: &str) -> Result<()> {
     ensure!(
-        !target.is_empty() && target.len() <= 512 && !target.chars().any(char::is_control),
+        !target.is_empty()
+            && !target.starts_with('-')
+            && target.len() <= 512
+            && !target.chars().any(|c| c.is_control() || c.is_whitespace()),
         "invalid OpenSSH target"
     );
     Ok(())
@@ -740,6 +743,7 @@ fn spawn_exec(target: &str, config_path: Option<&str>) -> Result<ExecTransport> 
     }
     let mut child = command
         .arg("-T")
+        .arg("--")
         .arg(target)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -787,6 +791,7 @@ fn spawn_pty(
         command.arg(path);
     }
     command.arg("-tt");
+    command.arg("--");
     command.arg(target);
     let child = pair.slave.spawn_command(command)?;
     drop(pair.slave);
@@ -1030,6 +1035,10 @@ mod tests {
     #[test]
     fn target_and_command_validation_reject_control_input() {
         assert!(validate_target("host\nname").is_err());
+        assert!(validate_target("-oProxyCommand=untrusted").is_err());
+        assert!(validate_target(" host").is_err());
+        assert!(validate_target("user@host").is_ok());
+        assert!(validate_target("[::1]").is_ok());
         assert!(validate_command("printf hi\nrm -rf /").is_err());
         assert!(validate_text("\u{1b}[31m").is_ok());
         assert!(validate_text("secret\0").is_err());

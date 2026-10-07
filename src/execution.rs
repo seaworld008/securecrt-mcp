@@ -127,6 +127,15 @@ pub struct Engine {
 }
 
 impl Engine {
+    pub async fn owns_command(&self, id: &str) -> bool {
+        let registry = self.inner.lock().await;
+        registry.jobs.contains_key(id)
+            || registry
+                .operations
+                .values()
+                .any(|(command, _)| command == id)
+    }
+
     pub fn new(
         bridge: BridgeClient,
         audit: AuditLog,

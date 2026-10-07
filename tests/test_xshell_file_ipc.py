@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -82,6 +83,7 @@ def test_compiled_mcp_aggregates_and_routes_multiple_xshell_instances():
         stop = threading.Event()
 
         def worker(instance, session_name):
+            captures = {}
             ipc = ipc_root / "instances" / instance
             ipc.mkdir(parents=True, exist_ok=True)
             ready = ipc / "ready.json"
@@ -112,6 +114,21 @@ def test_compiled_mcp_aggregates_and_routes_multiple_xshell_instances():
                         elif method == "attach":
                             result = {"attachment_id": f"attachment-{instance}", "session": f"{instance}/session-1",
                                       "mode": "shared", "current_line": "root# "}
+                        elif method == "heartbeat":
+                            result = {"session": f"{instance}/session-1", "unresolved": None}
+                        elif method == "prepare_and_begin":
+                            params = request["params"]
+                            captures[params["capture_id"]] = params["text"]
+                            result = {"sent": True, "capture_id": params["capture_id"]}
+                        elif method in ("poll", "poll_bulk"):
+                            command = captures[request["params"]["capture_id"]]
+                            begin = re.search(r"MCP_BEGIN_[a-f0-9]+", command).group()
+                            end = re.search(r"MCP_END_[a-f0-9]+", command).group()
+                            result = {"text": begin + "\n" + "中" * 100 + "\n" + end + " 0\n",
+                                      "overflow": False, "expired": False, "capture_may_be_incomplete": False}
+                        elif method == "end":
+                            captures.pop(request["params"]["capture_id"], None)
+                            result = {"released": True, "unresolved": False, "restore_errors": []}
                         else:
                             result = {"sent": True, "text": "", "capture_id": request.get("params", {}).get("capture_id")}
                         response = {"id": request["id"], "protocol_version": 2, "bridge_instance": instance,
@@ -138,6 +155,23 @@ def test_compiled_mcp_aggregates_and_routes_multiple_xshell_instances():
             assert {item["session_name"] for item in listed["xshell"]} == {"alpha", "beta"}, listed
             opened = mcp.tool("connector_open", {"backend": "xshell", "target": "instance-b/session-1", "mode": "exec"})
             assert opened.get("attachment_id", "").startswith("instance-b/"), opened
+            status = mcp.tool("connector_get_status", {"session_id": opened["session_id"]})
+            assert status["backend"] == "xshell" and status["session_id"] == opened["session_id"], status
+            executed = mcp.tool("connector_exec", {"session_id": opened["session_id"], "command": "fixture-output",
+                                                    "mode": "posix", "wait_ms": 5000, "max_bytes": 4})
+            assert executed["state"] == "completed", executed
+            status = mcp.tool("connector_get_status", {"command_id": executed["command_id"]})
+            assert status["state"] == "completed" and status["exit_code"] == 0, status
+            page = mcp.tool("connector_read", {"command_id": executed["command_id"], "max_bytes": 4})
+            assert page["text"] == "中" and page["next_cursor"] == 3, page
+            page = mcp.tool("connector_read", {"command_id": executed["command_id"], "cursor": 3, "max_bytes": 400})
+            assert page["text"].count("中") == 99 and page["next_cursor"] is None, page
+            response = mcp.tool("connector_get_status", {"session_id": opened["session_id"],
+                                                         "command_id": executed["command_id"]}, expect_error=True)
+            assert "exactly one" in response["error"]["message"], response
+            response = mcp.tool("connector_acknowledge", {"session_id": opened["session_id"], "confirmed_idle": False,
+                                                          "screen_token": "unused", "expected_prompt": "root#"}, expect_error=True)
+            assert "confirmed_idle" in response["error"]["message"], response
         finally:
             mcp.close()
             stop.set()
