@@ -16,10 +16,6 @@ import sys
 import tempfile
 import threading
 import time
-try:
-    import tomllib
-except ModuleNotFoundError:  # Python < 3.11
-    import tomli as tomllib
 
 
 class FakeBridge(socketserver.ThreadingTCPServer):
@@ -284,6 +280,12 @@ class MCP:
 
 
 def run(binary):
+    # TOML is only needed by this standalone fake-bridge configuration smoke,
+    # not by the packaged stdlib-only live acceptance client.
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python < 3.11
+        import tomli as tomllib
     binary = Path(binary).resolve()
     with tempfile.TemporaryDirectory() as temporary, FakeBridge() as bridge:
         root = Path(temporary)
