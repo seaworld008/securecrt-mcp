@@ -115,7 +115,10 @@ pub(super) async fn run_exec(
         }
     })
     .await;
-    if !matches!(&deadline, Ok(Ok(_))) && started && !line.is_empty() {
+    let partial_marker = at_line_start
+        && !line.is_empty()
+        && (end.as_bytes().starts_with(&line) || line.starts_with(end.as_bytes()));
+    if !matches!(&deadline, Ok(Ok(_))) && started && !line.is_empty() && !partial_marker {
         let take = MAX_OUTPUT.saturating_sub(output.len()).min(line.len());
         output.extend_from_slice(&line[..take]);
         truncated |= take != line.len();

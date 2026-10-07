@@ -79,6 +79,31 @@ async fn queued_command_is_rejected_if_the_session_became_unresolved() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn partial_end_marker_is_not_exposed_as_timeout_output() {
+    let code = "import sys,re,time; line=sys.stdin.readline(); begin=re.search(r'MCP_BEGIN_[a-f0-9]+',line).group(); end=re.search(r'MCP_END_[a-f0-9]+',line).group(); sys.stdout.write(begin+'\\nuser-output\\n'+end[:20]); sys.stdout.flush(); time.sleep(1)";
+    let mut child = Command::new("python3")
+        .args(["-c", code])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let transport = Arc::new(ExecTransport {
+        stdin: Mutex::new(child.stdin.take().unwrap()),
+        stdout: Mutex::new(BufReader::new(child.stdout.take().unwrap())),
+        child: Mutex::new(child),
+        command_lock: Mutex::new(()),
+        unresolved: AtomicBool::new(false),
+    });
+    let value = run_exec(&transport, "fixture", 200).await;
+    assert_eq!(value.state, "unknown");
+    assert_eq!(value.output, b"user-output\n");
+    assert!(!String::from_utf8_lossy(&value.output).contains("MCP_END"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn cancelled_capture_keeps_the_transport_interlocked() {
     let transport = local_transport();
     let pending = transport.clone();
