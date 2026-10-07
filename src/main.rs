@@ -13,6 +13,7 @@ mod policy;
 #[cfg(test)]
 mod regression;
 mod server;
+mod support;
 mod terminal;
 
 use anyhow::{Context, Result, ensure};
@@ -72,6 +73,8 @@ enum Command {
     Upgrade,
     /// Check configuration, embedded adapter and (unless --offline) the actual SecureCRT runtime.
     Doctor {
+        #[arg(long, default_value="securecrt", value_parser=["securecrt", "xshell", "openssh"])]
+        backend: String,
         #[arg(long)]
         offline: bool,
         #[arg(long, conflicts_with = "offline")]
@@ -156,9 +159,26 @@ async fn main() -> Result<()> {
         }
         Command::Init { force } => initialize(force)?,
         Command::Upgrade => initialize(false)?,
-        Command::Doctor { offline, latency } => {
+        Command::Doctor {
+            backend,
+            offline,
+            latency,
+        } => {
             if latency {
+                ensure!(
+                    backend == "securecrt",
+                    "--latency currently requires --backend securecrt"
+                );
                 local_cli::emit(&local_cli::engine()?.latency(20).await?)?;
+            } else if backend == "openssh" {
+                let report = support::openssh_report().await?;
+                local_cli::emit(&report)?;
+                ensure!(
+                    report["tier"] != "unsupported",
+                    "OpenSSH unavailable; see support report"
+                );
+            } else if backend == "xshell" {
+                doctor_xshell(offline).await?;
             } else {
                 doctor(offline).await?;
             }
@@ -379,10 +399,35 @@ async fn doctor(offline: bool) -> Result<()> {
     );
     let bridge = BridgeClient::new(config.bridge, secret)?;
     if offline {
+        println!(
+            "support={}",
+            serde_json::to_string(&support::report("securecrt", None))?
+        );
         println!("offline_checks=OK; SecureCRT runtime and client approval NOT tested");
         return Ok(());
     }
-    let info = bridge.call("ping", serde_json::json!({})).await?;
+    let info = match bridge.call("ping", serde_json::json!({})).await {
+        Ok(info) => info,
+        Err(error) => {
+            println!(
+                "support={}",
+                serde_json::to_string(&support::report("securecrt", None))?
+            );
+            return Err(error);
+        }
+    };
+    println!(
+        "support={}",
+        serde_json::to_string(&support::report("securecrt", Some(&info)))?
+    );
+    support::validate_runtime("securecrt", &info)?;
+    ensure!(
+        matches!(
+            support::report("securecrt", Some(&info))["tier"].as_str(),
+            Some("tier_1" | "tier_2")
+        ),
+        "unsupported or incomplete runtime: inspect capability/version report and repair before claiming readiness"
+    );
     ensure!(
         info["bridge_version"].as_str() == Some(env!("CARGO_PKG_VERSION")),
         "running adapter version differs; Script > Cancel and run the upgraded script"
@@ -392,6 +437,55 @@ async fn doctor(offline: bool) -> Result<()> {
         "Check actual Python/SecureCRT compatibility in this report; external python --version is not the embedded runtime."
     );
     println!("Client approval rejection still requires the documented interactive test.");
+    Ok(())
+}
+
+async fn doctor_xshell(offline: bool) -> Result<()> {
+    let config = Config::load()?;
+    let secret = load_xshell_bridge_secret()?;
+    ensure!(
+        fs::read_to_string(xshell_installed_script_path()?)? == XSHELL_BRIDGE_SCRIPT,
+        "installed Xshell bridge differs; run upgrade, then restart the script"
+    );
+    if offline {
+        local_cli::emit(&support::report("xshell", None))?;
+        return Ok(());
+    }
+    let mut bridge_config = config.bridge;
+    bridge_config.port = secret.port;
+    let bridge = BridgeClient::new_file(bridge_config, secret, xshell_ipc_dir_path()?)?;
+    let reports = match bridge.runtime_reports().await {
+        Ok(reports) => reports,
+        Err(error) => {
+            local_cli::emit(&support::report("xshell", None))?;
+            return Err(error);
+        }
+    };
+    let mut failed = false;
+    let mut output = Vec::new();
+    for mut report in reports {
+        let runtime = report.get("runtime");
+        let support_report = support::report("xshell", runtime);
+        let validation = runtime.map(|info| support::validate_runtime("xshell", info));
+        if runtime.is_none()
+            || validation.as_ref().is_some_and(|v| v.is_err())
+            || !matches!(support_report["tier"].as_str(), Some("tier_1" | "tier_2"))
+        {
+            failed = true;
+        }
+        if let Some(Err(error)) = validation {
+            report["validation_error"] = serde_json::json!(error.to_string());
+        }
+        report["support"] = support_report;
+        output.push(report);
+    }
+    local_cli::emit(
+        &serde_json::json!({"backend":"xshell","instances":output,"all_runtime_checks_passed":!failed}),
+    )?;
+    ensure!(
+        !failed,
+        "one or more Xshell runtimes require repair; see per-instance support reports"
+    );
     Ok(())
 }
 

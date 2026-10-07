@@ -19,6 +19,7 @@ import uuid
 from pathlib import Path
 
 BRIDGE_VERSION = "0.5.0"
+SCRIPT_SHA256 = None
 PROTOCOL_VERSION = 2
 MAX_FRAME = 262144
 MAX_CHUNK = 65536
@@ -76,6 +77,36 @@ def metadata(tab):
             result[name] = tab.Session.Config.GetOption(key)
         except Exception:
             result[name] = None
+    return result
+
+
+def probe_capabilities(app):
+    """Read API availability without sending input or consuming terminal data."""
+    def available(root, path):
+        if root is None:
+            return None
+        try:
+            for part in path.split('.'):
+                root = getattr(root, part)
+            methods = ('GetTabCount', 'GetTab', 'Sleep', 'MessageBox', 'Activate',
+                       'GetOption', 'Get2', 'ReadString', 'Send')
+            return callable(root) if path.split('.')[-1] in methods else root is not None
+        except Exception:
+            return False
+    result = {'crt.' + name: available(app, name) for name in
+              ('GetTabCount', 'GetTab', 'Sleep', 'Dialog.MessageBox', 'ScriptFullName', 'Version')}
+    tab = None
+    try:
+        count = int(app.GetTabCount())
+        if count:
+            tab = app.GetTab(1)
+    except Exception:
+        result['crt.GetTabCount'] = False
+    for name in ('Caption', 'Index', 'Activate', 'Session.Connected', 'Session.Config.GetOption',
+                 'Screen.Get2', 'Screen.CurrentRow', 'Screen.CurrentColumn', 'Screen.Rows',
+                 'Screen.Columns', 'Screen.ReadString', 'Screen.MatchIndex',
+                 'Screen.Synchronous', 'Screen.IgnoreEscape', 'Screen.Send'):
+        result['tab.' + name] = available(tab, name)
     return result
 
 
@@ -539,6 +570,9 @@ class NativeAdapter:
         return dict(bridge_version=BRIDGE_VERSION, protocol_version=PROTOCOL_VERSION,
                     bridge_instance=self.instance, python=sys.version.split()[0], platform=platform.system(),
                     architecture=platform.machine(), securecrt_version=str(getattr(self.app,'Version','unknown')),
+                    os_version=platform.mac_ver()[0] if sys.platform == 'darwin' else platform.version(),
+                    api_capabilities=probe_capabilities(self.app), api_probe='attribute_presence_only',
+                    adapter_sha256=SCRIPT_SHA256,
                     securecrt_tabs=self.app.GetTabCount(), max_active_captures=16,
                     capabilities=['session_leases','screen_tokens','bounded_poll','interrupt','delivery_evidence',
                                   'ack_fresh_view','persistent_ndjson','poll_bulk','attachments','prepare_and_begin','per_session_capture'],
@@ -682,11 +716,13 @@ def serve(app, config, stop_event=None):
 
 
 def main():
+    global SCRIPT_SHA256
     if 'crt' not in globals():
         fail('Run this script inside SecureCRT via Script > Run, not external Python.')
     script = getattr(crt, 'ScriptFullName', globals().get('__file__'))
     if not script:
         fail('SecureCRT script path unavailable')
+    SCRIPT_SHA256 = hashlib.sha256(Path(script).read_bytes()).hexdigest()
     config_path = Path(script).resolve().parent / 'bridge.json'
     with config_path.open('r', encoding='utf-8') as handle:
         config = json.load(handle)
