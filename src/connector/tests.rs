@@ -1,0 +1,245 @@
+use super::*;
+
+#[cfg(unix)]
+#[tokio::test]
+async fn batch_ledger_exhaustion_returns_prior_command_receipts() {
+    let manager = ConnectorManager::new();
+    manager.sessions.lock().await.insert(
+        "openssh/batch-fixture".into(),
+        Arc::new(Session {
+            id: "openssh/batch-fixture".into(),
+            target: "local fixture".into(),
+            mode: ConnectorMode::Exec,
+            created: Instant::now(),
+            transport: SessionTransport::Exec(local_transport()),
+        }),
+    );
+    for index in 0..MAX_OPERATIONS - 1 {
+        manager.operations.lock().await.insert(
+            format!("reserved-{index}"),
+            ("old-receipt".into(), "old-fingerprint".into()),
+        );
+    }
+    let value = manager
+        .batch(ConnectorBatchParams {
+            session_id: "openssh/batch-fixture".into(),
+            commands: vec!["printf first".into(), "printf second".into()],
+            operation_id: Some("capacity-batch".into()),
+            on_error: None,
+            timeout_ms: Some(1000),
+        })
+        .await
+        .unwrap();
+    assert_eq!(value["state"], json!("stopped"));
+    assert_eq!(value["results"].as_array().unwrap().len(), 2);
+    assert_eq!(value["results"][0]["result"]["state"], json!("completed"));
+    let id = value["results"][0]["result"]["command_id"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        manager.command_status(id).await.unwrap()["exit_code"],
+        json!(0)
+    );
+    assert_eq!(value["results"][1]["result"]["sent"], json!(false));
+}
+
+#[cfg(unix)]
+fn local_transport() -> Arc<ExecTransport> {
+    let mut child = Command::new("sh")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    Arc::new(ExecTransport {
+        stdin: Mutex::new(child.stdin.take().unwrap()),
+        stdout: Mutex::new(BufReader::new(child.stdout.take().unwrap())),
+        child: Mutex::new(child),
+        command_lock: Mutex::new(()),
+        unresolved: AtomicBool::new(false),
+    })
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn queued_command_is_rejected_if_the_session_became_unresolved() {
+    let transport = local_transport();
+    let guard = transport.command_lock.lock().await;
+    let pending = transport.clone();
+    let task =
+        tokio::spawn(async move { run_exec(&pending, "printf should-not-send", 1000).await });
+    transport.unresolved.store(true, Ordering::SeqCst);
+    drop(guard);
+    let result = task.await.unwrap();
+    assert_eq!(result.state, "rejected");
+    assert_eq!(result.sent, Some(false));
+    assert!(result.output.is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn partial_end_marker_is_not_exposed_as_timeout_output() {
+    let code = "import sys,re,time; line=sys.stdin.readline(); begin=re.search(r'MCP_BEGIN_[a-f0-9]+',line).group(); end=re.search(r'MCP_END_[a-f0-9]+',line).group(); sys.stdout.write(begin+'\\nuser-output\\n'+end[:20]); sys.stdout.flush(); time.sleep(1)";
+    let mut child = Command::new("python3")
+        .args(["-c", code])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let transport = Arc::new(ExecTransport {
+        stdin: Mutex::new(child.stdin.take().unwrap()),
+        stdout: Mutex::new(BufReader::new(child.stdout.take().unwrap())),
+        child: Mutex::new(child),
+        command_lock: Mutex::new(()),
+        unresolved: AtomicBool::new(false),
+    });
+    let value = run_exec(&transport, "fixture", 200).await;
+    assert_eq!(value.state, "unknown");
+    assert_eq!(value.output, b"user-output\n");
+    assert!(!String::from_utf8_lossy(&value.output).contains("MCP_END"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn cancelled_capture_keeps_the_transport_interlocked() {
+    let transport = local_transport();
+    let pending = transport.clone();
+    let task = tokio::spawn(async move { run_exec(&pending, "sleep 1", 5000).await });
+    for _ in 0..100 {
+        if transport.unresolved.load(Ordering::SeqCst) {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(transport.unresolved.load(Ordering::SeqCst));
+    task.abort();
+    assert!(task.await.is_err());
+    assert_eq!(
+        run_exec(&transport, "printf should-not-send", 1000)
+            .await
+            .sent,
+        Some(false)
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn timeout_keeps_partial_unterminated_output_and_interlocks_the_session() {
+    let transport = local_transport();
+    let result = run_exec(&transport, "printf partial; sleep 1", 100).await;
+    assert_eq!(result.state, "unknown");
+    assert_eq!(result.output, b"partial");
+    assert!(
+        result
+            .first_byte_us
+            .is_some_and(|arrival| arrival < 100_000)
+    );
+    assert!(result.native_read_count >= 2);
+    assert!(transport.unresolved.load(Ordering::SeqCst));
+    assert_eq!(
+        run_exec(&transport, "printf should-not-send", 1000)
+            .await
+            .sent,
+        Some(false)
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn long_unterminated_lines_are_bounded_without_losing_completion() {
+    let transport = local_transport();
+    let result = run_exec(
+        &transport,
+        "awk 'BEGIN {for (i=0;i<1100000;i++) printf \"x\"}'",
+        10000,
+    )
+    .await;
+    assert_eq!(result.state, "completed");
+    assert_eq!(result.exit_code, Some(0));
+    assert_eq!(result.output.len(), MAX_OUTPUT);
+    assert!(result.truncated);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn output_eviction_keeps_the_operation_ledger_and_never_replays() {
+    let manager = ConnectorManager::new();
+    manager.sessions.lock().await.insert(
+        "openssh/local-fixture".into(),
+        Arc::new(Session {
+            id: "openssh/local-fixture".into(),
+            target: "local fixture, no SSH".into(),
+            mode: ConnectorMode::Exec,
+            created: Instant::now(),
+            transport: SessionTransport::Exec(local_transport()),
+        }),
+    );
+    let params = |index| ConnectorExecParams {
+        session_id: "openssh/local-fixture".into(),
+        command: "counter=$((${counter:-0}+1)); printf '%s' \"$counter\"".into(),
+        mode: None,
+        expected_prompt: None,
+        wait_for: None,
+        operation_id: Some(format!("fixture-{index}")),
+        timeout_ms: Some(1000),
+        wait_ms: None,
+        max_bytes: None,
+    };
+    for index in 0..=MAX_COMMANDS {
+        let value = manager.exec(params(index)).await.unwrap();
+        assert_eq!(value["exit_code"], json!(0));
+    }
+    assert_eq!(manager.commands.lock().await.len(), MAX_COMMANDS);
+    assert!(manager.exec(params(0)).await.is_err());
+    let value = manager.exec(params(MAX_COMMANDS + 1)).await.unwrap();
+    assert!(
+        value["output"]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with(&(MAX_COMMANDS + 2).to_string())
+    );
+    assert!(
+        manager
+            .read(ConnectorReadParams {
+                command_id: value["command_id"].as_str().unwrap().into(),
+                cursor: Some(u64::MAX),
+                max_bytes: Some(4),
+                wait_ms: None
+            })
+            .await
+            .is_err()
+    );
+}
+
+#[test]
+fn ring_buffer_reports_absolute_cursor_gaps() {
+    let mut ring = RingBuffer::new();
+    ring.append(&vec![b'x'; MAX_OUTPUT + 4]);
+    let page = ring.page(0, 4);
+    assert_eq!(page["cursor"], json!(4));
+    assert_eq!(page["gap"], json!(true));
+    assert_eq!(page["dropped_bytes"], json!(4));
+    assert_eq!(page["next_cursor"], json!(8));
+}
+
+#[test]
+fn binary_payload_keeps_text_preview_and_base64() {
+    let value = payload(vec![0xff, 0x00, 0x61], json!({}));
+    assert!(value["base64"].as_str().is_some());
+    assert_eq!(value["text"], json!("�\0a"));
+}
+
+#[test]
+fn target_and_command_validation_reject_control_input() {
+    assert!(validate_target("host\nname").is_err());
+    assert!(validate_target("-oProxyCommand=untrusted").is_err());
+    assert!(validate_target(" host").is_err());
+    assert!(validate_target("user@host").is_ok());
+    assert!(validate_target("[::1]").is_ok());
+    assert!(validate_command("printf hi\nrm -rf /").is_err());
+    assert!(validate_text("\u{1b}[31m").is_ok());
+    assert!(validate_text("secret\0").is_err());
+}
