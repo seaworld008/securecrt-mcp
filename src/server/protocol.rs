@@ -9,7 +9,76 @@ use rmcp::{
     },
     service::{NotificationContext, RequestContext},
 };
+use rmcp::{
+    model::{
+        ClientCapabilities, ClientJsonRpcMessage, GetMeta, JsonRpcMessage, NotificationMetaObject,
+        ServerJsonRpcMessage,
+    },
+    transport::{Transport, async_rw::AsyncRwTransport},
+};
 use std::borrow::Cow;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+
+struct EraTransport<T> {
+    inner: T,
+    legacy: Arc<AtomicBool>,
+}
+
+fn notification_allowed(meta: &NotificationMetaObject, legacy: bool) -> bool {
+    let Some(value) = meta.get("io.modelcontextprotocol/protocolVersion") else {
+        return true;
+    };
+    match value.as_str() {
+        Some("2025-11-25") => legacy,
+        Some("2026-07-28") => meta
+            .get("io.modelcontextprotocol/clientCapabilities")
+            .is_some_and(|value| {
+                serde_json::from_value::<ClientCapabilities>(value.clone()).is_ok()
+            }),
+        _ => false,
+    }
+}
+
+impl<T: Transport<RoleServer>> Transport<RoleServer> for EraTransport<T> {
+    type Error = T::Error;
+    fn send(
+        &mut self,
+        item: ServerJsonRpcMessage,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send + 'static {
+        let initialized = matches!(&item,JsonRpcMessage::Response(response)
+            if matches!(&response.result,rmcp::model::ServerResult::InitializeResult(info)
+                if info.protocol_version==ProtocolVersion::V_2025_11_25));
+        let send = self.inner.send(item);
+        let legacy = self.legacy.clone();
+        async move {
+            let result = send.await;
+            if result.is_ok() && initialized {
+                legacy.store(true, Ordering::SeqCst);
+            }
+            result
+        }
+    }
+    async fn receive(&mut self) -> Option<ClientJsonRpcMessage> {
+        loop {
+            let message = self.inner.receive().await?;
+            if let JsonRpcMessage::Notification(notification) = &message {
+                if !notification_allowed(
+                    notification.notification.get_meta(),
+                    self.legacy.load(Ordering::SeqCst),
+                ) {
+                    continue;
+                }
+            }
+            return Some(message);
+        }
+    }
+    async fn close(&mut self) -> Result<(), Self::Error> {
+        self.inner.close().await
+    }
+}
 
 const SUPPORTED: &[ProtocolVersion] =
     &[ProtocolVersion::V_2026_07_28, ProtocolVersion::V_2025_11_25];
@@ -17,6 +86,12 @@ const SUPPORTED: &[ProtocolVersion] =
 pub(crate) struct ProtocolService(SecureCrtServer);
 
 impl SecureCrtServer {
+    pub(crate) fn protocol_stdio() -> impl Transport<RoleServer> {
+        EraTransport {
+            inner: AsyncRwTransport::new_server(tokio::io::stdin(), tokio::io::stdout()),
+            legacy: Arc::new(AtomicBool::new(false)),
+        }
+    }
     pub(crate) fn into_protocol_service(self) -> ProtocolService {
         ProtocolService(self)
     }
@@ -54,6 +129,12 @@ impl Service<RoleServer> for ProtocolService {
         notification: rmcp::model::ClientNotification,
         context: NotificationContext<RoleServer>,
     ) -> Result<(), ErrorData> {
+        if !notification_allowed(&context.meta, context.peer.peer_info().is_some()) {
+            return Err(ErrorData::invalid_request(
+                "notification protocol era or metadata is invalid",
+                None,
+            ));
+        }
         Service::<RoleServer>::handle_notification(&self.0, notification, context).await
     }
     fn get_info(&self) -> ServerConfig {
@@ -100,5 +181,49 @@ impl ServerHandler for SecureCrtServer {
         }
         context.peer.set_peer_info(request.clone());
         self.negotiate_initialize(&request)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn notifications_are_filtered_before_sdk_cancellation_dispatch() {
+        use tokio::io::AsyncWriteExt;
+        let (mut client, server) = tokio::io::duplex(4096);
+        let (read, write) = tokio::io::split(server);
+        let mut transport = EraTransport {
+            inner: AsyncRwTransport::new_server(read, write),
+            legacy: Arc::new(AtomicBool::new(false)),
+        };
+        for (version, caps) in [
+            ("2025-11-25", Some(serde_json::json!({}))),
+            ("2026-07-28", None),
+            ("2026-07-28", Some(serde_json::json!({}))),
+        ] {
+            let mut meta = serde_json::json!({"io.modelcontextprotocol/protocolVersion":version});
+            if let Some(caps) = caps {
+                meta["io.modelcontextprotocol/clientCapabilities"] = caps;
+            }
+            let value = serde_json::json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1,"_meta":meta}});
+            client
+                .write_all((value.to_string() + "\n").as_bytes())
+                .await
+                .unwrap();
+        }
+        let message = transport.receive().await.unwrap();
+        let JsonRpcMessage::Notification(notification) = message else {
+            panic!("expected notification")
+        };
+        assert_eq!(
+            notification.notification.get_meta()["io.modelcontextprotocol/protocolVersion"],
+            serde_json::json!("2026-07-28")
+        );
+        transport.legacy.store(true, Ordering::SeqCst);
+        let meta = serde_json::from_value::<NotificationMetaObject>(
+            serde_json::json!({"io.modelcontextprotocol/protocolVersion":"2025-11-25"}),
+        )
+        .unwrap();
+        assert!(notification_allowed(&meta, true));
     }
 }
