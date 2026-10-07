@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "policy_version": "2026-10-07",
+  "review_date": "2026-11-07",
+  "python_floor": [
+    3,
+    8
+  ],
+  "securecrt_floor": [
+    9,
+    0
+  ],
+  "xshell_floor": [
+    7,
+    0
+  ],
+  "tier_1_certificates": [],
+  "required_apis": {
+    "securecrt": [
+      "crt.GetTabCount",
+      "crt.GetTab",
+      "crt.Sleep",
+      "tab.Caption",
+      "tab.Index",
+      "tab.Session.Connected",
+      "tab.Screen.Get2",
+      "tab.Screen.CurrentRow",
+      "tab.Screen.CurrentColumn",
+      "tab.Screen.Rows",
+      "tab.Screen.Columns",
+      "tab.Screen.ReadString",
+      "tab.Screen.MatchIndex",
+      "tab.Screen.Synchronous",
+      "tab.Screen.IgnoreEscape",
+      "tab.Screen.Send"
+    ],
+    "xshell": [
+      "xsh.Session.Connected",
+      "xsh.Session.SelectTabName",
+      "xsh.Session.SessionName",
+      "xsh.Session.TabText",
+      "xsh.Session.Sleep",
+      "xsh.Screen.Get",
+      "xsh.Screen.CurrentRow",
+      "xsh.Screen.CurrentColumn",
+      "xsh.Screen.Rows",
+      "xsh.Screen.Columns",
+      "xsh.Screen.Synchronous",
+      "xsh.Screen.Send"
+    ]
+  },
+  "retirement_notice_days": 90,
+  "certificate_max_age_days": 90,
+  "notes": "No untested tuple is promoted to Tier 1. Current Mac 27 / SecureCRT 9.5.2 is a passing Tier 2 exception; Windows cells await real runtime receipts."
+}

@@ -24,6 +24,7 @@ import uuid
 from pathlib import Path
 
 BRIDGE_VERSION = "0.5.1"
+SCRIPT_SHA256 = None
 PROTOCOL_VERSION = 2
 MAX_FRAME = 262144
 MAX_CHUNK = 65536
@@ -55,6 +56,25 @@ def string(value, name, maximum=65536):
 
 def now_ms():
     return int(time.time() * 1000)
+
+
+def probe_capabilities(app):
+    """Read native API availability; never send input or call a wait function."""
+    def available(path):
+        try:
+            value = app
+            for part in path.split('.'):
+                value = getattr(value, part)
+            methods = ('SelectTabName', 'Sleep', 'Get', 'Send', 'WaitForStrings')
+            return callable(value) if path.split('.')[-1] in methods else value is not None
+        except Exception:
+            return False
+    return {'xsh.' + name: available(name) for name in
+            ('Version', 'Session.Connected', 'Session.SelectTabName', 'Session.SessionName',
+             'Session.TabText', 'Session.Path', 'Session.RemoteAddress', 'Session.RemotePort',
+             'Session.UserName', 'Session.Sleep', 'Screen.Get', 'Screen.CurrentRow',
+             'Screen.CurrentColumn', 'Screen.Rows', 'Screen.Columns', 'Screen.Synchronous',
+             'Screen.Send', 'Screen.WaitForStrings')}
 
 
 def yield_to_xshell(app, milliseconds, logger=None):
@@ -612,6 +632,9 @@ class NativeAdapter:
         return dict(bridge_version=BRIDGE_VERSION, protocol_version=PROTOCOL_VERSION,
                     bridge_instance=self.instance, python=sys.version.split()[0],
                     platform=platform.system(), architecture=platform.machine(),
+                    os_version=platform.version(), api_capabilities=probe_capabilities(self.app),
+                    api_probe='attribute_presence_only',
+                    adapter_sha256=SCRIPT_SHA256,
                     xshell_version=str(getattr(self.app, "Version", "unknown")),
                     capabilities=self._capabilities(), enumeration="named_files",
                     metrics=self.metrics, native_keyboard_lock=False)
@@ -775,9 +798,11 @@ def load_config(script):
 
 
 def main():
+    global SCRIPT_SHA256
     if "xsh" not in globals():
         fail("Run this script inside Xshell via Tools > Script > Run")
     script = Path(globals().get("__file__", "xshell_bridge.py")).resolve()
+    SCRIPT_SHA256 = hashlib.sha256(script.read_bytes()).hexdigest()
     config = load_config(script)
     try:
         serve(xsh, config)
