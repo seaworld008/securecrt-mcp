@@ -144,6 +144,7 @@ async fn main() -> Result<()> {
                 Err(_) => None,
             };
             let service = SecureCrtServer::new(engine.clone(), xshell.clone())
+                .into_protocol_service()
                 .serve(stdio())
                 .await?;
             let ended = service.waiting().await;

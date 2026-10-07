@@ -31,6 +31,15 @@ def test_modern_version_is_validated_on_every_request_and_can_recover():
         assert not bridge.sent
 
 
+def test_legacy_version_cannot_skip_initialize_using_metadata():
+    with wire_server() as (client, bridge):
+        reply = client.request('tools/list', {'_meta': modern_meta('2025-11-25')})
+        assert reply['error']['code'] == -32600, reply
+        assert 'initialize' in reply['error']['message']
+        assert 'tools' in client.request('tools/list', {'_meta': modern_meta()})['result']
+        assert not bridge.sent
+
+
 def test_modern_missing_or_malformed_request_metadata_rejects_before_tools():
     with wire_server() as (client, bridge):
         client.request('server/discover', {'_meta': modern_meta()})
