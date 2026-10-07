@@ -125,8 +125,8 @@ impl Engine {
             "invalid wait_ms/max_bytes"
         );
         let fingerprint = format!(
-            "attachment:{:x}",
-            Sha256::digest(serde_json::to_vec(&json!({
+            "attachment:{}",
+            sha256_hex(serde_json::to_vec(&json!({
             "attachment":p.attachment_id,"command":p.command,"mode":p.mode,"timeout":timeout,"wait_for":p.wait_for,"expected_prompt":p.expected_prompt}))?)
         );
         let job = self
@@ -193,7 +193,7 @@ impl Engine {
                     .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)),
             "invalid batch operation_id"
         );
-        let hash = format!("{:x}", Sha256::digest(serde_json::to_vec(&p)?));
+        let hash = sha256_hex(serde_json::to_vec(&p)?);
         let initial =
             json!({"batch_id":id,"state":"running","results":[],"automatic_replay":false});
         {
@@ -213,10 +213,7 @@ impl Engine {
         tokio::spawn(async move {
             let mut stopped = false;
             for (index, command) in p.commands.iter().enumerate() {
-                let op = format!(
-                    "batch-{:x}",
-                    Sha256::digest(format!("{batch}:{index}").as_bytes())
-                );
+                let op = format!("batch-{}", sha256_hex(format!("{batch}:{index}")));
                 let result = engine
                     .exec(ExecParams {
                         attachment_id: p.attachment_id.clone(),

@@ -1,7 +1,7 @@
+use crate::digest::sha256_hex;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use std::{path::PathBuf, sync::Arc};
 use tokio::{
     fs::{File, OpenOptions},
@@ -46,7 +46,7 @@ impl AuditLog {
         }
         let record = json!({"timestamp":Utc::now().to_rfc3339(),"event":event,"command_id":id,
             "session":session,"detail":detail,
-            "command_sha256":command.map(|c|format!("{:x}",Sha256::digest(c.as_bytes()))),
+            "command_sha256":command.map(sha256_hex),
             "command":if self.include_text{command}else{None}});
         let mut bytes = serde_json::to_vec(&record)?;
         bytes.push(b'\n');

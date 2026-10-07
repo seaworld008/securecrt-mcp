@@ -31,8 +31,8 @@ impl Engine {
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         // Do not include ephemeral screen tokens or response pagination/wait choices.
         let fingerprint = format!(
-            "run:{:x}",
-            Sha256::digest(serde_json::to_vec(&json!({
+            "run:{}",
+            sha256_hex(serde_json::to_vec(&json!({
                 "session": p.session, "command": p.command, "mode": p.mode,
                 "expected_prompt": p.expected_prompt, "wait_for": p.wait_for,
                 "timeout_ms": timeout, "settle_ms": p.settle_ms.unwrap_or(750)
