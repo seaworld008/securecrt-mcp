@@ -142,7 +142,7 @@ jobs:
           python tests/package_smoke.py "$binary" "release-validation"
       - run: cargo build --locked --release --target ${{ matrix.target }}
       - run: python scripts/package_release.py target/${{ matrix.target }}/release/${{ matrix.binary }} ${{ matrix.target }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.target }}
           path: |
