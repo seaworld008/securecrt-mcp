@@ -1,5 +1,17 @@
 use super::*;
 
+struct UnresolvedOnDrop {
+    transport: Arc<ExecTransport>,
+    armed: bool,
+}
+impl Drop for UnresolvedOnDrop {
+    fn drop(&mut self) {
+        if self.armed {
+            self.transport.unresolved.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
 pub(super) async fn run_exec(
     transport: &Arc<ExecTransport>,
     command: &str,
@@ -31,7 +43,10 @@ pub(super) async fn run_exec(
     let mut stdin = transport.stdin.lock().await;
     // Cancellation can drop this future after a write. Keep the interlock armed
     // until a completion marker is observed, including when no receipt survives.
-    transport.unresolved.store(true, Ordering::SeqCst);
+    let mut delivery_guard = UnresolvedOnDrop {
+        transport: transport.clone(),
+        armed: true,
+    };
     if let Err(error) = stdin.write_all(envelope.as_bytes()).await {
         transport.unresolved.store(true, Ordering::SeqCst);
         return ExecOutcome {
@@ -163,6 +178,7 @@ pub(super) async fn run_exec(
     if outcome.state == "unknown" {
         transport.unresolved.store(true, Ordering::SeqCst);
     } else if outcome.state == "completed" {
+        delivery_guard.armed = false;
         transport.unresolved.store(false, Ordering::SeqCst);
     }
     outcome

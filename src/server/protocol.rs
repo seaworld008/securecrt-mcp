@@ -29,7 +29,7 @@ struct EraTransport<T> {
 
 fn notification_allowed(meta: &NotificationMetaObject, legacy: bool) -> bool {
     let Some(value) = meta.get("io.modelcontextprotocol/protocolVersion") else {
-        return true;
+        return legacy;
     };
     match value.as_str() {
         Some("2025-11-25") => legacy,
@@ -225,5 +225,7 @@ mod tests {
         )
         .unwrap();
         assert!(notification_allowed(&meta, true));
+        assert!(!notification_allowed(&NotificationMetaObject::new(), false));
+        assert!(notification_allowed(&NotificationMetaObject::new(), true));
     }
 }

@@ -109,20 +109,35 @@ async fn cancelled_capture_keeps_the_transport_interlocked() {
     let pending = transport.clone();
     let task = tokio::spawn(async move { run_exec(&pending, "sleep 1", 5000).await });
     for _ in 0..100 {
-        if transport.unresolved.load(Ordering::SeqCst) {
+        if transport.stdout.try_lock().is_err() {
             break;
         }
-        tokio::task::yield_now().await;
+        tokio::time::sleep(Duration::from_millis(1)).await;
     }
-    assert!(transport.unresolved.load(Ordering::SeqCst));
+    assert!(transport.stdout.try_lock().is_err());
+    assert!(!transport.unresolved.load(Ordering::SeqCst));
     task.abort();
     assert!(task.await.is_err());
+    assert!(transport.unresolved.load(Ordering::SeqCst));
     assert_eq!(
         run_exec(&transport, "printf should-not-send", 1000)
             .await
             .sent,
         Some(false)
     );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn ordinary_concurrent_execs_serialize_without_uncertainty() {
+    let transport = local_transport();
+    let (first, second) = tokio::join!(
+        run_exec(&transport, "sleep 0.05; printf first", 1000),
+        run_exec(&transport, "printf second", 1000)
+    );
+    assert_eq!(first.state, "completed");
+    assert_eq!(second.state, "completed");
+    assert!(!transport.unresolved.load(Ordering::SeqCst));
 }
 
 #[cfg(unix)]
