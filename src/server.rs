@@ -12,6 +12,15 @@ impl SecureCrtServer {
     pub fn new(engine: Engine, xshell: Option<Engine>) -> Self {
         Self { engine, xshell }
     }
+
+    async fn command_engine(&self, id: &str) -> &Engine {
+        if let Some(xshell) = &self.xshell {
+            if xshell.owns_command(id).await {
+                return xshell;
+            }
+        }
+        &self.engine
+    }
 }
 fn result(value: anyhow::Result<Value>) -> Result<String, McpError> {
     value
@@ -344,7 +353,8 @@ impl SecureCrtServer {
         match self.engine.connectors.read(p.clone()).await {
             Ok(value) => result(Ok(value)),
             Err(_) => result(
-                self.engine
+                self.command_engine(&p.command_id)
+                    .await
                     .output(crate::model::OutputParams {
                         command_id: p.command_id,
                         cursor: p.cursor.and_then(|v| usize::try_from(v).ok()),
@@ -388,12 +398,21 @@ impl SecureCrtServer {
         &self,
         Parameters(p): Parameters<crate::connector::ConnectorStatusParams>,
     ) -> Result<String, McpError> {
+        if p.session_id.is_some() == p.command_id.is_some() {
+            return result(Err(anyhow::anyhow!(
+                "provide exactly one of session_id or command_id"
+            )));
+        }
         if let Some(session_id) = p.session_id.as_deref() {
             if let Some(attachment) = session_id.strip_prefix("xshell/") {
                 let Some(xshell) = &self.xshell else {
                     return result(Err(anyhow::anyhow!("Xshell bridge is unavailable")));
                 };
-                return result(xshell.attachment_status(attachment).await);
+                return result(xshell.attachment_status(attachment).await.map(|mut value| {
+                    value["backend"] = json!("xshell");
+                    value["session_id"] = json!(session_id);
+                    value
+                }));
             }
             if let Some(attachment) = session_id.strip_prefix("securecrt/") {
                 return result(self.engine.attachment_status(attachment).await);
@@ -402,7 +421,12 @@ impl SecureCrtServer {
         match self.engine.connectors.status_any(p.clone()).await {
             Ok(value) => result(Ok(value)),
             Err(_) => result(match p.command_id {
-                Some(command_id) => self.engine.status(&command_id).await,
+                Some(command_id) => {
+                    self.command_engine(&command_id)
+                        .await
+                        .status(&command_id)
+                        .await
+                }
                 None => Err(anyhow::anyhow!("SecureCRT status requires command_id")),
             }),
         }
@@ -485,13 +509,12 @@ impl SecureCrtServer {
                     .interrupt(crate::connector::ConnectorSessionParams { session_id })
                     .await,
             ),
-            (None, Some(command_id)) => match self.engine.interrupt(&command_id).await {
-                Ok(value) => result(Ok(value)),
-                Err(error) => match &self.xshell {
-                    Some(xshell) => result(xshell.interrupt(&command_id).await),
-                    None => result(Err(error)),
-                },
-            },
+            (None, Some(command_id)) => result(
+                self.command_engine(&command_id)
+                    .await
+                    .interrupt(&command_id)
+                    .await,
+            ),
             _ => result(Err(anyhow::anyhow!(
                 "provide exactly one session_id or command_id"
             ))),
@@ -510,6 +533,11 @@ impl SecureCrtServer {
         &self,
         Parameters(p): Parameters<crate::connector::ConnectorAcknowledgeParams>,
     ) -> Result<String, McpError> {
+        if !p.confirmed_idle {
+            return result(Err(anyhow::anyhow!(
+                "confirmed_idle must be true after inspecting the original session"
+            )));
+        }
         if let Some(attachment) = p.session_id.strip_prefix("securecrt/") {
             let (Some(screen_token), Some(expected_prompt)) = (p.screen_token, p.expected_prompt)
             else {
