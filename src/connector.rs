@@ -3,6 +3,7 @@
 //! The MCP surface is intentionally backend-neutral. SecureCRT and Xshell
 //! reuse an in-process screen bridge; OpenSSH owns a local persistent process.
 
+use crate::digest::sha256_hex;
 use crate::model::CaptureMode;
 use anyhow::{Context, Result, anyhow, ensure};
 use base64::Engine as _;
@@ -10,7 +11,6 @@ use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use rmcp::schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sha2::Digest;
 use std::{
     collections::{HashMap, VecDeque},
     io::{Read, Write},
@@ -438,12 +438,10 @@ impl ConnectorManager {
         let mut results = Vec::with_capacity(p.commands.len());
         let mut state = "completed";
         for (index, command) in p.commands.into_iter().enumerate() {
-            let operation_id = p.operation_id.as_ref().map(|base| {
-                format!(
-                    "batch-{:x}",
-                    sha2::Sha256::digest(format!("{base}:{index}").as_bytes())
-                )
-            });
+            let operation_id = p
+                .operation_id
+                .as_ref()
+                .map(|base| format!("batch-{}", sha256_hex(format!("{base}:{index}"))));
             let result = self
                 .exec(ConnectorExecParams {
                     session_id: p.session_id.clone(),

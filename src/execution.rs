@@ -10,9 +10,9 @@ use crate::{
 use anyhow::{Context, Result, ensure};
 mod convenience;
 mod persistent;
+use crate::digest::sha256_hex;
 use serde::Serialize;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
     sync::{
@@ -192,8 +192,7 @@ impl Engine {
                 "prompt mode requires a nonempty literal wait_for"
             );
         }
-        let fingerprint =
-            stable_fingerprint.unwrap_or(format!("{:x}", Sha256::digest(serde_json::to_vec(&p)?)));
+        let fingerprint = stable_fingerprint.unwrap_or(sha256_hex(serde_json::to_vec(&p)?));
         let id = Uuid::new_v4().to_string();
         let stop = Arc::new(AtomicBool::new(false));
         {

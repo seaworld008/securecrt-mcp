@@ -4,6 +4,7 @@ mod config;
 mod connector;
 mod critical;
 mod daemon;
+mod digest;
 mod execution;
 mod fault;
 mod local_cli;
