@@ -36,6 +36,29 @@ async fn queued_command_is_rejected_if_the_session_became_unresolved() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn cancelled_capture_keeps_the_transport_interlocked() {
+    let transport = local_transport();
+    let pending = transport.clone();
+    let task = tokio::spawn(async move { run_exec(&pending, "sleep 1", 5000).await });
+    for _ in 0..100 {
+        if transport.unresolved.load(Ordering::SeqCst) {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(transport.unresolved.load(Ordering::SeqCst));
+    task.abort();
+    assert!(task.await.is_err());
+    assert_eq!(
+        run_exec(&transport, "printf should-not-send", 1000)
+            .await
+            .sent,
+        Some(false)
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn timeout_keeps_partial_unterminated_output_and_interlocks_the_session() {
     let transport = local_transport();
     let result = run_exec(&transport, "printf partial; sleep 1", 100).await;

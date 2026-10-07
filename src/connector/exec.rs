@@ -29,6 +29,9 @@ pub(super) async fn run_exec(
     let envelope =
         format!("printf '\\n%s\\n' '{begin}'; eval '{quoted}'; printf '\\n{end} %s\\n' \"$?\"\n");
     let mut stdin = transport.stdin.lock().await;
+    // Cancellation can drop this future after a write. Keep the interlock armed
+    // until a completion marker is observed, including when no receipt survives.
+    transport.unresolved.store(true, Ordering::SeqCst);
     if let Err(error) = stdin.write_all(envelope.as_bytes()).await {
         transport.unresolved.store(true, Ordering::SeqCst);
         return ExecOutcome {
@@ -156,6 +159,8 @@ pub(super) async fn run_exec(
     // cannot send between this result and the manager storing its receipt.
     if outcome.state == "unknown" {
         transport.unresolved.store(true, Ordering::SeqCst);
+    } else if outcome.state == "completed" {
+        transport.unresolved.store(false, Ordering::SeqCst);
     }
     outcome
 }
