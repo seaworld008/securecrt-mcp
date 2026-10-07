@@ -451,20 +451,37 @@ async fn doctor_xshell(offline: bool) -> Result<()> {
     let mut bridge_config = config.bridge;
     bridge_config.port = secret.port;
     let bridge = BridgeClient::new_file(bridge_config, secret, xshell_ipc_dir_path()?)?;
-    let info = match bridge.call("ping", serde_json::json!({})).await {
-        Ok(info) => info,
+    let reports = match bridge.runtime_reports().await {
+        Ok(reports) => reports,
         Err(error) => {
             local_cli::emit(&support::report("xshell", None))?;
             return Err(error);
         }
     };
+    let mut failed = false;
+    let mut output = Vec::new();
+    for mut report in reports {
+        let runtime = report.get("runtime");
+        let support_report = support::report("xshell", runtime);
+        let validation = runtime.map(|info| support::validate_runtime("xshell", info));
+        if runtime.is_none()
+            || validation.as_ref().is_some_and(|v| v.is_err())
+            || support_report["tier"] == "unsupported"
+        {
+            failed = true;
+        }
+        if let Some(Err(error)) = validation {
+            report["validation_error"] = serde_json::json!(error.to_string());
+        }
+        report["support"] = support_report;
+        output.push(report);
+    }
     local_cli::emit(
-        &serde_json::json!({"support":support::report("xshell",Some(&info)),"runtime":info}),
+        &serde_json::json!({"backend":"xshell","instances":output,"all_runtime_checks_passed":!failed}),
     )?;
-    support::validate_runtime("xshell", &info)?;
     ensure!(
-        support::report("xshell", Some(&info))["tier"] != "unsupported",
-        "unsupported Xshell runtime; see support report and repair guidance"
+        !failed,
+        "one or more Xshell runtimes require repair; see per-instance support reports"
     );
     Ok(())
 }

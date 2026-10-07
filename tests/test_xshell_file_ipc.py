@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import re
 from pathlib import Path
@@ -104,7 +105,12 @@ def test_compiled_mcp_aggregates_and_routes_multiple_xshell_instances():
                         request_path.unlink()
                         method = request["method"]
                         if method == "ping":
-                            result = {"bridge_version": "0.5.0", "protocol_version": 2,
+                            apis=json.loads((Path(__file__).parents[1]/"support"/"policy.json").read_text())["required_apis"]["xshell"]
+                            digest=hashlib.sha256((Path(__file__).parents[1]/"bridge"/"xshell_bridge.py").read_bytes()).hexdigest()
+                            result = {"bridge_version": "0.5.1", "protocol_version": 2,
+                                      "python":"3.11.17","xshell_version":"8.0",
+                                      "api_capabilities":{name:True for name in apis},
+                                      "adapter_sha256":digest if instance=="instance-a" else "stale-source",
                                       "capabilities": ["poll_bulk", "file_ipc"]}
                         elif method == "list_sessions":
                             result = {"bridge_instance": instance, "enumeration": "named_files",
@@ -172,6 +178,13 @@ def test_compiled_mcp_aggregates_and_routes_multiple_xshell_instances():
             response = mcp.tool("connector_acknowledge", {"session_id": opened["session_id"], "confirmed_idle": False,
                                                           "screen_token": "unused", "expected_prompt": "root#"}, expect_error=True)
             assert "confirmed_idle" in response["error"]["message"], response
+            doctor=subprocess.run([str(binary),"doctor","--backend","xshell"],env=env,
+                                  capture_output=True,text=True,encoding="utf-8",timeout=10)
+            assert doctor.returncode != 0, doctor.stdout
+            report=json.loads(doctor.stdout)
+            assert len(report["instances"])==2 and report["all_runtime_checks_passed"] is False, report
+            stale=next(item for item in report["instances"] if item["instance"]=="instance-b")
+            assert stale["support"]["tier"]=="unsupported" and "validation_error" in stale, stale
         finally:
             mcp.close()
             stop.set()

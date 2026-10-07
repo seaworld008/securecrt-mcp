@@ -127,6 +127,33 @@ impl BridgeClient {
             .await?)
     }
 
+    /// Doctor validates every process, rather than the representative ping used
+    /// for fast-path negotiation. No remote input is sent by these requests.
+    pub async fn runtime_reports(&self) -> Result<Vec<Value>> {
+        match self.transport.as_ref() {
+            Transport::Tcp { .. } => {
+                Ok(vec![json!({"runtime":self.call("ping",json!({})).await?})])
+            }
+            Transport::File { state } => {
+                let instances = self.file_instances(state).await?;
+                ensure!(
+                    !instances.is_empty(),
+                    "Xshell bridge is not running; start its script"
+                );
+                let calls = instances.iter().map(|(instance, path)| async move {
+                    match self
+                        .call_file_instance("ping", json!({}), state, instance, path)
+                        .await
+                    {
+                        Ok(runtime) => json!({"instance":instance,"runtime":runtime}),
+                        Err(error) => json!({"instance":instance,"error":error.to_string()}),
+                    }
+                });
+                Ok(join_all(calls).await)
+            }
+        }
+    }
+
     pub fn metrics(&self) -> Value {
         let c = &self.counters;
         let transport = match self.transport.as_ref() {
