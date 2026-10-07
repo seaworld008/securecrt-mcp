@@ -22,6 +22,9 @@ with zipfile.ZipFile(archive) as package:
     expected.update(p.relative_to(root).as_posix() for p in (root/'docs').rglob('*.md'))
     expected.update(p.relative_to(root).as_posix() for p in (root/'docs'/'benchmarks').glob('*.json'))
     expected.update(p.relative_to(root).as_posix() for pattern in ('*.py','*.ps1') for p in (root/'clients').glob(pattern))
+    expected.update(p.relative_to(root).as_posix() for p in (root/'support').glob('*.json'))
+    expected.update(p.relative_to(root).as_posix() for p in (root/'bridge').glob('*.py'))
+    expected.update('tests/'+name for name in ('connector_acceptance.py','securecrt_desktop_smoke.py','mcp_smoke.py','protocol_harness.py'))
     assert set(package.namelist()) == expected, sorted(set(package.namelist()) ^ expected)
     assert len(package.namelist()) == len(expected), 'duplicate archive members'
     assert 'clients/persistent_client.py' in expected and 'docs/migration-0.3.md' in expected

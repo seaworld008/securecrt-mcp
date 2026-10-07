@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Preserve SHA-256 operation fingerprints with sha2 0.11.
+- Fix Xshell result/status/interrupt routing and explicit recovery validation.
+- Bound OpenSSH capture/caches and preserve timeout/cancellation interlocks.
+- Add MCP 2026-07-28 discovery/per-request metadata alongside the 2025-11-25
+  initialize flow, with separate protocol conformance suites.
+- Add backend capabilities, running-script digest and support-tier diagnostics,
+  support evidence documents and opt-in live acceptance scripts.
+- MSRV remains **Rust 1.88**. Future increases occur only in minor releases with
+  explicit CHANGELOG notes; precompiled users are unaffected.
+
 ## [0.5.0] - 2026-09-23
 
 - Make `connector_*` the only public MCP namespace and select SecureCRT, Xshell,

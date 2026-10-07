@@ -1,5 +1,42 @@
 # Connector architecture
 
+## Compatibility and lifecycle contract
+
+The native adapter is a narrow product API boundary. All SecureCRT/Xshell API
+calls remain on the product script thread. Rust owns policy, operation receipts,
+bounded output, per-session interlocks, batch state and auditing. Desktop adapters
+reuse authenticated tabs; OpenSSH owns its subprocess/PTY. Backend choice is
+explicit and failures never silently switch targets or products.
+
+```mermaid
+flowchart TD
+  L[2025-11-25 initialize] --> F[One connector facade]
+  M[2026-07-28 discover / per-request metadata] --> F
+  F --> E[Persistent Engine: policy / audit / receipts / interlocks]
+  E --> S[SecureCRT native script thread / TCP]
+  E --> X[Xshell native script thread / instance file IPC]
+  E --> O[System OpenSSH process / exec or PTY]
+  S --> D[Runtime API and startup-source probes]
+  X --> D
+  D --> P[Versioned support policy and doctor]
+```
+
+Modern MCP has no initialization session, but command lifetime and operation
+deduplication still belong to the persistent Engine/daemon. Per-request client
+metadata is display/protocol context, not authorization or a new native owner.
+Unknown delivery, capture cancellation and timeout keep the send interlock;
+only observed completion or explicit verified recovery releases it. Evicting
+output never authorizes replay.
+
+`doctor` distinguishes missing APIs from unobserved tab capabilities, compares
+the running script's startup digest with the binary snapshot, and reports repair
+steps without modifying policy. Product versions are a compatibility hint;
+required capabilities and actual smoke receipts determine support status.
+Optional metadata/notifications may degrade, while Get2/ReadString or native
+message-pump requirements are never replaced with different semantics.
+See [API inventory](api-compatibility.md), [matrix](support-matrix.md), and
+[support policy](support-policy.md).
+
 The MCP server exposes one public tool namespace: `connector_*`. The backend
 is selected in `connector_open` and is reported on every session. Backend names
 are routing data, not separate user interfaces.
