@@ -572,3 +572,31 @@ def test_xshell_file_ipc_server_round_trip_without_socket_modules():
         thread.join(1)
         assert not thread.is_alive()
         assert not ready.exists()
+
+
+def test_external_engine_resolves_actual_script_folder_without_file_global(tmp_path):
+    from types import SimpleNamespace
+    script = tmp_path / "securecrt-mcp-xshell.py"
+    script.write_text("# installed bridge")
+    app = SimpleNamespace(Session=SimpleNamespace(ScriptFolderPath=str(tmp_path)))
+    assert MODULE.runtime_script_path(app, {}) == script
+
+
+def test_external_engine_refuses_to_guess_source_from_working_directory(tmp_path):
+    import pytest
+    from types import SimpleNamespace
+    app = SimpleNamespace(Session=SimpleNamespace(ScriptFolderPath=str(tmp_path)))
+    with pytest.raises(ValueError, match="script_path_unavailable"):
+        MODULE.runtime_script_path(app, {})
+
+
+def test_external_main_executes_the_bytes_whose_digest_it_reports(tmp_path):
+    import hashlib, types
+    app = types.SimpleNamespace(Session=types.SimpleNamespace(ScriptFolderPath=str(tmp_path)), records=[])
+    source = b"def main():\n    xsh.records.append((_EXECUTED_SOURCE_SHA256, __file__, 'current_source'))\n"
+    script = tmp_path / "securecrt-mcp-xshell.py"
+    script.write_bytes(source)
+    entry = types.FunctionType(MODULE.Main.__code__, {"xsh": app, "hashlib": hashlib,
+                               "runtime_script_path": MODULE.runtime_script_path})
+    entry()
+    assert app.records == [(hashlib.sha256(source).hexdigest(), str(script), "current_source")]

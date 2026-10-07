@@ -986,12 +986,25 @@ def load_config(script):
     fail("xshell_bridge.json missing; run securecrt-mcp init")
 
 
+def runtime_script_path(app, namespace):
+    supplied = namespace.get("__file__")
+    if supplied:
+        return Path(supplied).resolve()
+    folder = getattr(app.Session, "ScriptFolderPath", None)
+    if folder:
+        for name in ("securecrt-mcp-xshell.py", "xshell_bridge.py"):
+            candidate = Path(folder) / name
+            if candidate.is_file():
+                return candidate.resolve()
+    fail("script_path_unavailable: run the standard bridge installed by securecrt-mcp init")
+
+
 def main():
     global SCRIPT_SHA256
     if "xsh" not in globals():
         fail("Run this script inside Xshell via Tools > Script > Run")
-    script = Path(globals().get("__file__", "xshell_bridge.py")).resolve()
-    SCRIPT_SHA256 = hashlib.sha256(script.read_bytes()).hexdigest()
+    script = runtime_script_path(xsh, globals())
+    SCRIPT_SHA256 = globals().get("_EXECUTED_SOURCE_SHA256") or hashlib.sha256(script.read_bytes()).hexdigest()
     config = load_config(script)
     try:
         serve(xsh, config)
@@ -1002,5 +1015,16 @@ def main():
 
 
 def Main():
-    """Entry point invoked by Xshell after evaluating the script."""
-    main()
+    """Entry point for embedded Python and the external Active Scripting engine."""
+    if "__file__" in globals():
+        main()
+        return
+    # Active Scripting supplies only a virtual <Script Block>, without __file__
+    # or a source-cache entry. Reload the standard file in its actual folder so
+    # the executed source and reported digest refer to the same bytes.
+    script = runtime_script_path(xsh, globals())
+    source = script.read_bytes()
+    namespace = {"__file__": str(script), "__name__": "xshell_bridge_runtime", "xsh": xsh}
+    exec(compile(source.decode("utf-8"), str(script), "exec"), namespace)
+    namespace["_EXECUTED_SOURCE_SHA256"] = hashlib.sha256(source).hexdigest()
+    namespace["main"]()
