@@ -5,13 +5,19 @@
 [![License](https://img.shields.io/github/license/seaworld008/securecrt-mcp)](LICENSE)
 [中文说明](README.md)
 
-**securecrt-mcp 0.5.0** is a production-oriented Rust MCP server for operating SSH sessions that are already authenticated in SecureCRT or Xshell from Codex, Claude, or another MCP client, with an explicit persistent OpenSSH/PTY connector option.
+**securecrt-mcp 0.5.1** is a production-oriented Rust MCP server for operating SSH sessions that are already authenticated in SecureCRT or Xshell from Codex, Claude, or another MCP client, with an explicit persistent OpenSSH/PTY connector option.
 
 It reuses the operator's VPN, bastion, SSH key, and MFA flow. It does not create a second SSH connection or export server credentials. This project is independent of VanDyke Software.
 
 > **Production scope:** suitable for operations diagnostics, release checks, log inspection, and controlled changes. It is a SecureCRT session connector, not a native SSH/PTY implementation and not a second AI approval system. Client approval, remote account authorization, and human target confirmation remain required.
 
 > **High-performance connector (opt-in):** the new `connector_*` tools can open persistent system OpenSSH command or PTY sessions explicitly. SecureCRT remains the default backend. OpenSSH uses the user's `ssh_config`, Agent, ProxyJump and known_hosts; MCP does not store passwords. See [Unified connectors](docs/connectors.md).
+
+The reproduced Xshell 8 Build 0110 (product version 8.0.0.26) / embedded
+Python 3.8.6 binding has a native reference-count defect. The bridge rejects
+writes on that exact combination. Use the vendor-supported external 32-bit
+Python + pywin32 engine described in [the support policy](docs/support-policy.md),
+confirm the engine reported by the bridge, and perform live-session acceptance.
 
 ## What it provides
 
@@ -75,7 +81,7 @@ Use the returned `session_id` with `connector_exec`, `connector_exec_batch`, `co
 
 ## Verified scope
 
-The 0.5.0 Rust, Bridge, MCP stdio, batch, daemon, fault-injection, packaging, and connector automation tests pass. Real desktop acceptance must be completed after the current SecureCRT/Xshell processes reload the matching scripts:
+The 0.5.1 Rust, Bridge, MCP stdio, batch, daemon, fault-injection, packaging, and connector automation tests pass. Real desktop acceptance must be completed after the current SecureCRT/Xshell processes reload the matching scripts:
 
 - Three Linux SSH tabs (`php_test`, `php_dev`, `k8s-master1`) completed `hostname`, `uptime`, and `pwd` batches after a SecureCRT restart.
 - Long output was read through cursor pagination.
@@ -90,7 +96,7 @@ These results do not claim native SSH equivalence. Validate the actual targets, 
 Download the Windows x64 archive and `SHA256SUMS` from the [latest Release](https://github.com/seaworld008/securecrt-mcp/releases/latest):
 
 ```powershell
-Get-FileHash .\securecrt-mcp-0.5.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256
+Get-FileHash .\securecrt-mcp-0.5.1-x86_64-pc-windows-msvc.zip -Algorithm SHA256
 Get-Content .\SHA256SUMS
 ```
 

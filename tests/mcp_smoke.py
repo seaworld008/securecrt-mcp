@@ -34,7 +34,7 @@ class FakeBridge(socketserver.ThreadingTCPServer):
             name = 'poll'
         with self.lock:
             if name == 'ping':
-                return {'bridge_version': '0.5.0', 'protocol_version': 2,
+                return {'bridge_version': '0.5.1', 'protocol_version': 2,
                         'python':'3.11.17','securecrt_version':'9.5.2',
                         'api_capabilities':{name:True for name in json.loads((Path(__file__).parents[1]/'support'/'policy.json').read_text())['required_apis']['securecrt']},
                         'adapter_sha256': hashlib.sha256((Path(__file__).parents[1] / 'bridge' / 'securecrt_bridge.py').read_bytes()).hexdigest(),

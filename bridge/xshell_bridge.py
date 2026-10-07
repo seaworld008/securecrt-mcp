@@ -35,13 +35,9 @@ STARTUP_NOTICE = "Xshell MCP 已启动；当前脚本只控制已连接的命名
 STALE_INSTANCE_MS = 300_000
 STARTUP_NOTICE_STYLE = 0x50040  # information + foreground + topmost
 STARTUP_NOTICE_TIMEOUT_SECONDS = 15
-# Xshell's script host must own the idle wait so Tools -> Script -> Cancel can
-# interrupt the script without hanging XshellCore. On this build a long
-# Session.Sleep call can return an unstructured NoneType exception during
-# cancellation; one-millisecond host waits avoid that cancellation window while
-# still yielding to Xshell's message pump. The exception is handled below as a
-# normal stop.
-HOST_WAIT_MS = 1
+# The observed Xshell 8 Python binding decrements None's reference count on
+# each Session.Sleep call. Never use that void-returning native wait in a loop.
+HOST_POLL_MS = 20
 
 
 def fail(message):
@@ -58,6 +54,60 @@ def now_ms():
     return int(time.time() * 1000)
 
 
+def native_command_text(text, completion_marker):
+    """Keep Unicode POSIX input out of Xshell's ANSI Python string binding."""
+    if text.isascii():
+        return text
+    if not completion_marker:
+        fail("unicode_input_requires_posix: native prompt input cannot preserve Unicode; nothing sent")
+    # PyArg_ParseTuple('s') produces UTF-8, but the observed Xshell wrapper
+    # converts it through Windows' ANSI code page. Decode the exact UTF-8 bytes
+    # using POSIX printf and eval in the current shell, preserving cwd/env and
+    # the existing completion envelope without adding a user-command subshell.
+    octal = "".join("\\%03o" % byte for byte in text.encode("utf-8"))
+    wire = 'eval "$(printf \'' + octal + '\')"'
+    string(wire, "encoded_native_text", MAX_FRAME)
+    return wire
+
+
+def host_version(app):
+    """Read the running host's version without ctypes or external Python."""
+    value = getattr(app, "Version", None)
+    if value:
+        return str(value)
+    path = Path(sys.executable)
+    if path.name.lower() not in ("xshell.exe", "xshellcore.exe"):
+        return "unknown"
+    try:
+        if path.stat().st_size > 64 * 1024 * 1024:
+            return "unknown"
+        data = path.read_bytes()
+        key = "VS_VERSION_INFO\0".encode("utf-16le")
+        index = data.find(key)
+        if index < 6:
+            return "unknown"
+        start = index - 6
+        length, value_length, kind = (int.from_bytes(data[start+i:start+i+2], "little") for i in (0, 2, 4))
+        offset = start + ((6 + len(key) + 3) // 4) * 4
+        if kind != 0 or value_length != 52 or start + length > len(data) or offset + 52 > start + length:
+            return "unknown"
+        values = [int.from_bytes(data[offset+i:offset+i+4], "little") for i in range(0, 52, 4)]
+        if values[0] == 0xFEEF04BD:
+            return ".".join(str(n) for n in
+                            (values[4] >> 16, values[4] & 65535,
+                             values[5] >> 16, values[5] & 65535))
+    except (OSError, ValueError):
+        pass
+    return "unknown"
+
+
+def unsafe_embedded_binding(app):
+    """Reject the exact native binding with reproduced borrowed-None returns."""
+    return (sys.version_info[:3] == (3, 8, 6) and
+            type(app.Screen).__module__ == "Xsh" and
+            host_version(app) == "8.0.0.26")
+
+
 def probe_capabilities(app):
     """Read native API availability; never send input or call a wait function."""
     def available(path):
@@ -69,44 +119,45 @@ def probe_capabilities(app):
             return callable(value) if path.split('.')[-1] in methods else value is not None
         except Exception:
             return False
-    return {'xsh.' + name: available(name) for name in
+    capabilities = {'xsh.' + name: available(name) for name in
             ('Version', 'Session.Connected', 'Session.SelectTabName', 'Session.SessionName',
              'Session.TabText', 'Session.Path', 'Session.RemoteAddress', 'Session.RemotePort',
              'Session.UserName', 'Session.Sleep', 'Screen.Get', 'Screen.CurrentRow',
              'Screen.CurrentColumn', 'Screen.Rows', 'Screen.Columns', 'Screen.Synchronous',
              'Screen.Send', 'Screen.WaitForStrings')}
+    capabilities['xsh.binding_reference_safe'] = not unsafe_embedded_binding(app)
+    return capabilities
 
 
 def yield_to_xshell(app, milliseconds, logger=None):
-    """Yield through Xshell's message pump and tolerate Script > Cancel."""
-    session_sleep = getattr(getattr(app, "Session", None), "Sleep", None)
-    if callable(session_sleep):
-        try:
-            # A one-millisecond host wait is intentional. It is the smallest
-            # stable wait on Xshell 8 and keeps cancellation outside a long COM
-            # call. Xshell may raise ``TypeError: NoneType is not callable``
-            # when the operator cancels the script; that is a normal stop.
-            session_sleep(HOST_WAIT_MS)
-            return True
-        except (KeyboardInterrupt, SystemExit):
-            if logger:
-                logger("host_wait_cancelled", method="Session.Sleep")
-            return False
-        except Exception as exc:
-            if logger:
-                logger("host_wait_failed", method="Session.Sleep", error=str(exc)[:256])
-            return False
-
-    # Older/non-Xshell hosts may not expose Session.Sleep. Keep a bounded
-    # fallback for diagnostics; the Xshell production path above is the only
-    # path that can service the host message pump and support safe cancellation.
+    """Pump host events with an integer-returning, bounded native wait."""
     try:
-        time.sleep(max(0, milliseconds) / 1000.0)
+        # A Python sleep blocks Xshell's terminal/message processing. Session.Sleep
+        # instead returns borrowed None on the observed Python 3.8 binding and
+        # eventually crashes the host. WaitForStrings returns a Python integer.
+        try:
+            app.Screen.WaitForStrings(["__MCP_HOST_YIELD_" + str(os.getpid()) + "__"],
+                                      max(1, min(HOST_POLL_MS, milliseconds)))
+        except SystemError as exc:
+            # Xshell 8's iterable wrapper calls PyObject_Size(NULL) at exhaustion,
+            # then performs the native wait and returns an integer with that error
+            # still set. Accept only this observed error chain; other SDK errors
+            # and Script > Cancel stop the bridge normally.
+            cause = exc.__cause__
+            if not (isinstance(cause, SystemError) and
+                    str(cause) == "null argument to internal routine" and
+                    "WaitForStrings" in str(exc) and "error set" in str(exc)):
+                raise
         return True
     except (KeyboardInterrupt, SystemExit):
         if logger:
-            logger("fallback_wait_cancelled", method="time.sleep")
+            logger("host_wait_cancelled", method="Screen.WaitForStrings")
         return False
+    except Exception as exc:
+        if logger:
+            logger("host_wait_failed", method="Screen.WaitForStrings", error=str(exc)[:256])
+        return False
+
 
 def make_logger(ipc_root, instance):
     """Create a bounded JSONL lifecycle log for one Xshell script instance."""
@@ -336,6 +387,7 @@ class NativeAdapter:
         self.attachments = {}
         self.unresolved = {}
         self.owner = "legacy"
+        self.product_version = host_version(app)
         self.send_attempted = False
         self.request_deadline = None
         self.logger = None
@@ -446,22 +498,26 @@ class NativeAdapter:
                 errors.append(dict(name=original, error="restore_failed"))
         return sessions, errors, len(names)
 
+    def _input(self):
+        screen = self.app.Screen
+        row, column, columns = int(screen.CurrentRow), int(screen.CurrentColumn), int(screen.Columns)
+        return dict(current_line=str(screen.Get(row, 1, row, columns)).rstrip(),
+                    cursor_row=row, cursor_column=column, columns=columns)
+
     def _screen(self):
         screen = self.app.Screen
-        rows, columns = int(screen.Rows), int(screen.Columns)
-        text = str(screen.Get(1, 1, rows, columns))
+        value = self._input()
+        row, columns = value["cursor_row"], value["columns"]
+        # Xshell Rows includes scrollback, not just the visible terminal.
+        visible = min(50, int(getattr(screen, "CurrentRowInScreen", 50)))
+        start = max(0, row - max(1, visible) + 1)
+        end = min(int(screen.Rows), row + 1)
+        text = str(screen.Get(start, 1, end, columns))
         if len(text.encode("utf-8")) > MAX_CHUNK:
             fail("screen_too_large: resize the terminal")
-        row, column = int(screen.CurrentRow), int(screen.CurrentColumn)
-        line = str(screen.Get(row, 1, row, columns)).rstrip()
-        digest = hashlib.sha256((text + "\0" + str(row) + ":" + str(column)).encode("utf-8")).hexdigest()
-        return dict(text=text, current_line=line, cursor_row=row, cursor_column=column,
-                    rows=rows, columns=columns, digest=digest)
-
-    def _input(self):
-        value = self._screen()
-        return {key: value[key] for key in
-                ("current_line", "cursor_row", "cursor_column", "columns")}
+        digest = hashlib.sha256((text + "\0" + str(row) + ":" + str(value["cursor_column"])).encode("utf-8")).hexdigest()
+        value.update(text=text, rows=end-start+1, digest=digest)
+        return value
 
     def _before_send(self):
         if self.request_deadline is not None and now_ms() >= self.request_deadline:
@@ -624,16 +680,24 @@ class NativeAdapter:
             fail("capture_id conflict")
         if type(runtime_ms) is not int or not 1000 <= runtime_ms <= 3600000:
             fail("invalid runtime_ms")
+        if unsafe_embedded_binding(self.app):
+            fail("unsafe_native_python_binding: use Xshell external 32-bit Python/pywin32; nothing sent")
+        wire_text = native_command_text(text, completion_marker)
         self._select(sid)
         self.captures[capture_id] = dict(session=sid, entry=entry, until=now_ms() + runtime_ms,
-                                        marker=completion_marker, last=self._screen()["text"],
+                                        marker=completion_marker, read_row=int(self.app.Screen.CurrentRow),
+                                        read_column=int(self.app.Screen.CurrentColumn),
+                                        anchor_row=int(self.app.Screen.CurrentRow),
+                                        anchor_column=int(self.app.Screen.CurrentColumn),
+                                        anchor=str(self.app.Screen.Get(int(self.app.Screen.CurrentRow), 1,
+                                                   int(self.app.Screen.CurrentRow), max(1, int(self.app.Screen.CurrentColumn)-1))),
                                         owner=self.owner, attachment_id=aid,
                                         old_sync=self.app.Screen.Synchronous)
         try:
             self.app.Screen.Synchronous = True
             self._before_send()
             self.send_attempted = True
-            self.app.Screen.Send(text + "\r")
+            self.app.Screen.Send(wire_text + "\r")
         except Exception:
             self.end(capture_id, False)
             raise
@@ -652,34 +716,42 @@ class NativeAdapter:
         if capture["owner"] != self.owner:
             fail("ownership_conflict")
         self._select(capture["session"])
+        screen = self.app.Screen
         started = time.monotonic()
         chunk = ""
+        overflow = False
         for _ in range(max(1, min(int(max_reads), 128))):
-            value = self._screen()
-            current = value["text"]
-            old = capture["last"]
-            if current.startswith(old):
-                delta = current[len(old):]
-            elif old and old in current:
-                delta = current.split(old, 1)[1]
-            else:
-                delta = current
-            capture["last"] = current
-            chunk += delta
+            current_row = int(screen.CurrentRow)
+            anchor = str(screen.Get(capture["anchor_row"], 1, capture["anchor_row"],
+                                    max(1, capture["anchor_column"] - 1)))
             self.metrics["native_reads"] += 1
-            if capture["marker"] and capture["marker"] in chunk:
+            if anchor != capture["anchor"] or current_row < capture["read_row"]:
+                overflow = True  # Buffer eviction/redraw must not masquerade as complete output.
                 break
-            if delta:
+            first = capture["read_row"]
+            # Read completed physical rows only. Cursor and text redraw independently;
+            # consuming a still-rendering current row would lose its late characters.
+            budget = max(1, min(128, MAX_CHUNK // (max(1, int(screen.Columns))*4 + 2)))
+            last = min(current_row - 1, first + budget - 1)
+            if last >= first:
+                chunk = str(screen.Get(first, capture["read_column"], first, int(screen.Columns))) + "\n"
+                self.metrics["native_reads"] += 1
+                if last > first:
+                    chunk += str(screen.Get(first + 1, 1, last, int(screen.Columns))) + "\n"
+                    self.metrics["native_reads"] += 1
+                if len(chunk.encode("utf-8")) > MAX_CHUNK:
+                    overflow = True
+                    chunk = ""
+                    break
+                capture["read_row"], capture["read_column"] = last + 1, 1
                 break
-            if now_ms() >= capture["until"]:
+            if now_ms() >= capture["until"] or not yield_to_xshell(self.app, 20, self.logger):
                 break
-            if not yield_to_xshell(self.app, 20, self.logger):
-                break
-            if (time.monotonic() - started) >= 1.0:
+            if time.monotonic() - started >= 0.15:
                 break
         expired = now_ms() >= capture["until"]
-        return dict(text=chunk, current_line=self._screen()["current_line"], overflow=False, expired=expired,
-                    capture_may_be_incomplete=expired and not (capture["marker"] and capture["marker"] in chunk))
+        return dict(text=chunk, current_line=self._input()["current_line"], overflow=overflow,
+                    expired=expired, capture_may_be_incomplete=overflow or expired)
 
     def end(self, capture_id, confirmed_complete=False):
         if type(confirmed_complete) is not bool:
@@ -713,6 +785,8 @@ class NativeAdapter:
         if capture["owner"] != self.owner:
             fail("ownership_conflict")
         self._select(session)
+        if unsafe_embedded_binding(self.app):
+            fail("unsafe_native_python_binding: use Xshell external 32-bit Python/pywin32; nothing sent")
         self._before_send()
         self.send_attempted = True
         self.app.Screen.Send(chr(3))
@@ -736,7 +810,7 @@ class NativeAdapter:
                     os_version=platform.version(), api_capabilities=probe_capabilities(self.app),
                     api_probe='attribute_presence_only',
                     adapter_sha256=SCRIPT_SHA256,
-                    xshell_version=str(getattr(self.app, "Version", "unknown")),
+                    xshell_version=self.product_version,
                     capabilities=self._capabilities(), enumeration="named_files",
                     metrics=self.metrics, native_keyboard_lock=False)
 
@@ -796,7 +870,7 @@ def serve(app, config, stop_event=None):
     logger, log_path = make_logger(ipc_root, adapter.instance)
     adapter.logger = logger
     logger("serve_start", log_path=str(log_path), has_stop_event=bool(stop_event))
-    logger("xshell_runtime", version=str(getattr(app, "Version", "unknown")),
+    logger("xshell_runtime", version=adapter.product_version,
            python=sys.version.split()[0], host_pid=os.getpid())
     logger("host_wait_capability",
            screen_wait_for_strings=callable(getattr(getattr(app, "Screen", None), "WaitForStrings", None)),
@@ -878,6 +952,11 @@ def serve(app, config, stop_event=None):
         raise
     finally:
         logger("serve_finally", requests=adapter.metrics["requests"])
+        for capture_id in list(adapter.captures):
+            try:
+                adapter.end(capture_id, False)
+            except Exception as exc:
+                logger("capture_cleanup_failed", error=type(exc).__name__)
         dismiss_startup_notice(notice, logger)
         try:
             ready.unlink()
@@ -922,5 +1001,6 @@ def main():
         return
 
 
-if "xsh" in globals():
+def Main():
+    """Entry point invoked by Xshell after evaluating the script."""
     main()

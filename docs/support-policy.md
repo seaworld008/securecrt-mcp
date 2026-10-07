@@ -25,6 +25,21 @@ Windows 10/11 多版本实测于 2026-10-07 按操作者最新要求暂缓；当
 - 认证超过 **90 天**或脚本摘要改变，自动失去 Tier 1 的依据，回到 Tier 2；证书过期不是“功能已失败”。产品/OS/Python 版本、厂商生命周期和未修复原生缺陷在每次月度复审中检查。
 - 下一次复审决定是否继续保留旧的 9.0/9.1 与 Xshell 7 兼容分支；本轮没有未经实测就宣告其完整认证或直接删除它们。
 
+## Xshell 内置 Python 例外
+
+Xshell 8 Build 0110（运行程序产品版本 8.0.0.26）内置 Python 3.8.6
+实测 `Session.Sleep` 和 `Screen.Send` 返回引用存在缺陷：100 次调用会令
+`None` 引用计数持续下降，长时间运行可触发宿主 SIGABRT。此精确组合禁止
+命令发送和中断；读取会话、诊断与升级指引仍可用，不能列为通过认证。
+
+可使用厂商支持的外部 **32 位 Python + pywin32** 配置，保留 Python 桥接器。
+先安装与 Xshell 架构匹配的 Python、安装并注册 pywin32 的 Active Scripting
+引擎，按厂商说明配置其 DLL；然后在 Xshell 工具 → 选项 → 高级启用
+“不要使用 Xshell 的嵌入式 Python”。实际加载版本应由 Bridge 的 `python`
+字段确认，外部命令行版本不能替代这一检查。
+配置步骤参见[厂商 Python 3.14 说明](https://netsarang.atlassian.net/wiki/spaces/ENSUP/pages/1816723519/Using%2BPython%2Bscripts%2Bwith%2Ban%2Binstalled%2BPython%2Bprogram%2BPython%2Bv3.14)。
+外部引擎仍须完成真机验收，安装成功不等于兼容性通过。
+
 ## 运行方式
 
 ```text

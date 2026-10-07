@@ -41,7 +41,7 @@
 | `Session.SessionName` | 必要绑定 | 7 / unknown |
 | `Session.TabText` | 必要辅助绑定 | 7 / unknown |
 | `Session.Path` | 只枚举 .xsh 名称；缺失时发现降级 | 7 / unknown |
-| `Session.Sleep(ms)` | 必要原生消息泵 | 7 / unknown |
+| `Session.Sleep(ms)` | 不使用；实测 Python 3.8 绑定返回引用有缺陷 | 7 / unknown |
 | `Session.RemoteAddress` | 可选 getattr 元数据 | unknown，不冒充手册保证 |
 | `Session.RemotePort` | 可选元数据 | unknown |
 | `Session.UserName` | 可选元数据 | unknown |
@@ -52,11 +52,11 @@
 | `Screen.Columns` | 必要范围 | 7 / unknown |
 | `Screen.Synchronous` | 必要发送附近同步 | 7 / unknown |
 | `Screen.Send()` | 必要显式发送/中断 | 7 / unknown |
-| `Screen.WaitForStrings()` | 仅探测/日志；当前捕获不调用 | 7 / unknown；手册 timeout 为毫秒 |
+| `Screen.WaitForStrings(strings, ms)` | 必要有界原生消息泵 | 7 / unknown；手册 timeout 为毫秒 |
 | `xsh.Version` | 可选诊断 | unknown |
 
 8 build 0067 修复了 SelectTabName 改变标签名及 Windows 11 24H2 的 JScript WaitForStrings；不是所有 Python/OS 的认证。[官方更新历史](https://www.netsarang.com/en/xshell-update-history/)
-Bridge 不调用 xsh.Dialog；通知由独立 Windows 消息进程实现。缺少 Session.Sleep 的 time.sleep 路径只用于诊断降级，不证明原生消息泵可用。
+Bridge 不调用 xsh.Dialog；通知由独立 Windows 消息进程实现。实测 Xshell 8 Build 0110 / Python 3.8.6 的 Session.Sleep 会持续减少 None 引用计数，不能用于循环。WaitForStrings 的列表遍历结束留下特定 SystemError；桥接仅处理已观察到的明确异常链，其余异常停止服务。普通 time.sleep 无法处理终端事件，不能作为生产降级。非 ASCII POSIX 命令使用 ASCII 八进制 printf + eval 传输原始 UTF-8 字节；非 ASCII prompt 输入在发送前拒绝。
 
 ## Python
 
