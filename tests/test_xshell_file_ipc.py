@@ -190,3 +190,64 @@ def test_compiled_mcp_aggregates_and_routes_multiple_xshell_instances():
             stop.set()
             for thread in workers:
                 thread.join(1)
+
+
+def test_compiled_mcp_uses_real_xshell_adapter_for_reuse_batch_and_rejection(monkeypatch):
+    """Only native xsh methods are simulated; IPC replies come from production."""
+    from test_xshell_bridge import MODULE, FakeXshell, FakeScreen
+    binary = Path(__file__).parents[1] / 'target' / 'debug' / ('securecrt-mcp.exe' if os.name == 'nt' else 'securecrt-mcp')
+    class NativeScreen(FakeScreen):
+        def __init__(self, session):
+            super().__init__(session)
+            self.sent = []
+        def Send(self, value):
+            self.sent.append(value)
+            if value == chr(3):
+                self.pending = self._text + '\r\nphp-test# '
+                return
+            begin = re.search(r'MCP_BEGIN_[a-f0-9]+', value).group()
+            end = re.search(r'MCP_END_[a-f0-9]+', value).group()
+            self.pending = self._text + '\r\n' + begin + '\r\nfixture\r\n' + end + ' 0\r\nphp-test# '
+    monkeypatch.setattr(MODULE, 'show_startup_notice', lambda logger=None: None)
+    with tempfile.TemporaryDirectory() as directory:
+        home = Path(directory)
+        env = dict(os.environ, SECURECRT_MCP_HOME=str(home))
+        subprocess.check_call([str(binary), 'init'], env=env, stdout=subprocess.DEVNULL)
+        config = json.loads((home / 'xshell_bridge.json').read_text())
+        app = FakeXshell()
+        app.Screen = NativeScreen(app.Session)
+        app.Session.screen = app.Screen
+        stop = threading.Event()
+        thread = threading.Thread(target=MODULE.serve, args=(app, config, stop), daemon=True)
+        thread.start()
+        until = time.monotonic() + 3
+        while not list((Path(config['ipc_dir']) / 'instances').glob('*/ready.json')):
+            assert time.monotonic() < until
+            time.sleep(.01)
+        client = MCP(binary, env)
+        try:
+            target = client.tool('connector_list')['xshell'][0]['session_id']
+            sid = client.tool('connector_open', {'backend':'xshell','target':target,'mode':'exec'})['session_id']
+            params = {'session_id':sid,'command':'printf fixture','mode':'posix','operation_id':'first','timeout_ms':2000,'wait_ms':3000}
+            first = client.tool('connector_exec', params)
+            assert first['state'] == 'completed' and first['exit_code'] == 0
+            assert first['requires_idle_ack'] is False
+            duplicate = client.tool('connector_exec', params)
+            assert duplicate['command_id'] == first['command_id'] and len(app.Screen.sent) == 1
+            second = client.tool('connector_exec', dict(params, operation_id='second'))
+            assert second['state'] == 'completed' and second['requires_idle_ack'] is False
+            batch = client.tool('connector_exec_batch', {'session_id':sid,'commands':['printf a','printf b','printf c'],'timeout_ms':2000})
+            until = time.monotonic() + 5
+            while batch['state'] == 'running':
+                assert time.monotonic() < until, batch
+                time.sleep(.02)
+                batch = client.tool('connector_get_batch_status', {'batch_id':batch['batch_id']})
+            assert batch['state'] == 'completed' and len(batch['results']) == 3
+            denied = client.tool('connector_exec', dict(params,operation_id='denied',expected_prompt='wrong'))
+            assert denied['state'] == 'rejected' and denied['sent'] is False
+            assert len(app.Screen.sent) == 5
+        finally:
+            client.close()
+            stop.set()
+            thread.join(3)
+            assert not thread.is_alive()

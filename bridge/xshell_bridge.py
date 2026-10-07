@@ -336,6 +336,8 @@ class NativeAdapter:
         self.attachments = {}
         self.unresolved = {}
         self.owner = "legacy"
+        self.send_attempted = False
+        self.request_deadline = None
         self.logger = None
         self.metrics = dict(requests=0, native_reads=0, native_read_ms=0,
                             connections=0, context_rejections=0)
@@ -361,8 +363,8 @@ class NativeAdapter:
         if known:
             metadata = known["metadata"]
             target = metadata["session_name"] or metadata["tab_text"]
-        elif target.startswith("xshell/"):
-            target = target.rsplit("/", 1)[-1]
+        elif "/" in target:
+            fail("stale_session: list sessions again; opaque IDs cannot select names")
         current = self._metadata()
         if target not in (current["session_name"], current["tab_text"]):
             try:
@@ -372,7 +374,10 @@ class NativeAdapter:
                 fail("session_select_failed: " + str(exc))
         if not self._connected():
             fail("session_not_connected")
-        return self._metadata()
+        result = self._metadata()
+        if known and self._session_id(result) != self._session_id(metadata):
+            fail("stale_session: target metadata changed; nothing sent")
+        return result
 
     def _session_id(self, metadata):
         name = "\0".join((metadata["session_name"], metadata["remote_address"],
@@ -453,6 +458,62 @@ class NativeAdapter:
         return dict(text=text, current_line=line, cursor_row=row, cursor_column=column,
                     rows=rows, columns=columns, digest=digest)
 
+    def _input(self):
+        value = self._screen()
+        return {key: value[key] for key in
+                ("current_line", "cursor_row", "cursor_column", "columns")}
+
+    def _before_send(self):
+        if self.request_deadline is not None and now_ms() >= self.request_deadline:
+            fail("expired request immediately before native send; nothing sent")
+
+    def _attachment(self, attachment_id, write=False):
+        value = self.attachments.get(self._attachment_key(attachment_id))
+        if not value or now_ms() > value["expires"]:
+            fail("stale_attachment: inspect and attach again")
+        if value["owner"] != self.owner:
+            fail("ownership_conflict")
+        if write and value["mode"] == "observe":
+            fail("observe attachment does not permit writes")
+        self._select(value["session"])
+        value["expires"] = now_ms() + 600000
+        return value
+
+    def _attachment_context(self, attachment):
+        expected = attachment["context"]
+        if not attachment.get("awaiting_prompt"):
+            if self._input() == expected:
+                return
+        else:
+            until = time.monotonic() + 1.5
+            stable = 0
+            for _ in range(1502):
+                self._before_send()
+                current = self._input()
+                if current["columns"] != expected["columns"]:
+                    break
+                if (current["current_line"] == expected["current_line"] and
+                        current["cursor_column"] == expected["cursor_column"]):
+                    stable += 1
+                    if stable == 2:
+                        attachment["context"] = current
+                        attachment["awaiting_prompt"] = False
+                        return
+                else:
+                    stable = 0
+                    line = current["current_line"]
+                    marker = attachment.get("completion_marker") or ""
+                    suffix = line[len(marker) + 1:] if marker and line.startswith(marker + " ") else ""
+                    owned = suffix.isascii() and suffix.isdigit() and 1 <= len(suffix) <= 3 and int(suffix) <= 255
+                    pending_cursor = (line == expected["current_line"] and
+                                      1 <= current["cursor_column"] < expected["cursor_column"])
+                    if line and not owned and not pending_cursor:
+                        break
+                if time.monotonic() >= until or not yield_to_xshell(self.app, 10, self.logger):
+                    break
+        self.metrics["context_rejections"] += 1
+        fail("context_changed: original input boundary changed or not ready; nothing sent")
+
     def _entry(self, session):
         metadata = self._select(session)
         sid = self._session_id(metadata)
@@ -498,7 +559,7 @@ class NativeAdapter:
     def _guard(self, session, screen_token, expected_prompt, attachment_id=None):
         sid, entry = self._entry(session)
         if attachment_id:
-            attachment = self.attachments.get(attachment_id)
+            attachment = self._attachment(attachment_id, write=True)
             if not attachment or attachment["session"] != sid:
                 fail("attachment_mismatch")
             if expected_prompt:
@@ -506,6 +567,7 @@ class NativeAdapter:
                 if current != str(expected_prompt).rstrip():
                     self.metrics["context_rejections"] += 1
                     fail("prompt_mismatch")
+            self._attachment_context(attachment)
             return sid, entry
         expected_prompt = string(expected_prompt, "expected_prompt", 512).rstrip()
         token = self.tokens.pop(screen_token, None)
@@ -525,16 +587,20 @@ class NativeAdapter:
             current = self._screen()["current_line"]
             if current != str(expected_prompt).rstrip():
                 fail("prompt_mismatch: target is not at the expected input context")
+        context = self._input()
+        if mode != "observe" and expected_prompt is None:
+            line = context["current_line"]
+            if not line.endswith(("$", "#", "%")) or any(
+                    word in line.lower() for word in ("password", "passphrase", "--more--", "密码")):
+                fail("input_context_required: inspect an idle shell before attaching")
         aid = str(uuid.uuid4())
-        self.attachments[aid] = dict(session=sid, mode=mode, entry=entry, expires=now_ms() + 600000)
+        self.attachments[aid] = dict(session=sid, mode=mode, entry=entry,
+                                     context=context, owner=self.owner, expires=now_ms() + 600000)
         return dict(attachment_id=aid, session=sid, mode=mode, configured_endpoint=entry["metadata"],
                     current_line=self._screen()["current_line"], capabilities=self._capabilities())
 
     def heartbeat(self, attachment_id):
-        attachment = self.attachments.get(self._attachment_key(attachment_id))
-        if not attachment:
-            fail("stale_attachment")
-        self._select(attachment["entry"]["metadata"]["session_name"])
+        attachment = self._attachment(attachment_id)
         attachment["expires"] = now_ms() + 600000
         return dict(attachment_id=attachment_id, session=attachment["session"],
                     unresolved=self.unresolved.get(attachment["session"]))
@@ -546,20 +612,31 @@ class NativeAdapter:
     def prepare_and_begin(self, session, attachment_id, expected_prompt, text, capture_id,
                           runtime_ms, completion_marker=None):
         aid = self._attachment_key(attachment_id)
-        attachment = self.attachments.get(aid)
-        if not attachment:
-            fail("stale_attachment")
+        attachment = self._attachment(aid, write=True)
         sid, entry = self._guard(session, "", expected_prompt, aid)
         if sid in self.unresolved:
             fail("unresolved: inspect and acknowledge idle first")
         string(text, "text")
         string(capture_id, "capture_id", 128)
-        self._select(entry["metadata"]["session_name"])
-        self.app.Screen.Synchronous = True
-        self.app.Screen.Send(text + "\r")
-        self.captures[capture_id] = dict(session=sid, entry=entry, until=now_ms() + int(runtime_ms),
+        if any(c["session"] == sid for c in self.captures.values()):
+            fail("busy: this session has an active capture")
+        if capture_id in self.captures:
+            fail("capture_id conflict")
+        if type(runtime_ms) is not int or not 1000 <= runtime_ms <= 3600000:
+            fail("invalid runtime_ms")
+        self._select(sid)
+        self.captures[capture_id] = dict(session=sid, entry=entry, until=now_ms() + runtime_ms,
                                         marker=completion_marker, last=self._screen()["text"],
-                                        owner=self.owner)
+                                        owner=self.owner, attachment_id=aid,
+                                        old_sync=self.app.Screen.Synchronous)
+        try:
+            self.app.Screen.Synchronous = True
+            self._before_send()
+            self.send_attempted = True
+            self.app.Screen.Send(text + "\r")
+        except Exception:
+            self.end(capture_id, False)
+            raise
         return dict(capture_id=capture_id, sent=True)
 
     def poll(self, capture_id, wait_for=None):
@@ -568,11 +645,13 @@ class NativeAdapter:
     def poll_bulk(self, capture_id, wait_for=None, max_reads=128):
         capture = self.captures.get(string(capture_id, "capture_id"))
         if not capture:
-            old = self.unresolved.get(capture_id)
+            old = next((c for c in self.unresolved.values() if c["capture_id"] == capture_id), None)
             if old:
                 return dict(text="", overflow=False, expired=True, capture_may_be_incomplete=True)
             fail("capture_mismatch")
-        self._select(capture["entry"]["metadata"]["session_name"])
+        if capture["owner"] != self.owner:
+            fail("ownership_conflict")
+        self._select(capture["session"])
         started = time.monotonic()
         chunk = ""
         for _ in range(max(1, min(int(max_reads), 128))):
@@ -603,23 +682,45 @@ class NativeAdapter:
                     capture_may_be_incomplete=expired and not (capture["marker"] and capture["marker"] in chunk))
 
     def end(self, capture_id, confirmed_complete=False):
+        if type(confirmed_complete) is not bool:
+            fail("invalid confirmed_complete")
         capture = self.captures.pop(capture_id, None)
-        if capture:
-            self.app.Screen.Synchronous = False
-            if not confirmed_complete:
-                self.unresolved[capture["session"]] = dict(capture_id=capture_id, deadline_expired=True)
-        return dict(ended=True, unresolved=self.unresolved.get(capture["session"]) if capture else None,
-                    restore_errors=[])
-
-    def interrupt(self, capture_id):
-        capture = self.captures.get(string(capture_id, "capture_id"))
         if not capture:
+            old = next((c for c in self.unresolved.values() if c["capture_id"] == capture_id), None)
+            if old:
+                return dict(released=True, unresolved=True, restore_errors=[])
             fail("capture_mismatch")
-        self._select(capture["entry"]["metadata"]["session_name"])
+        sid = capture["session"]
+        errors = []
+        try:
+            self._select(sid)
+            self.app.Screen.Synchronous = capture["old_sync"]
+        except Exception as exc:
+            errors.append(type(exc).__name__)
+        if not confirmed_complete or errors:
+            self.unresolved[sid] = dict(capture_id=capture_id, session=sid,
+                                        owner=capture["owner"], deadline_expired=True)
+        attachment = self.attachments.get(capture["attachment_id"])
+        if attachment:
+            attachment["awaiting_prompt"] = bool(confirmed_complete and not errors and capture["marker"])
+            attachment["completion_marker"] = capture["marker"]
+        return dict(released=True, unresolved=sid in self.unresolved, restore_errors=errors)
+
+    def interrupt(self, session, capture_id):
+        capture = self.captures.get(string(capture_id, "capture_id")) or self.unresolved.get(session)
+        if not capture or capture["session"] != session or capture.get("capture_id", capture_id) != capture_id:
+            fail("capture_mismatch: refusing to interrupt an unrelated program")
+        if capture["owner"] != self.owner:
+            fail("ownership_conflict")
+        self._select(session)
+        self._before_send()
+        self.send_attempted = True
         self.app.Screen.Send(chr(3))
         return dict(interrupt_sent=True, remote_termination_confirmed=False)
 
     def acknowledge_idle(self, session, screen_token, expected_prompt):
+        if any(c["session"] == session for c in self.captures.values()):
+            fail("busy: cannot acknowledge active capture")
         sid, _ = self._guard(session, screen_token, expected_prompt)
         self.unresolved.pop(sid, None)
         return dict(idle_acknowledged=True, session=sid, remote_termination_confirmed=False)
@@ -646,6 +747,7 @@ METHODS = ("ping", "list_sessions", "read_screen", "focus_session", "prepare_and
 
 
 def handle_request(adapter, request, token):
+    adapter.send_attempted = False
     response = dict(id="", protocol_version=PROTOCOL_VERSION,
                     bridge_instance=adapter.instance, ok=False, result=None, error=None)
     try:
@@ -665,11 +767,19 @@ def handle_request(adapter, request, token):
         params = request.get("params", {})
         adapter.owner = string(request.get("client_id", "legacy"), "client_id", 128)
         adapter.metrics["requests"] += 1
-        response.update(ok=True, result=getattr(adapter, method)(**params))
+        adapter.request_deadline = int(request["deadline_ms"])
+        if method == "end":
+            capture = adapter.captures.get(params.get("capture_id"))
+            if capture and capture["owner"] != adapter.owner:
+                fail("ownership_conflict")
+        try:
+            response.update(ok=True, result=getattr(adapter, method)(**params))
+        finally:
+            adapter.request_deadline = None
     except Exception as exc:
         response["error"] = str(exc)[:1024]
         response["error_code"] = str(exc).split(":", 1)[0][:64]
-    response["sent"] = True if response["ok"] else None
+    response["sent"] = (True if response["ok"] else None) if adapter.send_attempted else False
     return response
 
 
