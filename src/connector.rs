@@ -433,11 +433,13 @@ impl ConnectorManager {
             native_read_count: outcome.native_read_count,
             output_bytes,
         };
+        let mut value = command_value(&command_id, &record);
+        value["output"] = command_page(&command_id, &record, 0, max)?;
         let mut commands = self.commands.lock().await;
         if commands.len() >= MAX_COMMANDS {
             if let Some(oldest) = commands
                 .iter()
-                .min_by_key(|(_, record)| record.created)
+                .min_by_key(|(_, record)| record.finished.unwrap_or(record.created))
                 .map(|(id, _)| id.clone())
             {
                 commands.remove(&oldest);
@@ -445,8 +447,6 @@ impl ConnectorManager {
         }
         commands.insert(command_id.clone(), record);
         drop(commands);
-        let mut value = self.command_status(&command_id).await?;
-        value["output"] = self.read_once(&command_id, 0, max).await?;
         Ok(value)
     }
 
@@ -471,7 +471,7 @@ impl ConnectorManager {
                 .operation_id
                 .as_ref()
                 .map(|base| format!("batch-{}", sha256_hex(format!("{base}:{index}"))));
-            let result = self
+            let result = match self
                 .exec(ConnectorExecParams {
                     session_id: p.session_id.clone(),
                     command,
@@ -483,7 +483,15 @@ impl ConnectorManager {
                     wait_ms: None,
                     max_bytes: Some(1024),
                 })
-                .await?;
+                .await
+            {
+                Ok(result) => result,
+                Err(error) => {
+                    results.push(json!({"index":index,"result":crate::fault::details(&error)}));
+                    state = "stopped";
+                    break;
+                }
+            };
             let unknown_or_failed =
                 result["state"] != "completed" || result["exit_code"].as_i64() != Some(0);
             results.push(json!({"index": index, "result": result}));
@@ -724,22 +732,25 @@ impl ConnectorManager {
     async fn read_once(&self, id: &str, cursor: u64, max: usize) -> Result<Value> {
         let commands = self.commands.lock().await;
         let record = commands.get(id).context("unknown connector command_id")?;
-        let actual = cursor.max(record.output_start);
-        let offset =
-            usize::try_from(actual - record.output_start).context("invalid output cursor")?;
-        ensure!(offset <= record.output.len(), "invalid output cursor");
-        let end = (offset + max).min(record.output.len());
-        let bytes = record.output.get(offset..end).unwrap_or_default().to_vec();
-        let next = if end < record.output.len() {
-            Some(record.output_start + end as u64)
-        } else {
-            None
-        };
-        Ok(payload(
-            bytes,
-            json!({"command_id":id,"cursor":actual,"next_cursor":next,"gap":cursor < record.output_start,"dropped_bytes":record.output_start.saturating_sub(cursor),"retained_bytes":record.output.len(),"state":record.state,"exit_code":record.exit_code,"truncated":record.truncated,"sent":record.sent,"reason":record.reason,"automatic_retry":false}),
-        ))
+        command_page(id, record, cursor, max)
     }
+}
+
+fn command_page(id: &str, record: &CommandRecord, cursor: u64, max: usize) -> Result<Value> {
+    let actual = cursor.max(record.output_start);
+    let offset = usize::try_from(actual - record.output_start).context("invalid output cursor")?;
+    ensure!(offset <= record.output.len(), "invalid output cursor");
+    let end = (offset + max).min(record.output.len());
+    let bytes = record.output.get(offset..end).unwrap_or_default().to_vec();
+    let next = if end < record.output.len() {
+        Some(record.output_start + end as u64)
+    } else {
+        None
+    };
+    Ok(payload(
+        bytes,
+        json!({"command_id":id,"cursor":actual,"next_cursor":next,"gap":cursor < record.output_start,"dropped_bytes":record.output_start.saturating_sub(cursor),"retained_bytes":record.output.len(),"state":record.state,"exit_code":record.exit_code,"truncated":record.truncated,"sent":record.sent,"reason":record.reason,"automatic_retry":false}),
+    ))
 }
 
 fn validate_target(target: &str) -> Result<()> {

@@ -1,6 +1,49 @@
 use super::*;
 
 #[cfg(unix)]
+#[tokio::test]
+async fn batch_ledger_exhaustion_returns_prior_command_receipts() {
+    let manager = ConnectorManager::new();
+    manager.sessions.lock().await.insert(
+        "openssh/batch-fixture".into(),
+        Arc::new(Session {
+            id: "openssh/batch-fixture".into(),
+            target: "local fixture".into(),
+            mode: ConnectorMode::Exec,
+            created: Instant::now(),
+            transport: SessionTransport::Exec(local_transport()),
+        }),
+    );
+    for index in 0..MAX_OPERATIONS - 1 {
+        manager.operations.lock().await.insert(
+            format!("reserved-{index}"),
+            ("old-receipt".into(), "old-fingerprint".into()),
+        );
+    }
+    let value = manager
+        .batch(ConnectorBatchParams {
+            session_id: "openssh/batch-fixture".into(),
+            commands: vec!["printf first".into(), "printf second".into()],
+            operation_id: Some("capacity-batch".into()),
+            on_error: None,
+            timeout_ms: Some(1000),
+        })
+        .await
+        .unwrap();
+    assert_eq!(value["state"], json!("stopped"));
+    assert_eq!(value["results"].as_array().unwrap().len(), 2);
+    assert_eq!(value["results"][0]["result"]["state"], json!("completed"));
+    let id = value["results"][0]["result"]["command_id"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        manager.command_status(id).await.unwrap()["exit_code"],
+        json!(0)
+    );
+    assert_eq!(value["results"][1]["result"]["sent"], json!(false));
+}
+
+#[cfg(unix)]
 fn local_transport() -> Arc<ExecTransport> {
     let mut child = Command::new("sh")
         .stdin(Stdio::piped())
