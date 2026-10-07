@@ -41,6 +41,12 @@ async fn timeout_keeps_partial_unterminated_output_and_interlocks_the_session() 
     let result = run_exec(&transport, "printf partial; sleep 1", 100).await;
     assert_eq!(result.state, "unknown");
     assert_eq!(result.output, b"partial");
+    assert!(
+        result
+            .first_byte_us
+            .is_some_and(|arrival| arrival < 100_000)
+    );
+    assert!(result.native_read_count >= 2);
     assert!(transport.unresolved.load(Ordering::SeqCst));
     assert_eq!(
         run_exec(&transport, "printf should-not-send", 1000)

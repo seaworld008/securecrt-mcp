@@ -71,19 +71,19 @@ pub(super) async fn run_exec(
     let deadline = timeout(Duration::from_millis(timeout_ms), async {
         loop {
             line.clear();
+            native_read_count += 1;
+            if !stdout.fill_buf().await?.is_empty() && first_byte_us.is_none() {
+                first_byte_us = Some(started_at.elapsed().as_micros() as u64);
+            }
             // Bound even a peer's unterminated line before it reaches the cache.
             let size = (&mut *stdout)
                 .take(MAX_PAGE as u64)
                 .read_until(b'\n', &mut line)
                 .await?;
-            native_read_count += 1;
             if size == 0 {
                 return Err::<(Vec<u8>, i32, bool), anyhow::Error>(anyhow!(
                     "OpenSSH process exited before marker"
                 ));
-            }
-            if first_byte_us.is_none() {
-                first_byte_us = Some(started_at.elapsed().as_micros() as u64);
             }
             let text = String::from_utf8_lossy(&line);
             let trimmed = text.trim_end_matches(['\r', '\n']);
