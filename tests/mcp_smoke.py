@@ -117,7 +117,7 @@ class Handler(socketserver.StreamRequestHandler):
 
 
 class MCP:
-    def __init__(self, binary, env):
+    def __init__(self, binary, env, initialize=True):
         self.process = subprocess.Popen([str(binary), 'serve'], stdin=subprocess.PIPE,
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                         text=True, encoding='utf-8', env=env)
@@ -132,9 +132,10 @@ class MCP:
             for line in self.process.stdout:
                 self.lines.put(line)
         threading.Thread(target=read, daemon=True).start()
-        self.request('initialize', {'protocolVersion': '2025-11-25', 'capabilities': {},
-                                   'clientInfo': {'name': 'securecrt-ci-smoke', 'version': '1.0'}})
-        self.send({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
+        if initialize:
+            self.request('initialize', {'protocolVersion': '2025-11-25', 'capabilities': {},
+                                       'clientInfo': {'name': 'securecrt-ci-smoke', 'version': '1.0'}})
+            self.send({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
 
     def send(self, value):
         self.process.stdin.write(json.dumps(value) + '\n'); self.process.stdin.flush()

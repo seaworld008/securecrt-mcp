@@ -3,6 +3,8 @@ use rmcp::{ErrorData as McpError, handler::server::wrapper::Parameters, tool, to
 use serde_json::{Value, json};
 use tokio::time::{Duration, timeout};
 
+mod protocol;
+
 #[derive(Clone)]
 pub struct SecureCrtServer {
     engine: Engine,
@@ -47,7 +49,7 @@ fn namespace_batch(mut value: Value, backend: &str) -> anyhow::Result<Value> {
     Ok(value)
 }
 
-#[tool_router(server_handler)]
+#[tool_router]
 impl SecureCrtServer {
     #[tool(
         description = "List currently available sessions from every configured connector backend. IDs are opaque and backend-bound; capabilities describe which operations are valid for each session.",
