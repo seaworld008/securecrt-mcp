@@ -171,7 +171,12 @@ async fn main() -> Result<()> {
                 );
                 local_cli::emit(&local_cli::engine()?.latency(20).await?)?;
             } else if backend == "openssh" {
-                local_cli::emit(&support::openssh_report().await?)?;
+                let report = support::openssh_report().await?;
+                local_cli::emit(&report)?;
+                ensure!(
+                    report["tier"] != "unsupported",
+                    "OpenSSH unavailable; see support report"
+                );
             } else if backend == "xshell" {
                 doctor_xshell(offline).await?;
             } else {
@@ -415,6 +420,7 @@ async fn doctor(offline: bool) -> Result<()> {
         "support={}",
         serde_json::to_string(&support::report("securecrt", Some(&info)))?
     );
+    support::validate_runtime("securecrt", &info)?;
     ensure!(
         support::report("securecrt", Some(&info))["tier"] != "unsupported",
         "unsupported runtime: repair the missing native API or restart the upgraded bridge; see support report"
@@ -455,6 +461,7 @@ async fn doctor_xshell(offline: bool) -> Result<()> {
     local_cli::emit(
         &serde_json::json!({"support":support::report("xshell",Some(&info)),"runtime":info}),
     )?;
+    support::validate_runtime("xshell", &info)?;
     ensure!(
         support::report("xshell", Some(&info))["tier"] != "unsupported",
         "unsupported Xshell runtime; see support report and repair guidance"

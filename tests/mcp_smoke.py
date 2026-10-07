@@ -5,6 +5,7 @@ Native crt behavior is covered separately with test_bridge.py and still needs re
 SecureCRT desktop validation. No model credentials are needed.
 """
 import json
+import hashlib
 import os
 from pathlib import Path
 import queue
@@ -38,6 +39,7 @@ class FakeBridge(socketserver.ThreadingTCPServer):
         with self.lock:
             if name == 'ping':
                 return {'bridge_version': '0.5.0', 'protocol_version': 2,
+                        'adapter_sha256': hashlib.sha256((Path(__file__).parents[1] / 'bridge' / 'securecrt_bridge.py').read_bytes()).hexdigest(),
                         'capabilities': ['persistent_ndjson', 'attachments', 'prepare_and_begin', 'poll_bulk']}
             if name == 'list_sessions':
                 return {'sessions': [{'id': 'fake-instance/fake-session', 'caption': 'test', 'connected': True}]}

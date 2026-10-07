@@ -1,5 +1,5 @@
 //! Support diagnostics share the versioned policy used by the matrix documents.
-use anyhow::{Context, Result};
+use anyhow::{Result, ensure};
 use chrono::{NaiveDate, Utc};
 use serde_json::{Value, json};
 use tokio::{
@@ -42,6 +42,7 @@ pub fn report(backend: &str, runtime: Option<&Value>) -> Value {
         }
     }
     let mut reasons = Vec::new();
+    let mut version_unknown = false;
     let mut unsupported = !missing.is_empty();
     if unsupported {
         reasons.push("required_native_api_missing");
@@ -74,6 +75,9 @@ pub fn report(backend: &str, runtime: Option<&Value>) -> Value {
                 unsupported = true;
                 reasons.push("securecrt_9_6_removed_python_3_8");
             }
+        } else {
+            version_unknown = true;
+            reasons.push("python_version_unavailable");
         }
         let product = if backend == "securecrt" {
             "securecrt_version"
@@ -88,6 +92,10 @@ pub fn report(backend: &str, runtime: Option<&Value>) -> Value {
                 "xshell_floor"
             },
         );
+        if runtime[product].as_str().and_then(version).is_none() {
+            version_unknown = true;
+            reasons.push("terminal_version_unavailable");
+        }
         if runtime[product]
             .as_str()
             .and_then(version)
@@ -133,7 +141,7 @@ pub fn report(backend: &str, runtime: Option<&Value>) -> Value {
     });
     let tier = if unsupported {
         "unsupported"
-    } else if runtime.is_none() || !unknown.is_empty() {
+    } else if runtime.is_none() || !unknown.is_empty() || version_unknown {
         "unknown"
     } else if certified {
         "tier_1"
@@ -157,24 +165,36 @@ pub fn report(backend: &str, runtime: Option<&Value>) -> Value {
 }
 
 pub async fn openssh_report() -> Result<Value> {
-    let output = timeout(
+    openssh_report_using("ssh").await
+}
+
+async fn openssh_report_using(program: &str) -> Result<Value> {
+    let output = match timeout(
         Duration::from_secs(5),
-        Command::new("ssh").arg("-V").output(),
+        Command::new(program).arg("-V").output(),
     )
     .await
-    .context("ssh version probe timed out")??;
+    {
+        Ok(Ok(output)) => output,
+        failure => {
+            return Ok(json!({"backend":"openssh","tier":"unsupported",
+            "version":null,"detected_capabilities":[],"missing_capabilities":["system_openssh_cli"],
+            "reason":format!("{failure:?}"),"remote_authentication_tested":false,
+            "repair_guidance":["Install/enable the OS OpenSSH client and rerun doctor."]}));
+        }
+    };
     let text = String::from_utf8_lossy(&output.stderr).trim().to_owned();
     let null_config = if cfg!(windows) { "NUL" } else { "/dev/null" };
     // Isolated config avoids evaluating operator Match exec clauses or connecting.
     let config = timeout(
         Duration::from_secs(5),
-        Command::new("ssh")
+        Command::new(program)
             .args(["-G", "-T", "-F", null_config, "--", "support-probe.invalid"])
             .output(),
     )
-    .await
-    .context("ssh configuration probe timed out")??;
-    let supported = output.status.success() && config.status.success();
+    .await;
+    let supported = output.status.success()
+        && config.is_ok_and(|result| result.is_ok_and(|config| config.status.success()));
     Ok(
         json!({"backend":"openssh","tier":if supported {"tier_2"} else {"unsupported"},
         "version":text,"local_cli_probe":supported,"remote_authentication_tested":false,
@@ -183,6 +203,32 @@ pub async fn openssh_report() -> Result<Value> {
         "repair_guidance":["Install/enable the OS OpenSSH client and rerun doctor. Keep known_hosts validation enabled; a local CLI probe does not certify exec or PTY authentication."],
         "policy_version":"2026-10-07","review_date":"2026-11-07"}),
     )
+}
+
+pub fn validate_runtime(backend: &str, runtime: &Value) -> Result<()> {
+    let script = if backend == "securecrt" {
+        crate::BRIDGE_SCRIPT
+    } else {
+        crate::XSHELL_BRIDGE_SCRIPT
+    };
+    let expected_hash = crate::digest::sha256_hex(script);
+    ensure!(
+        runtime["adapter_sha256"].as_str() == Some(expected_hash.as_str()),
+        "running adapter is outdated or lacks source identity; run upgrade then restart the installed script"
+    );
+    let expected_version = script
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("BRIDGE_VERSION = \"")?
+                .split_once('"')
+                .map(|(version, _)| version)
+        })
+        .expect("embedded bridge version");
+    ensure!(
+        runtime["bridge_version"].as_str() == Some(expected_version),
+        "running bridge version differs; upgrade and restart"
+    );
+    Ok(())
 }
 
 #[cfg(test)]
@@ -208,6 +254,12 @@ mod tests {
             json!("unknown")
         );
         assert_eq!(report("securecrt", None)["tier"], json!("unknown"));
+        runtime["api_capabilities"]["tab.Screen.Get2"] = json!(true);
+        runtime["securecrt_version"] = json!("unknown");
+        assert_eq!(
+            report("securecrt", Some(&runtime))["tier"],
+            json!("unknown")
+        );
     }
     #[test]
     fn securecrt_python_3_8_removal_is_platform_independent() {
@@ -215,6 +267,27 @@ mod tests {
         assert_eq!(
             report("securecrt", Some(&runtime))["tier"],
             json!("unsupported")
+        );
+    }
+    #[tokio::test]
+    async fn absent_ssh_returns_a_support_report() {
+        let program = std::env::temp_dir().join(format!("missing-ssh-{}", uuid::Uuid::new_v4()));
+        let value = openssh_report_using(program.to_str().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(value["tier"], json!("unsupported"));
+        assert_eq!(value["missing_capabilities"], json!(["system_openssh_cli"]));
+    }
+    #[test]
+    fn stale_runtime_without_source_identity_is_rejected() {
+        assert!(validate_runtime("xshell", &json!({"bridge_version":"0.5.1"})).is_err());
+        assert!(
+            validate_runtime(
+                "xshell",
+                &json!({"bridge_version":"0.5.1",
+            "adapter_sha256":crate::digest::sha256_hex(crate::XSHELL_BRIDGE_SCRIPT)})
+            )
+            .is_ok()
         );
     }
 }
