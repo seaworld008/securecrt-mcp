@@ -211,7 +211,7 @@ def test_native_posix_wire_is_ascii_and_preserves_unicode_shell_semantics():
     if not shell:
         pytest.skip("POSIX shell execution checked on Linux/macOS")
     result = subprocess.run([shell, "-c", wire + "; printf '%s' \"$MCP_WIRE_TEST\""],
-                            capture_output=True, text=True, check=True)
+                            capture_output=True, text=True, encoding="utf-8", check=True)
     assert result.stdout == "分页_中文_🙂\nEND_TEST 0\n值"
 
 
