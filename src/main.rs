@@ -27,7 +27,7 @@ use config::{
 };
 use execution::Engine;
 use policy::PolicyEngine;
-use rmcp::{ServiceExt, transport::stdio};
+use rmcp::ServiceExt;
 use server::SecureCrtServer;
 use std::{fs, io::Write, path::Path};
 use uuid::Uuid;
@@ -144,7 +144,8 @@ async fn main() -> Result<()> {
                 Err(_) => None,
             };
             let service = SecureCrtServer::new(engine.clone(), xshell.clone())
-                .serve(stdio())
+                .into_protocol_service()
+                .serve(SecureCrtServer::protocol_stdio())
                 .await?;
             let ended = service.waiting().await;
             engine.drain_on_disconnect().await;
