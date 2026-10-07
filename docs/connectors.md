@@ -95,3 +95,11 @@ Each completed or unknown command also exposes `timing.queue_wait_us`,
 OpenSSH connector latency and throughput with a direct `ssh` command on the
 same host; SecureCRT screen reads and OpenSSH PTY reads are reported as
 separate backends.
+
+OpenSSH retains at most 32 finished command results of 1MiB each, 128 sessions,
+and 4096 operation fingerprints per process. Old output can expire without
+removing its operation receipt: resubmitting that operation refuses replay.
+At the operation limit, inspect and finish existing work before restarting the
+process. An unterminated native output line is read in bounded chunks; timeout
+keeps the received partial output. A queued command rechecks the unresolved
+interlock while holding the session lock, before any write.

@@ -30,8 +30,14 @@ use tokio::{
 };
 use uuid::Uuid;
 
+mod exec;
+use exec::run_exec;
+
 const MAX_OUTPUT: usize = 1_048_576;
 const MAX_PAGE: usize = 65_536;
+const MAX_SESSIONS: usize = 128;
+const MAX_COMMANDS: usize = 32;
+const MAX_OPERATIONS: usize = 4096;
 
 #[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -314,6 +320,11 @@ impl ConnectorManager {
                 "invalid config_path"
             );
         }
+        let mut sessions = self.sessions.lock().await;
+        ensure!(
+            sessions.len() < MAX_SESSIONS,
+            "session limit; close unused sessions"
+        );
         let id = format!("openssh/{}", Uuid::new_v4());
         let transport = match p.mode {
             ConnectorMode::Exec => {
@@ -333,10 +344,7 @@ impl ConnectorManager {
             created: Instant::now(),
             transport,
         });
-        self.sessions
-            .lock()
-            .await
-            .insert(id.clone(), session.clone());
+        sessions.insert(id.clone(), session.clone());
         Ok(json!({
             "session_id": id,
             "backend": "openssh",
@@ -371,7 +379,19 @@ impl ConnectorManager {
             "session unresolved; inspect or close and reopen before sending"
         );
         let operation_id = p.operation_id.unwrap_or_else(|| Uuid::new_v4().to_string());
-        let fingerprint = format!("{}:{}:{}", p.session_id, p.command, timeout_ms);
+        ensure!(
+            !operation_id.is_empty()
+                && operation_id.len() <= 128
+                && operation_id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)),
+            "invalid operation_id"
+        );
+        let fingerprint = sha256_hex(serde_json::to_vec(&json!([
+            p.session_id,
+            p.command,
+            timeout_ms
+        ]))?);
         let command_id = Uuid::new_v4().to_string();
         let existing_command = {
             let mut operations = self.operations.lock().await;
@@ -382,6 +402,10 @@ impl ConnectorManager {
                 );
                 Some(old.clone())
             } else {
+                ensure!(
+                    operations.len() < MAX_OPERATIONS,
+                    "operation ledger limit; finish and inspect work before restarting"
+                );
                 operations.insert(operation_id.clone(), (command_id.clone(), fingerprint));
                 None
             }
@@ -391,9 +415,6 @@ impl ConnectorManager {
         }
         let created = Instant::now();
         let outcome = run_exec(transport, &p.command, timeout_ms).await;
-        if outcome.state == "unknown" {
-            transport.unresolved.store(true, Ordering::SeqCst);
-        };
         let output_bytes = outcome.output.len();
         let record = CommandRecord {
             session_id: p.session_id,
@@ -412,10 +433,18 @@ impl ConnectorManager {
             native_read_count: outcome.native_read_count,
             output_bytes,
         };
-        self.commands
-            .lock()
-            .await
-            .insert(command_id.clone(), record);
+        let mut commands = self.commands.lock().await;
+        if commands.len() >= MAX_COMMANDS {
+            if let Some(oldest) = commands
+                .iter()
+                .min_by_key(|(_, record)| record.created)
+                .map(|(id, _)| id.clone())
+            {
+                commands.remove(&oldest);
+            }
+        }
+        commands.insert(command_id.clone(), record);
+        drop(commands);
         let mut value = self.command_status(&command_id).await?;
         value["output"] = self.read_once(&command_id, 0, max).await?;
         Ok(value)
@@ -696,7 +725,9 @@ impl ConnectorManager {
         let commands = self.commands.lock().await;
         let record = commands.get(id).context("unknown connector command_id")?;
         let actual = cursor.max(record.output_start);
-        let offset = (actual - record.output_start) as usize;
+        let offset =
+            usize::try_from(actual - record.output_start).context("invalid output cursor")?;
+        ensure!(offset <= record.output.len(), "invalid output cursor");
         let end = (offset + max).min(record.output.len());
         let bytes = record.output.get(offset..end).unwrap_or_default().to_vec();
         let next = if end < record.output.len() {
@@ -748,6 +779,7 @@ fn spawn_exec(target: &str, config_path: Option<&str>) -> Result<ExecTransport> 
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
+        .kill_on_drop(true)
         .spawn()
         .context("failed to start OpenSSH")?;
     let stdin = child.stdin.take().context("OpenSSH stdin unavailable")?;
@@ -843,126 +875,6 @@ fn pty_reader(
     }
 }
 
-async fn run_exec(transport: &Arc<ExecTransport>, command: &str, timeout_ms: u64) -> ExecOutcome {
-    let requested_at = Instant::now();
-    let _guard = transport.command_lock.lock().await;
-    let started_at = Instant::now();
-    let queue_wait_us = started_at.duration_since(requested_at).as_micros() as u64;
-    let marker = Uuid::new_v4().simple().to_string();
-    let begin = format!("MCP_BEGIN_{marker}");
-    let end = format!("MCP_END_{marker}");
-    let quoted = command.replace('\'', "'\\''");
-    let envelope =
-        format!("printf '\\n%s\\n' '{begin}'; eval '{quoted}'; printf '\\n{end} %s\\n' \"$?\"\n");
-    let mut stdin = transport.stdin.lock().await;
-    if let Err(error) = stdin.write_all(envelope.as_bytes()).await {
-        return ExecOutcome {
-            state: "unknown",
-            sent: None,
-            output: Vec::new(),
-            exit_code: None,
-            truncated: false,
-            reason: format!("OpenSSH write outcome unknown; do not replay: {error}"),
-            queue_wait_us,
-            first_byte_us: None,
-            native_read_count: 0,
-        };
-    }
-    if let Err(error) = stdin.flush().await {
-        return ExecOutcome {
-            state: "unknown",
-            sent: Some(true),
-            output: Vec::new(),
-            exit_code: None,
-            truncated: false,
-            reason: format!("OpenSSH flush outcome unknown; do not replay: {error}"),
-            queue_wait_us,
-            first_byte_us: None,
-            native_read_count: 0,
-        };
-    }
-    drop(stdin);
-    let mut stdout = transport.stdout.lock().await;
-    let mut output = Vec::new();
-    let mut started = false;
-    let mut truncated = false;
-    let mut first_byte_us = None;
-    let mut native_read_count = 0;
-    let deadline = timeout(Duration::from_millis(timeout_ms), async {
-        loop {
-            let mut line = Vec::new();
-            let size = stdout.read_until(b'\n', &mut line).await?;
-            native_read_count += 1;
-            if size == 0 {
-                return Err::<(Vec<u8>, i32, bool), anyhow::Error>(anyhow!(
-                    "OpenSSH process exited before marker"
-                ));
-            }
-            if first_byte_us.is_none() {
-                first_byte_us = Some(started_at.elapsed().as_micros() as u64);
-            }
-            let text = String::from_utf8_lossy(&line);
-            let trimmed = text.trim_end_matches(['\r', '\n']);
-            if trimmed == begin {
-                started = true;
-                continue;
-            }
-            if let Some(code) = trimmed
-                .strip_prefix(&(end.clone() + " "))
-                .and_then(|s| s.parse::<i32>().ok())
-            {
-                return Ok((output.clone(), code, truncated));
-            }
-            if started {
-                if output.len() < MAX_OUTPUT {
-                    let remaining = MAX_OUTPUT - output.len();
-                    let take = remaining.min(line.len());
-                    output.extend_from_slice(&line[..take]);
-                    truncated |= take != line.len();
-                } else {
-                    truncated = true;
-                }
-            }
-        }
-    })
-    .await;
-    match deadline {
-        Ok(Ok((output, exit_code, truncated))) => ExecOutcome {
-            state: "completed",
-            sent: Some(true),
-            output,
-            exit_code: Some(exit_code),
-            truncated,
-            reason: "POSIX marker observed".into(),
-            queue_wait_us,
-            first_byte_us,
-            native_read_count,
-        },
-        Ok(Err(error)) => ExecOutcome {
-            state: "unknown",
-            sent: Some(true),
-            output,
-            exit_code: None,
-            truncated,
-            reason: format!("command outcome unknown; do not replay: {error}"),
-            queue_wait_us,
-            first_byte_us,
-            native_read_count,
-        },
-        Err(_) => ExecOutcome {
-            state: "unknown",
-            sent: Some(true),
-            output,
-            exit_code: None,
-            truncated,
-            reason: format!("command timeout after {timeout_ms}ms; remote work may continue"),
-            queue_wait_us,
-            first_byte_us,
-            native_read_count,
-        },
-    }
-}
-
 fn payload(bytes: Vec<u8>, mut extra: Value) -> Value {
     let text = String::from_utf8(bytes.clone());
     match text {
@@ -1011,36 +923,4 @@ fn command_value(id: &str, record: &CommandRecord) -> Value {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn ring_buffer_reports_absolute_cursor_gaps() {
-        let mut ring = RingBuffer::new();
-        ring.append(&vec![b'x'; MAX_OUTPUT + 4]);
-        let page = ring.page(0, 4);
-        assert_eq!(page["cursor"], json!(4));
-        assert_eq!(page["gap"], json!(true));
-        assert_eq!(page["dropped_bytes"], json!(4));
-        assert_eq!(page["next_cursor"], json!(8));
-    }
-
-    #[test]
-    fn binary_payload_keeps_text_preview_and_base64() {
-        let value = payload(vec![0xff, 0x00, 0x61], json!({}));
-        assert!(value["base64"].as_str().is_some());
-        assert_eq!(value["text"], json!("�\0a"));
-    }
-
-    #[test]
-    fn target_and_command_validation_reject_control_input() {
-        assert!(validate_target("host\nname").is_err());
-        assert!(validate_target("-oProxyCommand=untrusted").is_err());
-        assert!(validate_target(" host").is_err());
-        assert!(validate_target("user@host").is_ok());
-        assert!(validate_target("[::1]").is_ok());
-        assert!(validate_command("printf hi\nrm -rf /").is_err());
-        assert!(validate_text("\u{1b}[31m").is_ok());
-        assert!(validate_text("secret\0").is_err());
-    }
-}
+mod tests;
