@@ -1,0 +1,28 @@
+{
+  "tested_on": "2026-10-08",
+  "overall_status": "PASS_WINDOWS_ACCEPTANCE",
+  "binary_sha256": "9fdb0b64528562d93e5b537332343ecdc276b3b18e8000a1cb95ad937bf7962f",
+  "native_source_sha256": "a62951fe14e50db48f2d6f7614a8a6ab71e5dcba60047c1325f5cb39dbada92a",
+  "code_revision": {
+    "commit": "3c3489ba267008af2e7bdcc09b0f890c56feb71b",
+    "working_tree_modified": true
+  },
+  "matrix": "windows-native-matrix-2026-10-08.json",
+  "ui": "windows-native-ui-2026-10-08.json",
+  "connected_test_tabs": {
+    "securecrt": 2,
+    "xshell": 2
+  },
+  "matrix_wall_seconds": 89.42,
+  "development_validation": {
+    "rust_tests": 29,
+    "python_tests_passed": 140,
+    "python_tests_skipped": 1,
+    "node_native_contract_groups": 29,
+    "windows_wsh_isolation": "PASS",
+    "compiled_mcp_regressions": "PASS"
+  },
+  "macos_securecrt": "PENDING_REAL_DEVICE_ACCEPTANCE",
+  "linux_desktop": "DEFERRED",
+  "delivery_note": "This is a pre-commit acceptance receipt for the identified binary and modified working tree. PR/CI/merge state is maintained by GitHub, not inferred from these local results."
+}

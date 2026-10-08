@@ -3,7 +3,16 @@
 记录日期：2026-10-08。配套 [支持策略](support-policy.md)、[API 清单](api-compatibility.md)、[架构](connector-architecture.md)。
 PASS 仅表示该格子的实际冒烟通过；DEFERRED 表示操作者明确暂缓；PENDING 表示尚未完成实际客户端验收。文档可用版本记录不等于完整实测。
 
-## 当前机器
+## Windows 自包含入口本轮验收
+
+Windows 10.0.26200 x64 上，SecureCRT 9.7.3 x64 build 3916 的两个 Tab 与
+Xshell 8.0.0.26 x86 的两个 Tab 使用同一个 JScript 核心，均通过完整真机矩阵。
+这些入口不依赖 Python。证据见[四 Tab 回执](acceptance/windows-native-matrix-2026-10-08.json)、
+[启动、取消与重连 UI 回执](acceptance/windows-native-ui-2026-10-08.json)及
+[验收规范](desktop-acceptance.md)。这是所列精确安装组合的验证；不等于完整 Tier 1
+版本矩阵，也不替代最新源码的 macOS SecureCRT 真机验收。
+
+## 既有 Python 桥接实测
 
 | OS / 架构 | 终端 | 实际 Python / OpenSSH | 结果 | 范围 |
 |---|---|---|---|---|

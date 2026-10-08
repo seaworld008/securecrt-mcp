@@ -1,0 +1,2 @@
+# Native source identity must not depend on the checkout's core.autocrlf.
+bridge/*.js text eol=lf

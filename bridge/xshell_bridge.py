@@ -1026,7 +1026,11 @@ def runtime_script_path(app, namespace):
     if supplied:
         return Path(supplied).resolve()
     folder = getattr(app.Session, "ScriptFolderPath", None)
-    if folder:
+    # Native Python exposes this value as a zero-argument built-in method;
+    # Active Scripting may expose the documented BSTR property instead.
+    if callable(folder):
+        folder = folder()
+    if isinstance(folder, (str, os.PathLike)) and folder:
         for name in ("securecrt-mcp-xshell.py", "xshell_bridge.py"):
             candidate = Path(folder) / name
             if candidate.is_file():

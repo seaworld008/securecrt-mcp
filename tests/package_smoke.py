@@ -27,9 +27,20 @@ with zipfile.ZipFile(archive) as package:
     expected.update(p.relative_to(root).as_posix() for pattern in ('*.py','*.ps1') for p in (root/'clients').glob(pattern))
     expected.update(p.relative_to(root).as_posix() for p in (root/'support').glob('*.json'))
     expected.update(p.relative_to(root).as_posix() for p in (root/'bridge').glob('*.py'))
-    expected.update('tests/'+name for name in ('connector_acceptance.py','securecrt_desktop_smoke.py','mcp_smoke.py','protocol_harness.py','performance_smoke.py','test_bridge.py'))
+    expected.update(p.relative_to(root).as_posix() for p in (root/'bridge').glob('*.js'))
+    if 'windows' in target.lower():
+        sys.path.insert(0, str(root/'scripts'))
+        from portable_scripts import windows_scripts
+        generated = windows_scripts(root, binary)
+        expected.update(generated)
+        for name, content in generated.items():
+            assert package.read(name) == content
+    expected.update('tests/'+name for name in ('desktop_matrix.py','desktop_lifecycle_probe.py','connector_acceptance.py','securecrt_desktop_smoke.py','mcp_smoke.py','protocol_harness.py','performance_smoke.py','test_bridge.py'))
     assert set(package.namelist()) == expected, sorted(set(package.namelist()) ^ expected)
     assert len(package.namelist()) == len(expected), 'duplicate archive members'
+    for member in expected:
+        if member.endswith('.py'):
+            compile(package.read(member), member, 'exec')
     for member in package.namelist():
         if not member.endswith('.md'):
             continue

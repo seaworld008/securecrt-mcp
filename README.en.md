@@ -1,5 +1,10 @@
 # securecrt-mcp
 
+Self-contained Windows script entries and the separate Windows/Mac desktop gates
+are documented in [Desktop acceptance](docs/desktop-acceptance.md). The Windows
+entries require no Python; macOS retains the native Python bridge and requires
+its own real desktop receipt.
+
 [![CI](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/seaworld008/securecrt-mcp?display_name=tag)](https://github.com/seaworld008/securecrt-mcp/releases)
 [![License](https://img.shields.io/github/license/seaworld008/securecrt-mcp)](LICENSE)
@@ -93,6 +98,8 @@ These results do not claim native SSH equivalence. Validate the actual targets, 
 
 ## Install on Windows
 
+The new self-contained Windows `.js` entries require a source build or CI test bundle containing this change. The existing official `v0.5.2` release uses the older entries; merging main does not overwrite its published assets.
+
 Download the Windows x64 archive and `SHA256SUMS` from the [latest Release](https://github.com/seaworld008/securecrt-mcp/releases/latest):
 
 ```powershell
@@ -107,19 +114,29 @@ Unpack and initialize:
 .\securecrt-mcp.exe paths
 ```
 
-In SecureCRT choose **Script -> Run** and run the Bridge path printed by `paths`. The Bridge starts even when no server is logged in; the session list stays empty until a tab connects and is discovered live. Dismiss the Chinese startup dialog, then verify:
+Alternatively, select a `.js` directly from the extracted Windows package. It initializes the private files on first run:
+
+| Client | Script | Fixed entry updated by `init/upgrade` |
+| --- | --- | --- |
+| SecureCRT | `securecrt-mcp-securecrt.js` | `%USERPROFILE%\.securecrt-mcp\securecrt-mcp-securecrt.js` |
+| Xshell | `securecrt-mcp-xshell.js` | The same filename in Xshell's standard `Scripts` directory |
+
+The Windows entries embed the Rust executable and use system JScript. No Python, pywin32 or Rust installation is required.
+SecureCRT uses **Script -> Run**. Start once per application process to manage all connected tabs in that process;
+a second start reports that it is already running. Use **Script -> Cancel** in the original script tab to stop it.
+Xshell uses **Tools -> Script -> Run**; discovery coverage depends on the native window/session mode, and MCP aggregates active instances.
+
+The startup notice reports the connected session count and closes automatically while the bridge continues running.
+Native diagnostics contain lifecycle events and counters in the private `<backend>-native-ipc/instances/<instance>/diagnostic.json`, without tokens, commands or terminal history.
+COM method property reads may invoke the method, so online checks inspect safe scalar properties only.
+Send/capture methods are reported as verified after successful real calls, and remain unknown before use.
 
 ```powershell
 .\securecrt-mcp.exe doctor
-.\securecrt-mcp.exe doctor --latency
+.\securecrt-mcp.exe doctor --backend xshell
 ```
 
-Xshell uses the script installed by `init` in its standard Scripts directory.
-Its embedded Python communicates with Rust through private file IPC, not Python
-network modules. SecureCRT, Xshell, and OpenSSH may be active at the same time;
-only requests sharing one Xshell Bridge are serialized around native tab focus.
-
-Running the script again is harmless: the active Bridge reports that it is already running. To restart, resolve active or unresolved work first, then stop the script or restart SecureCRT.
+Python entries remain available for existing installations and macOS. See [support policy](docs/support-policy.md) for vendor engine requirements.
 
 ### Upgrade
 
@@ -130,7 +147,7 @@ cargo build --locked --release
 .\target\release\securecrt-mcp.exe doctor --offline
 ```
 
-`upgrade` preserves the existing token, policy, and custom deny rules and backs up the previous Bridge. Restart the installed Bridge after upgrading; replacing the file does not replace a script already loaded in SecureCRT memory. Do not use `init --force` for routine upgrades.
+`upgrade` preserves tokens, policy and custom deny rules, and replaces the fixed Windows `.js` entries. Cancel the old script when idle and select the same file again; replacing a file does not update a script already loaded in memory. Existing Python upgrade behavior is retained; this trial adds no backup management. Do not use `init --force` for routine upgrades.
 
 ## MCP client setup
 
@@ -153,9 +170,9 @@ Start with `prompt` while validating client rejection and zero terminal input, t
 
 1. List sessions and inspect the target screen.
 2. Attach once to the verified tab and retain the `attachment_id`.
-3. Reuse that attachment for `securecrt_exec`, or submit a small explicit `securecrt_exec_batch`.
+3. Reuse that attachment for `connector_exec`, or submit a small explicit `connector_exec_batch`.
 4. Check `state`, `sent`, `exit_code`, `error_code`, cursors, and audit fields on every result.
-5. Use `securecrt_shell_open/read` for long-running output and explicit `securecrt_interrupt` for a foreground process that must be interrupted.
+5. Use `connector_stream_*` for long-running output and explicit `connector_interrupt` for a foreground process that must be interrupted.
 
 ```json
 {

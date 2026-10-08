@@ -27,7 +27,12 @@ fn floor(policy: &Value, name: &str) -> (u64, u64) {
 
 pub fn report(backend: &str, runtime: Option<&Value>) -> Value {
     let policy: Value = serde_json::from_str(POLICY).expect("compiled support policy");
-    let required = policy["required_apis"][backend]
+    let api_policy = if runtime.is_some_and(|r| r["script_engine"] == "JScript") {
+        "native_windows_required_apis"
+    } else {
+        "required_apis"
+    };
+    let required = policy[api_policy][backend]
         .as_array()
         .cloned()
         .unwrap_or_default();
@@ -48,7 +53,9 @@ pub fn report(backend: &str, runtime: Option<&Value>) -> Value {
         reasons.push("required_native_api_missing");
     }
     if let Some(runtime) = runtime {
-        let expected_script = if backend == "securecrt" {
+        let expected_script = if runtime["script_engine"] == "JScript" {
+            crate::WINDOWS_BRIDGE_SCRIPT
+        } else if backend == "securecrt" {
             crate::BRIDGE_SCRIPT
         } else {
             crate::XSHELL_BRIDGE_SCRIPT
@@ -60,7 +67,9 @@ pub fn report(backend: &str, runtime: Option<&Value>) -> Value {
             unsupported = true;
             reasons.push("running_adapter_differs_from_binary");
         }
-        if let Some(python) = runtime["python"].as_str().and_then(version) {
+        if runtime["script_engine"] == "JScript" {
+            // Native COM calls do not use either terminal's Python binding.
+        } else if let Some(python) = runtime["python"].as_str().and_then(version) {
             if python < floor(&policy, "python_floor") {
                 unsupported = true;
                 reasons.push("bridge_python_below_policy_floor");
@@ -154,14 +163,23 @@ pub fn report(backend: &str, runtime: Option<&Value>) -> Value {
     if !unknown.is_empty() {
         reasons.push("native_probe_incomplete_or_no_tab");
     }
+    let guidance = if runtime.is_some_and(|r| r["script_engine"] == "JScript") {
+        vec![
+            "Run the self-contained Windows .js entry inside its terminal; Python is not required.",
+            "Cancel an old script only when idle; restart the MCP client after changing bridge transport.",
+            "Open a verified connected test session and repeat doctor and the native acceptance suite.",
+        ]
+    } else {
+        vec![
+            "Install a Python engine supported by this exact terminal version and architecture; macOS requires restarting the terminal after installation.",
+            "Run upgrade without --force, cancel the old bridge only when idle, and start the installed script inside the terminal.",
+            "For unknown tab APIs, open an explicitly verified test session and repeat doctor; run the opt-in matrix smoke before claiming Tier 1.",
+        ]
+    };
     json!({"policy_version":policy["policy_version"], "review_date":policy["review_date"],
     "backend":backend,"tier":tier,"reasons":reasons,"detected_apis":detected,
     "missing_apis":missing,"unknown_apis":unknown,"probe_is_smoke_certification":false,
-    "repair_guidance":[
-        "Install a Python engine supported by this exact terminal version and architecture; macOS requires restarting the terminal after installation.",
-        "Run upgrade without --force, cancel the old bridge only when idle, and start the installed script inside the terminal.",
-        "For unknown tab APIs, open an explicitly verified test session and repeat doctor; run the opt-in matrix smoke before claiming Tier 1."
-    ]})
+    "repair_guidance":guidance})
 }
 
 pub async fn openssh_report() -> Result<Value> {
@@ -206,7 +224,10 @@ async fn openssh_report_using(program: &str) -> Result<Value> {
 }
 
 pub fn validate_runtime(backend: &str, runtime: &Value) -> Result<()> {
-    let script = if backend == "securecrt" {
+    let native = runtime["script_engine"] == "JScript";
+    let script = if native {
+        crate::WINDOWS_BRIDGE_SCRIPT
+    } else if backend == "securecrt" {
         crate::BRIDGE_SCRIPT
     } else {
         crate::XSHELL_BRIDGE_SCRIPT
@@ -216,14 +237,18 @@ pub fn validate_runtime(backend: &str, runtime: &Value) -> Result<()> {
         runtime["adapter_sha256"].as_str() == Some(expected_hash.as_str()),
         "running adapter is outdated or lacks source identity; run upgrade then restart the installed script"
     );
-    let expected_version = script
-        .lines()
-        .find_map(|line| {
-            line.strip_prefix("BRIDGE_VERSION = \"")?
-                .split_once('"')
-                .map(|(version, _)| version)
-        })
-        .expect("embedded bridge version");
+    let expected_version = if native {
+        env!("CARGO_PKG_VERSION")
+    } else {
+        script
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("BRIDGE_VERSION = \"")?
+                    .split_once('"')
+                    .map(|(version, _)| version)
+            })
+            .expect("embedded bridge version")
+    };
     ensure!(
         runtime["bridge_version"].as_str() == Some(expected_version),
         "running bridge version differs; upgrade and restart"
@@ -295,5 +320,25 @@ mod tests {
             )
             .is_ok()
         );
+    }
+}
+#[test]
+fn native_windows_runtime_needs_no_python_but_requires_matching_source() {
+    for backend in ["securecrt", "xshell"] {
+        let policy: Value = serde_json::from_str(POLICY).unwrap();
+        let apis: serde_json::Map<String, Value> = policy["native_windows_required_apis"][backend]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|key| (key.as_str().unwrap().to_owned(), json!(true)))
+            .collect();
+        let mut runtime = json!({"script_engine":"JScript","python":null,"platform":"Windows",
+                "bridge_version":env!("CARGO_PKG_VERSION"),"securecrt_version":"9.0.0","xshell_version":"8.0.0.26",
+                "api_capabilities":apis,"adapter_sha256":crate::digest::sha256_hex(crate::WINDOWS_BRIDGE_SCRIPT)});
+        assert_eq!(report(backend, Some(&runtime))["tier"], "tier_2");
+        validate_runtime(backend, &runtime).unwrap();
+        runtime["adapter_sha256"] = json!("stale");
+        assert!(validate_runtime(backend, &runtime).is_err());
+        assert_eq!(report(backend, Some(&runtime))["tier"], "unsupported");
     }
 }

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Add self-contained Windows JScript entries for Xshell and SecureCRT, with embedded Rust executable, authenticated file IPC, native source identity and visible startup status; Python and pywin32 are not runtime requirements for these entries.
+- Preserve native Xshell transport on upgrade and refresh fixed native script entries without adding trial backup management.
+- Share desktop acceptance across Xshell and SecureCRT, measure twenty-command reuse and 2,500-line UTF-8 capture, and document separate Mac acceptance requirements.
+- Run an opt-in parallel acceptance matrix across every selected idle Tab, including protocol compatibility, concurrent isolation and explicit recovery, with machine-readable and Markdown receipts.
+- Keep file IPC bound to its original terminal instance across readiness publication gaps, retry transient Windows read sharing conflicts, and tolerate disappearing response files without replaying commands.
+- Pump Xshell synchronous output through a bounded native wait, and keep capability checks from accidentally invoking COM methods.
+- Start SecureCRT from the actual JScript body, drain POSIX output in bulk through its unique result marker, and retain the real exit-code suffix across partial reads.
+- Hold a native exclusive file lease for SecureCRT so duplicate starts stay safe and cancelling the script releases ownership even when the host skips script cleanup.
+- Record passing Windows acceptance for two SecureCRT and two Xshell Tabs, plus native duplicate-start, cancellation/restart and disconnect/reconnect checks; ship the reusable lifecycle probe and a separate Mac test prompt.
+
+- Resolve Xshell's script folder through either its native Python getter or
+  its Active Scripting string property, avoiding a startup TypeError.
+
 ## [0.5.2] - 2026-10-08
 
 - Reject the unchanged pre-send prompt as completion until capture observes output progress.
