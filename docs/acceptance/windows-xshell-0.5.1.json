@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "scope": "live_xshell_desktop",
+  "date": "2026-10-08",
+  "status": "PASS",
+  "source_commit": "e8b32f456f7bfb8c6c8ce7dfc90ef0401894fe84",
+  "environment": {
+    "os": "Windows 11 ARM64",
+    "os_version": "10.0.26200",
+    "xshell_ui": "8 Build 0110",
+    "xshell_product_version": "8.0.0.26",
+    "python": "3.14.2 x86 external Active Scripting",
+    "pywin32": "312",
+    "vmware_fusion": "25.0.0"
+  },
+  "adapter_sha256": "73dc8a81f7d062d4194fd810a45c6341e23c022176f4ac22419796cb569cc174",
+  "binary_sha256": "dda13e3f8466819373ca647e4c9951fa84e80affa8f5b3ef5fcf047fb0eafe70",
+  "test_targets": 2,
+  "protocols": [
+    "legacy",
+    "modern"
+  ],
+  "checks_per_target_and_protocol": [
+    "attach",
+    "exec_exit_code",
+    "three_command_batch",
+    "utf8_byte_pagination",
+    "wrong_prompt_rejected_before_send",
+    "same_operation_deduplication",
+    "timeout_preserves_prefix",
+    "unresolved_blocks_send",
+    "explicit_interrupt_without_termination_claim",
+    "fresh_explicit_idle_ack",
+    "command_after_ack",
+    "snapshot_unterminated_output",
+    "prompt_unterminated_output",
+    "stream_unterminated_output",
+    "prompt_attachment_reuse"
+  ],
+  "doctor": {
+    "exit_code": 0,
+    "all_runtime_checks_passed": true,
+    "live_instances": 2,
+    "tier": "tier_2"
+  },
+  "limitations": [
+    "Exact tested tuple only; no Windows 10 or Windows x64 desktop certification.",
+    "Xshell screen capture is not a native PTY.",
+    "Embedded Python 3.8.6 Xsh binding with product 8.0.0.26 is blocked after native reference-count defect reproduction.",
+    "After raw output changes the input line, inspect and explicitly acknowledge the idle line; reattach when the original prompt changes."
+  ]
+}
