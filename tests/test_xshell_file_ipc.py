@@ -112,7 +112,7 @@ def test_compiled_mcp_aggregates_and_routes_multiple_xshell_instances():
                             result = {"bridge_version": CURRENT_VERSION, "protocol_version": 2,
                                       "python":"3.11.17","xshell_version":"8.0",
                                       "api_capabilities":{name:True for name in apis},
-                                      "adapter_sha256":digest if instance=="instance-a" else "stale-source",
+                                      "adapter_sha256":digest if instance=="11111111-1111-4111-8111-111111111111" else "stale-source",
                                       "capabilities": ["poll_bulk", "file_ipc"]}
                         elif method == "list_sessions":
                             result = {"bridge_instance": instance, "enumeration": "named_files",
@@ -148,21 +148,21 @@ def test_compiled_mcp_aggregates_and_routes_multiple_xshell_instances():
                         pass
                 time.sleep(0.01)
 
-        for instance, name in (("instance-a", "alpha"), ("instance-b", "beta")):
+        for instance, name in (("11111111-1111-4111-8111-111111111111", "alpha"), ("22222222-2222-4222-8222-222222222222", "beta")):
             thread = threading.Thread(target=worker, args=(instance, name), daemon=True)
             workers.append(thread)
             thread.start()
         for _ in range(100):
             if all((ipc_root / "instances" / instance / "ready.json").exists()
-                   for instance in ("instance-a", "instance-b")):
+                   for instance in ("11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222")):
                 break
             time.sleep(0.01)
         mcp = MCP(binary, env)
         try:
             listed = mcp.tool("connector_list")
             assert {item["session_name"] for item in listed["xshell"]} == {"alpha", "beta"}, listed
-            opened = mcp.tool("connector_open", {"backend": "xshell", "target": "instance-b/session-1", "mode": "exec"})
-            assert opened.get("attachment_id", "").startswith("instance-b/"), opened
+            opened = mcp.tool("connector_open", {"backend": "xshell", "target": "22222222-2222-4222-8222-222222222222/session-1", "mode": "exec"})
+            assert opened.get("attachment_id", "").startswith("22222222-2222-4222-8222-222222222222/"), opened
             status = mcp.tool("connector_get_status", {"session_id": opened["session_id"]})
             assert status["backend"] == "xshell" and status["session_id"] == opened["session_id"], status
             executed = mcp.tool("connector_exec", {"session_id": opened["session_id"], "command": "fixture-output",
@@ -185,7 +185,7 @@ def test_compiled_mcp_aggregates_and_routes_multiple_xshell_instances():
             assert doctor.returncode != 0, doctor.stdout
             report=json.loads(doctor.stdout)
             assert len(report["instances"])==2 and report["all_runtime_checks_passed"] is False, report
-            stale=next(item for item in report["instances"] if item["instance"]=="instance-b")
+            stale=next(item for item in report["instances"] if item["instance"]=="22222222-2222-4222-8222-222222222222")
             assert stale["support"]["tier"]=="unsupported" and "validation_error" in stale, stale
         finally:
             mcp.close()
