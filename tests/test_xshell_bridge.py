@@ -590,9 +590,36 @@ def test_external_engine_refuses_to_guess_source_from_working_directory(tmp_path
         MODULE.runtime_script_path(app, {})
 
 
+def test_embedded_engine_calls_builtin_script_folder_getter(tmp_path):
+    from types import SimpleNamespace
+    script = tmp_path / "securecrt-mcp-xshell.py"
+    script.write_text("# installed bridge")
+    # The observed native Python binding exposes a built-in method, not a BSTR.
+    app = SimpleNamespace(Session=SimpleNamespace(ScriptFolderPath=str(tmp_path).strip))
+    assert MODULE.runtime_script_path(app, {}) == script
+
+
+def test_script_folder_getter_invalid_result_reports_path_unavailable():
+    import pytest
+    from types import SimpleNamespace
+    for value in (None, "", object()):
+        app = SimpleNamespace(Session=SimpleNamespace(ScriptFolderPath=lambda: value))
+        with pytest.raises(ValueError, match="script_path_unavailable"):
+            MODULE.runtime_script_path(app, {})
+
+
+def test_file_global_does_not_call_native_script_folder_getter(tmp_path):
+    from types import SimpleNamespace
+    def unexpected_call():
+        raise AssertionError("native getter must not be called when __file__ is supplied")
+    script = tmp_path / "xshell_bridge.py"
+    app = SimpleNamespace(Session=SimpleNamespace(ScriptFolderPath=unexpected_call))
+    assert MODULE.runtime_script_path(app, {"__file__": str(script)}) == script
+
+
 def test_external_main_executes_the_bytes_whose_digest_it_reports(tmp_path):
     import hashlib, types
-    app = types.SimpleNamespace(Session=types.SimpleNamespace(ScriptFolderPath=str(tmp_path)), records=[])
+    app = types.SimpleNamespace(Session=types.SimpleNamespace(ScriptFolderPath=str(tmp_path).strip), records=[])
     source = b"def main():\n    xsh.records.append((_EXECUTED_SOURCE_SHA256, __file__, 'current_source'))\n"
     script = tmp_path / "securecrt-mcp-xshell.py"
     script.write_bytes(source)

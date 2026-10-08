@@ -1,0 +1,128 @@
+{
+  "tested_on": "2026-10-08",
+  "scope": "native client menus and actual compiled MCP on Windows; dedicated idle SSH test Tabs",
+  "binary_sha256": "9fdb0b64528562d93e5b537332343ecdc276b3b18e8000a1cb95ad937bf7962f",
+  "native_source_sha256": "a62951fe14e50db48f2d6f7614a8a6ab71e5dcba60047c1325f5cb39dbada92a",
+  "code_revision": {
+    "commit": "3c3489ba267008af2e7bdcc09b0f890c56feb71b",
+    "working_tree_modified": true
+  },
+  "passed": true,
+  "securecrt_startup": {
+    "passed": true,
+    "public_fixed_entry": true,
+    "observed_message": "SecureCRT MCP 已启动，已连接会话：2。无需 Python；关闭提示后继续运行。"
+  },
+  "securecrt_duplicate": {
+    "passed": true,
+    "observed_message": "SecureCRT MCP 已经启动，无需重复运行。同一窗口的所有已连接 Tab 由原脚本管理。",
+    "same_instance_preserved": true,
+    "heartbeat_continued": true
+  },
+  "securecrt_cancel_restart": {
+    "passed": true,
+    "same_native_process": true,
+    "public_entry": true,
+    "old_registration_expired": true,
+    "new_instance_and_handles": true,
+    "connected_tabs_preserved": 2,
+    "native_cancel_dialog": "Script Cancelled"
+  },
+  "disconnect_reconnect": {
+    "securecrt": {
+      "scope": "real MCP / native UI disconnect and reconnect / SSH",
+      "backend": "securecrt",
+      "checks": [
+        "original idle connected attachment",
+        "disconnected old attachment rejected with sent=false",
+        "reconnected generation rejects old attachment with sent=false",
+        "fresh generation executes exactly one unique marker"
+      ],
+      "passed": true,
+      "wall_seconds": 278.03
+    },
+    "xshell": {
+      "scope": "real MCP / native UI disconnect and reconnect / SSH",
+      "backend": "xshell",
+      "checks": [
+        "original idle connected attachment",
+        "disconnected old attachment rejected with sent=false",
+        "reconnected generation rejects old attachment with sent=false",
+        "fresh generation executes exactly one unique marker"
+      ],
+      "passed": true,
+      "wall_seconds": 127.33
+    }
+  },
+  "limitations": [
+    "Disconnect/reconnect was observed by the native adapter; transitions between all observations are not certified.",
+    "Closing and reopening a Tab was not separately exercised in this UI receipt.",
+    "Lifecycle wall time includes UI coordination and is not command execution latency."
+  ],
+  "post_lifecycle_modern": [
+    {
+      "scope": "live_connector",
+      "backend": "securecrt",
+      "protocol": "modern",
+      "status": "PASS",
+      "checks": [
+        "attach",
+        "exec",
+        "batch",
+        "pagination",
+        "rejection"
+      ],
+      "pages": 12,
+      "source_commit": "3c3489ba267008af2e7bdcc09b0f890c56feb71b+working-tree",
+      "tested_on": "2026-10-08"
+    },
+    {
+      "scope": "live_connector",
+      "backend": "securecrt",
+      "protocol": "modern",
+      "status": "PASS",
+      "checks": [
+        "attach",
+        "exec",
+        "batch",
+        "pagination",
+        "rejection"
+      ],
+      "pages": 12,
+      "source_commit": "3c3489ba267008af2e7bdcc09b0f890c56feb71b+working-tree",
+      "tested_on": "2026-10-08"
+    },
+    {
+      "scope": "live_connector",
+      "backend": "xshell",
+      "protocol": "modern",
+      "status": "PASS",
+      "checks": [
+        "attach",
+        "exec",
+        "batch",
+        "pagination",
+        "rejection"
+      ],
+      "pages": 12,
+      "source_commit": "3c3489ba267008af2e7bdcc09b0f890c56feb71b+working-tree",
+      "tested_on": "2026-10-08"
+    },
+    {
+      "scope": "live_connector",
+      "backend": "xshell",
+      "protocol": "modern",
+      "status": "PASS",
+      "checks": [
+        "attach",
+        "exec",
+        "batch",
+        "pagination",
+        "rejection"
+      ],
+      "pages": 12,
+      "source_commit": "3c3489ba267008af2e7bdcc09b0f890c56feb71b+working-tree",
+      "tested_on": "2026-10-08"
+    }
+  ]
+}

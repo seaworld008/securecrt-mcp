@@ -16,6 +16,10 @@
 
 ## 能力概览
 
+Windows 自带运行环境的 `.js` 入口、固定脚本更新步骤，以及 Windows / Mac
+分别验收的标准见 [桌面测试与验收规范](docs/desktop-acceptance.md)。新入口只有
+取得对应客户端真机回执才视为通过；macOS 继续使用原生 Python 桥接。
+
 - 复用已登录的 SecureCRT Tab，按不透明会话句柄绑定目标，避免用 Tab 序号误操作。
 - `attach -> exec` 连续执行，减少重复建立连接、读屏和令牌开销。
 - `exec_batch` 支持最多 20 条命令，每条拥有独立输出、退出码、审计和 command ID；不确定结果始终停止。
@@ -32,7 +36,7 @@
 flowchart LR
     A["Codex / Claude / MCP 客户端<br/>审批、风险判断、凭据使用"] -->|MCP stdio| B["securecrt-mcp Rust Server<br/>统一 API、会话、输出、审计"]
     B --> C["SecureCRT 后端<br/>connector_*"]
-    C -->|protocol 2 / 127.0.0.1| D["SecureCRT Bridge<br/>原生脚本线程"]
+    C -->|认证文件 IPC / Python loopback| D["SecureCRT Bridge<br/>原生脚本线程"]
     D --> E["已登录 SecureCRT Tab<br/>屏幕采样、上下文校验、原生输入"]
     B --> F["Xshell 后端<br/>connector_*"]
     F --> G["Xshell Script Bridge<br/>发现并探测 .xsh Tab"]
@@ -51,8 +55,8 @@ MCP 客户端（Codex / Claude）
         |
         v
 Rust securecrt-mcp（统一会话、输出、状态和 no-replay 语义）
-        +--> SecureCRT 后端 --> 127.0.0.1 Bridge --> 已登录 SecureCRT Tab
-        +--> Xshell 后端 --> 127.0.0.1 Bridge --> 已登录 Xshell Tab
+        +--> SecureCRT 后端 --> 文件 IPC / Python Bridge --> 已登录 SecureCRT Tab
+        +--> Xshell 后端 --> 文件 IPC Bridge --> 已登录 Xshell Tab
         \--> OpenSSH 后端 --> 持久 ssh/PTY --> 远端服务器
 ```
 
@@ -95,6 +99,8 @@ OpenSSH 示例：
 
 ### 1. 下载并校验
 
+本次新增的 Windows 自包含 `.js` 入口需使用包含这次改动的源码构建包或 CI 测试包。现有 `v0.5.2` 正式 Release 是旧入口，不包含这些新增功能；合并 main 不会自动覆盖旧 Release 资产。
+
 从 [最新 Release](https://github.com/seaworld008/securecrt-mcp/releases/latest) 下载 Windows x64 ZIP，同时下载 `SHA256SUMS`，在 PowerShell 中校验：
 
 ```powershell
@@ -113,29 +119,34 @@ Release 包含可执行文件、许可证、中文说明和对应版本的 Secur
 .\securecrt-mcp.exe paths
 ```
 
-在 SecureCRT 中选择 **Script -> Run**，运行 `paths` 输出的 `securecrt_bridge.py`。即使当前没有登录任何服务器，Bridge 也会先启动监听；此时会话列表为空，后续登录服务器后会自动发现。首次启动会显示中文提示；点击“确定”后运行：
+也可以直接从解压包选择下面的 `.js` 脚本，首次运行自动初始化，不必先执行 `init`：
 
-Xshell 使用同一个 `init` 自动部署流程。初始化会把最新的
-`securecrt-mcp-xshell.py` 复制到 Xshell 的标准 `Scripts` 目录，并保留 Token
-配置在 MCP 私有目录。打开 Xshell 的 **Tools -> Script -> Run** 后，直接选择
-`securecrt-mcp-xshell.py`；不需要浏览 MCP 安装目录或手工复制脚本。每个需要接入的 Xshell 进程都运行一次脚本，单进程模式可开可关，MCP 会自动汇总活跃实例。同一进程内按标签焦点串行执行，不同进程可并发执行。Xshell 脚本通过 MCP 私有目录中的文件 IPC 与 Rust 通信，不依赖内嵌 Python 的网络模块。SecureCRT、Xshell 和 OpenSSH 可以同时连接。
+| 客户端 | 运行脚本 | `init/upgrade` 更新的固定入口 |
+| --- | --- | --- |
+| SecureCRT | `securecrt-mcp-securecrt.js` | `%USERPROFILE%\.securecrt-mcp\securecrt-mcp-securecrt.js` |
+| Xshell | `securecrt-mcp-xshell.js` | Xshell 标准 `Scripts` 目录中的同名文件 |
 
-实测 Xshell 8 Build 0110（产品版本 8.0.0.26）内置 Python 3.8.6 存在原生引用计数缺陷，当前 Bridge 会在发送前拒绝该组合。请按[支持策略中的外部 Python 配置](docs/support-policy.md#xshell-内置-python-例外)启用厂商支持的 32 位 Python + pywin32，引擎版本以 Bridge 报告为准；配置后仍需进行真实会话验收。
+Windows 新入口自带配套程序，使用系统 JScript，不安装 Python、pywin32 或 Rust。
+SecureCRT 在菜单 **Script -> Run** 选择脚本；每个应用进程运行一次即可管理该进程的
+全部已连接 Tab，其他 Tab 再次运行会提示“已经启动，无需重复运行”。取消入口是
+**Script -> Cancel**，需回到启动脚本的 Tab。Xshell 在 **Tools -> Script -> Run**
+选择对应脚本，按实际可发现的窗口/会话范围启动，MCP 汇总在线实例。
+
+成功提示显示实际已连接会话数并自动关闭，桥接继续运行；没有登录时会话列表为空，
+之后可重新枚举发现连接。先完成实际执行，再检查接口记录：
 
 ```powershell
 .\securecrt-mcp.exe doctor
-.\securecrt-mcp.exe doctor --latency
+.\securecrt-mcp.exe doctor --backend xshell
 ```
 
-如果重复点击脚本，提示“SecureCRT MCP 已经在运行”即可，不需要再次启动。需要重启时先确认没有活动或未决命令，再停止脚本或重启 SecureCRT。
+Windows COM 方法属性读取可能直接调用等待/发送方法。新入口的在线检查只读取安全
+属性；发送、捕获方法在真实调用成功后才记为已验证，使用前为未知。
 
-Xshell 首次运行脚本会显示一次独立的启动提示；提示关闭后脚本继续运行。点击“取消脚本”时不显示关闭弹窗，脚本应直接退出并清理本地 IPC 状态。
-每个脚本实例的生命周期日志会写入
-`%USERPROFILE%\.securecrt-mcp\xshell-ipc\logs\xshell-<实例>.jsonl`，记录启动、请求、取消和清理结果，不记录 Token 或终端内容。开发回归测试会并发模拟两个 Xshell 实例：
-
-```powershell
-python -m pytest -q tests/test_xshell_bridge.py
-```
+旧 Python 入口仍供已有配置和 macOS 使用，版本限制与厂商 Python 配置见
+[支持策略](docs/support-policy.md)。Windows 新入口不会使用旧 Python 绑定。
+原生诊断记录位于私有目录 `<backend>-native-ipc/instances/<实例>/diagnostic.json`，
+只记录捕获生命周期和计数，不包含 Token、命令内容或终端历史。
 
 ### 3. 升级
 
@@ -148,7 +159,9 @@ cargo build --locked --release
 .\target\release\securecrt-mcp.exe doctor --offline
 ```
 
-`upgrade` 保留现有 Token、策略和自定义拒绝规则，并备份被替换的 Bridge。升级后必须重新运行安装目录中的 Bridge；旧脚本已加载在内存中时，仅替换文件不会改变运行版本。
+`upgrade` 保留现有 Token、策略和自定义拒绝规则，Windows 同名 `.js` 入口直接更新。
+升级后闲时取消旧脚本，再选择原来的同名文件；替换磁盘文件不会更新已加载的脚本。
+旧 Python 入口沿用现有升级行为，本轮不新增备份管理功能。
 
 ## MCP 客户端配置
 
@@ -199,7 +212,7 @@ Batch 不是事务，也不是永久授权；所有命令应在客户端第一�
 
 ## 安全边界
 
-- Bridge 只监听 `127.0.0.1`，使用随机 Token、请求 deadline 和消息大小上限。
+- Windows 原生 Bridge 使用用户私有文件 IPC；Python SecureCRT Bridge 只监听 `127.0.0.1`。两者使用随机 Token、请求 deadline 和消息大小上限。
 - `client` 模式把日常命令审批交给 Codex/Claude 等客户端；内置规则只拦截少量关键破坏性命令，不是 Shell 静态分析器或沙箱。
 - `shared`、`exclusive`、`observe` 是连接器协作模式，不是 SecureCRT 键盘锁。人工输入、重连和嵌套 SSH 目标仍需操作员确认。
 - attachment 不等于永久授权；daemon 重启后不提供 exactly-once 保证。

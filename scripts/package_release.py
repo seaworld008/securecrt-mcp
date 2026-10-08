@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import tomllib
 import zipfile
+from portable_scripts import windows_scripts
 
 root = Path(__file__).resolve().parents[1]
 version = tomllib.loads((root / 'Cargo.toml').read_text(encoding="utf-8"))['package']['version']
@@ -13,13 +14,18 @@ assert binary.is_file(), binary
 assert target and all(c.isalnum() or c in '-_' for c in target), 'invalid target'
 destination = root / 'dist'; destination.mkdir(exist_ok=True)
 archive = destination / f'securecrt-mcp-{version}-{target}.zip'
+portable = windows_scripts(root, binary) if 'windows' in target.lower() else {}
+for filename, content in portable.items():
+    (destination / filename).write_bytes(content)
 with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as z:
     z.write(binary, binary.name)
+    for filename, content in portable.items():
+        z.writestr(filename, content)
     files=[root/'LICENSE',root/'README.md',root/'README.en.md',root/'README.zh-CN.md',root/'CHANGELOG.md',root/'CONTRIBUTING.md',root/'SECURITY.md',root/'ROADMAP.md']
     files+=list((root/'docs').rglob('*.md'))+list((root/'docs').rglob('*.json'))
     files+=list((root/'clients').glob('*.py'))+list((root/'clients').glob('*.ps1'))
-    files+=list((root/'support').glob('*.json'))+list((root/'bridge').glob('*.py'))
-    files+=[root/'tests'/name for name in ('connector_acceptance.py','securecrt_desktop_smoke.py','mcp_smoke.py','protocol_harness.py','performance_smoke.py','test_bridge.py')]
+    files+=list((root/'support').glob('*.json'))+list((root/'bridge').glob('*.py'))+list((root/'bridge').glob('*.js'))
+    files+=[root/'tests'/name for name in ('desktop_matrix.py','desktop_lifecycle_probe.py','connector_acceptance.py','securecrt_desktop_smoke.py','mcp_smoke.py','protocol_harness.py','performance_smoke.py','test_bridge.py')]
     for path in files:
         z.write(path,path.relative_to(root).as_posix())
 checksum = hashlib.sha256(archive.read_bytes()).hexdigest()

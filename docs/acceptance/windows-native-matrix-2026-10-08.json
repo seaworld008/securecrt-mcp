@@ -1,0 +1,610 @@
+{
+  "scope": "real desktop / native SDK / SSH; UI startup is separately checked",
+  "tested_on": "2026-10-08",
+  "binary_sha256": "9fdb0b64528562d93e5b537332343ecdc276b3b18e8000a1cb95ad937bf7962f",
+  "code_revision": {
+    "commit": "3c3489ba267008af2e7bdcc09b0f890c56feb71b",
+    "working_tree_modified": true
+  },
+  "source_sha256": {
+    "bridge/windows_bridge.js": "a62951fe14e50db48f2d6f7614a8a6ab71e5dcba60047c1325f5cb39dbada92a",
+    "bridge/securecrt_bridge.py": "aec3236df308e9734ae74ea80235e8256860f0d1487b4aa1b7711a9e51edfe43",
+    "bridge/xshell_bridge.py": "e35d7c59246dfee1eaea0d80826d27b125b58dcdd052b91831fa723a63d9a102"
+  },
+  "tabs": {
+    "securecrt": 2,
+    "xshell": 2
+  },
+  "runtime": {
+    "securecrt": [
+      {
+        "script_engine": "JScript",
+        "python": null,
+        "platform": "Windows",
+        "architecture": "x64",
+        "os_version": "10.0.26200.0",
+        "adapter_sha256": "a62951fe14e50db48f2d6f7614a8a6ab71e5dcba60047c1325f5cb39dbada92a",
+        "securecrt_version": "9.7.3 (x64 build 3916)"
+      }
+    ],
+    "xshell": [
+      {
+        "script_engine": "JScript",
+        "python": null,
+        "platform": "Windows",
+        "architecture": "x86",
+        "os_version": "10.0.26200.0",
+        "adapter_sha256": "a62951fe14e50db48f2d6f7614a8a6ab71e5dcba60047c1325f5cb39dbada92a",
+        "xshell_version": "8.0.0.26"
+      },
+      {
+        "script_engine": "JScript",
+        "python": null,
+        "platform": "Windows",
+        "architecture": "x86",
+        "os_version": "10.0.26200.0",
+        "adapter_sha256": "a62951fe14e50db48f2d6f7614a8a6ab71e5dcba60047c1325f5cb39dbada92a",
+        "xshell_version": "8.0.0.26"
+      }
+    ]
+  },
+  "wall_seconds": 89.42,
+  "explicit_recovery_probes": true,
+  "passed": true,
+  "results": [
+    {
+      "label": "xshell-tab-2",
+      "backend": "xshell",
+      "phase": "full-legacy",
+      "passed": true,
+      "wall_ms": 60485,
+      "result": {
+        "scope": "real MCP / native desktop / SSH",
+        "backend": "xshell",
+        "protocol": "legacy",
+        "binary_sha256": "9fdb0b64528562d93e5b537332343ecdc276b3b18e8000a1cb95ad937bf7962f",
+        "checks": [
+          "unified connector tool discovery",
+          "explicit connected target",
+          "fresh native screen and idle prompt",
+          "POSIX marker completion",
+          "same operation returns same command without replay",
+          "Unicode and no-newline capture",
+          "nonzero exit code retained",
+          "three-command diagnostics batch",
+          "twenty consecutive commands retain original attachment",
+          "large UTF-8 output pagination",
+          "all 2500 UTF-8 rows match exactly in order without loss or duplicates",
+          "wrong prompt rejected before native send",
+          "attachment heartbeat",
+          "timeout preserves uncertainty",
+          "original prompt restored after finite sleep",
+          "unresolved session refuses new input",
+          "false idle confirmation cannot clear uncertainty",
+          "explicit recovery with fresh context",
+          "new attachment works after recovery",
+          "explicit Ctrl+C on the tracked command",
+          "interrupt outcome retained",
+          "idle prompt after explicit interrupt",
+          "explicit post-interrupt recovery"
+        ],
+        "diagnostics_batch": {
+          "state": "completed",
+          "results": [
+            {
+              "state": "completed",
+              "exit_code": 0,
+              "sent": true,
+              "error_code": null,
+              "requires_idle_ack": false
+            },
+            {
+              "state": "completed",
+              "exit_code": 0,
+              "sent": true,
+              "error_code": null,
+              "requires_idle_ack": false
+            },
+            {
+              "state": "completed",
+              "exit_code": 0,
+              "sent": true,
+              "error_code": null,
+              "requires_idle_ack": false
+            }
+          ]
+        },
+        "short_command_wall_ms": {
+          "median": 1864.7,
+          "p95": 1885.9,
+          "samples": [
+            1864.9,
+            1865.4,
+            1853.1,
+            1873.3,
+            2018.3,
+            1666.4,
+            1864.7,
+            1849.4,
+            1875.0,
+            1866.9,
+            1885.2,
+            1840.7,
+            1663.7,
+            1885.9,
+            1865.2,
+            1847.5,
+            1636.8,
+            1843.9,
+            1670.2,
+            1822.7
+          ]
+        },
+        "large_output_capture": {
+          "state": "completed",
+          "exit_code": 0,
+          "sent": true,
+          "error_code": null,
+          "requires_idle_ack": false,
+          "wall_ms": 3028.3
+        },
+        "large_output_integrity": {
+          "rows": 2500,
+          "expected_rows": 2500,
+          "exact_ordered_rows": true
+        },
+        "large_output": {
+          "pages": 71,
+          "bytes": 72502,
+          "capture_budget_ms": 10000,
+          "wall_ms_to_first_page": 3028.3
+        },
+        "passed": true
+      }
+    },
+    {
+      "label": "xshell-tab-1",
+      "backend": "xshell",
+      "phase": "full-legacy",
+      "passed": true,
+      "wall_ms": 64071,
+      "result": {
+        "scope": "real MCP / native desktop / SSH",
+        "backend": "xshell",
+        "protocol": "legacy",
+        "binary_sha256": "9fdb0b64528562d93e5b537332343ecdc276b3b18e8000a1cb95ad937bf7962f",
+        "checks": [
+          "unified connector tool discovery",
+          "explicit connected target",
+          "fresh native screen and idle prompt",
+          "POSIX marker completion",
+          "same operation returns same command without replay",
+          "Unicode and no-newline capture",
+          "nonzero exit code retained",
+          "three-command diagnostics batch",
+          "twenty consecutive commands retain original attachment",
+          "large UTF-8 output pagination",
+          "all 2500 UTF-8 rows match exactly in order without loss or duplicates",
+          "wrong prompt rejected before native send",
+          "attachment heartbeat",
+          "timeout preserves uncertainty",
+          "original prompt restored after finite sleep",
+          "unresolved session refuses new input",
+          "false idle confirmation cannot clear uncertainty",
+          "explicit recovery with fresh context",
+          "new attachment works after recovery",
+          "explicit Ctrl+C on the tracked command",
+          "interrupt outcome retained",
+          "idle prompt after explicit interrupt",
+          "explicit post-interrupt recovery"
+        ],
+        "diagnostics_batch": {
+          "state": "completed",
+          "results": [
+            {
+              "state": "completed",
+              "exit_code": 0,
+              "sent": true,
+              "error_code": null,
+              "requires_idle_ack": false
+            },
+            {
+              "state": "completed",
+              "exit_code": 0,
+              "sent": true,
+              "error_code": null,
+              "requires_idle_ack": false
+            },
+            {
+              "state": "completed",
+              "exit_code": 0,
+              "sent": true,
+              "error_code": null,
+              "requires_idle_ack": false
+            }
+          ]
+        },
+        "short_command_wall_ms": {
+          "median": 1702.6,
+          "p95": 1721.2,
+          "samples": [
+            1719.1,
+            1710.5,
+            1657.6,
+            1721.2,
+            1699.6,
+            1657.7,
+            1666.6,
+            1673.5,
+            1707.5,
+            1682.9,
+            1677.6,
+            1685.5,
+            1702.6,
+            1663.8,
+            1704.2,
+            1883.3,
+            1706.9,
+            1703.3,
+            1674.2,
+            1715.5
+          ]
+        },
+        "large_output_capture": {
+          "state": "completed",
+          "exit_code": 0,
+          "sent": true,
+          "error_code": null,
+          "requires_idle_ack": false,
+          "wall_ms": 9900.2
+        },
+        "large_output_integrity": {
+          "rows": 2500,
+          "expected_rows": 2500,
+          "exact_ordered_rows": true
+        },
+        "large_output": {
+          "pages": 71,
+          "bytes": 72509,
+          "capture_budget_ms": 10000,
+          "wall_ms_to_first_page": 9900.2
+        },
+        "passed": true
+      }
+    },
+    {
+      "label": "securecrt-tab-1",
+      "backend": "securecrt",
+      "phase": "full-legacy",
+      "passed": true,
+      "wall_ms": 67131,
+      "result": {
+        "scope": "real MCP / native desktop / SSH",
+        "backend": "securecrt",
+        "protocol": "legacy",
+        "binary_sha256": "9fdb0b64528562d93e5b537332343ecdc276b3b18e8000a1cb95ad937bf7962f",
+        "checks": [
+          "unified connector tool discovery",
+          "explicit connected target",
+          "fresh native screen and idle prompt",
+          "POSIX marker completion",
+          "same operation returns same command without replay",
+          "Unicode and no-newline capture",
+          "nonzero exit code retained",
+          "three-command diagnostics batch",
+          "twenty consecutive commands retain original attachment",
+          "large UTF-8 output pagination",
+          "all 2500 UTF-8 rows match exactly in order without loss or duplicates",
+          "wrong prompt rejected before native send",
+          "attachment heartbeat",
+          "timeout preserves uncertainty",
+          "original prompt restored after finite sleep",
+          "unresolved session refuses new input",
+          "false idle confirmation cannot clear uncertainty",
+          "explicit recovery with fresh context",
+          "new attachment works after recovery",
+          "explicit Ctrl+C on the tracked command",
+          "interrupt outcome retained",
+          "idle prompt after explicit interrupt",
+          "explicit post-interrupt recovery"
+        ],
+        "diagnostics_batch": {
+          "state": "completed",
+          "results": [
+            {
+              "state": "completed",
+              "exit_code": 0,
+              "sent": true,
+              "error_code": null,
+              "requires_idle_ack": false
+            },
+            {
+              "state": "completed",
+              "exit_code": 0,
+              "sent": true,
+              "error_code": null,
+              "requires_idle_ack": false
+            },
+            {
+              "state": "completed",
+              "exit_code": 0,
+              "sent": true,
+              "error_code": null,
+              "requires_idle_ack": false
+            }
+          ]
+        },
+        "short_command_wall_ms": {
+          "median": 2270.5,
+          "p95": 2500.6,
+          "samples": [
+            2331.8,
+            2238.6,
+            2312.9,
+            2352.4,
+            2232.4,
+            2273.2,
+            2308.3,
+            2225.4,
+            2251.1,
+            2322.6,
+            2232.0,
+            2238.7,
+            1185.9,
+            2212.5,
+            2356.5,
+            2219.0,
+            2270.5,
+            2500.6,
+            3226.7,
+            2247.8
+          ]
+        },
+        "large_output_capture": {
+          "state": "completed",
+          "exit_code": 0,
+          "sent": true,
+          "error_code": null,
+          "requires_idle_ack": false,
+          "wall_ms": 2512.6
+        },
+        "large_output_integrity": {
+          "rows": 2500,
+          "expected_rows": 2500,
+          "exact_ordered_rows": true
+        },
+        "large_output": {
+          "pages": 71,
+          "bytes": 72501,
+          "capture_budget_ms": 10000,
+          "wall_ms_to_first_page": 2512.6
+        },
+        "passed": true
+      }
+    },
+    {
+      "label": "securecrt-tab-2",
+      "backend": "securecrt",
+      "phase": "full-legacy",
+      "passed": true,
+      "wall_ms": 69572,
+      "result": {
+        "scope": "real MCP / native desktop / SSH",
+        "backend": "securecrt",
+        "protocol": "legacy",
+        "binary_sha256": "9fdb0b64528562d93e5b537332343ecdc276b3b18e8000a1cb95ad937bf7962f",
+        "checks": [
+          "unified connector tool discovery",
+          "explicit connected target",
+          "fresh native screen and idle prompt",
+          "POSIX marker completion",
+          "same operation returns same command without replay",
+          "Unicode and no-newline capture",
+          "nonzero exit code retained",
+          "three-command diagnostics batch",
+          "twenty consecutive commands retain original attachment",
+          "large UTF-8 output pagination",
+          "all 2500 UTF-8 rows match exactly in order without loss or duplicates",
+          "wrong prompt rejected before native send",
+          "attachment heartbeat",
+          "timeout preserves uncertainty",
+          "original prompt restored after finite sleep",
+          "unresolved session refuses new input",
+          "false idle confirmation cannot clear uncertainty",
+          "explicit recovery with fresh context",
+          "new attachment works after recovery",
+          "explicit Ctrl+C on the tracked command",
+          "interrupt outcome retained",
+          "idle prompt after explicit interrupt",
+          "explicit post-interrupt recovery"
+        ],
+        "diagnostics_batch": {
+          "state": "completed",
+          "results": [
+            {
+              "state": "completed",
+              "exit_code": 0,
+              "sent": true,
+              "error_code": null,
+              "requires_idle_ack": false
+            },
+            {
+              "state": "completed",
+              "exit_code": 0,
+              "sent": true,
+              "error_code": null,
+              "requires_idle_ack": false
+            },
+            {
+              "state": "completed",
+              "exit_code": 0,
+              "sent": true,
+              "error_code": null,
+              "requires_idle_ack": false
+            }
+          ]
+        },
+        "short_command_wall_ms": {
+          "median": 2298.5,
+          "p95": 2438.8,
+          "samples": [
+            2324.9,
+            2348.4,
+            2247.2,
+            2291.7,
+            2204.4,
+            2298.5,
+            2248.2,
+            2329.3,
+            2324.1,
+            3288.5,
+            2348.3,
+            2334.5,
+            2260.5,
+            2191.1,
+            2438.8,
+            1188.8,
+            2183.5,
+            2384.1,
+            2222.4,
+            2262.9
+          ]
+        },
+        "large_output_capture": {
+          "state": "completed",
+          "exit_code": 0,
+          "sent": true,
+          "error_code": null,
+          "requires_idle_ack": false,
+          "wall_ms": 1399.6
+        },
+        "large_output_integrity": {
+          "rows": 2500,
+          "expected_rows": 2500,
+          "exact_ordered_rows": true
+        },
+        "large_output": {
+          "pages": 71,
+          "bytes": 72501,
+          "capture_budget_ms": 10000,
+          "wall_ms_to_first_page": 1399.6
+        },
+        "passed": true
+      }
+    },
+    {
+      "label": "xshell-tab-1",
+      "backend": "xshell",
+      "phase": "minimal-modern",
+      "passed": true,
+      "wall_ms": 9038,
+      "result": {
+        "scope": "live_connector",
+        "backend": "xshell",
+        "protocol": "modern",
+        "status": "PASS",
+        "checks": [
+          "attach",
+          "exec",
+          "batch",
+          "pagination",
+          "rejection"
+        ],
+        "pages": 12,
+        "source_commit": "3c3489ba267008af2e7bdcc09b0f890c56feb71b; working-tree modified; see matrix hashes",
+        "tested_on": "2026-10-08"
+      }
+    },
+    {
+      "label": "xshell-tab-2",
+      "backend": "xshell",
+      "phase": "minimal-modern",
+      "passed": true,
+      "wall_ms": 9216,
+      "result": {
+        "scope": "live_connector",
+        "backend": "xshell",
+        "protocol": "modern",
+        "status": "PASS",
+        "checks": [
+          "attach",
+          "exec",
+          "batch",
+          "pagination",
+          "rejection"
+        ],
+        "pages": 12,
+        "source_commit": "3c3489ba267008af2e7bdcc09b0f890c56feb71b; working-tree modified; see matrix hashes",
+        "tested_on": "2026-10-08"
+      }
+    },
+    {
+      "label": "securecrt-tab-1",
+      "backend": "securecrt",
+      "phase": "minimal-modern",
+      "passed": true,
+      "wall_ms": 11445,
+      "result": {
+        "scope": "live_connector",
+        "backend": "securecrt",
+        "protocol": "modern",
+        "status": "PASS",
+        "checks": [
+          "attach",
+          "exec",
+          "batch",
+          "pagination",
+          "rejection"
+        ],
+        "pages": 12,
+        "source_commit": "3c3489ba267008af2e7bdcc09b0f890c56feb71b; working-tree modified; see matrix hashes",
+        "tested_on": "2026-10-08"
+      }
+    },
+    {
+      "label": "securecrt-tab-2",
+      "backend": "securecrt",
+      "phase": "minimal-modern",
+      "passed": true,
+      "wall_ms": 11503,
+      "result": {
+        "scope": "live_connector",
+        "backend": "securecrt",
+        "protocol": "modern",
+        "status": "PASS",
+        "checks": [
+          "attach",
+          "exec",
+          "batch",
+          "pagination",
+          "rejection"
+        ],
+        "pages": 12,
+        "source_commit": "3c3489ba267008af2e7bdcc09b0f890c56feb71b; working-tree modified; see matrix hashes",
+        "tested_on": "2026-10-08"
+      }
+    },
+    {
+      "backend": "securecrt",
+      "phase": "concurrent-tab-isolation",
+      "tabs": 2,
+      "passed": true
+    },
+    {
+      "backend": "xshell",
+      "phase": "concurrent-tab-isolation",
+      "tabs": 2,
+      "passed": true
+    },
+    {
+      "backend": "securecrt",
+      "phase": "runtime-and-source-identity",
+      "passed": true
+    },
+    {
+      "backend": "xshell",
+      "phase": "runtime-and-source-identity",
+      "passed": true
+    }
+  ]
+}

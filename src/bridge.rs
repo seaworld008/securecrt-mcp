@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -22,6 +22,59 @@ use tokio::{
     time::{sleep, timeout},
 };
 use uuid::Uuid;
+
+// Windows native writers briefly deny shared reads while publishing a file.
+// Retry only the same read, never the command/request that produced it.
+async fn read_ipc(path: &Path, budget: Duration) -> std::io::Result<Vec<u8>> {
+    let deadline = Instant::now() + budget;
+    loop {
+        match fs::read(path).await {
+            Err(error)
+                if (error.kind() == std::io::ErrorKind::PermissionDenied
+                    || matches!(error.raw_os_error(), Some(32 | 33)))
+                    && Instant::now() < deadline =>
+            {
+                sleep(Duration::from_millis(10)).await;
+            }
+            result => return result,
+        }
+    }
+}
+
+async fn require_file_instance(root: &Path, instance: &str) -> Result<PathBuf> {
+    ensure!(
+        Uuid::parse_str(instance).is_ok(),
+        "invalid terminal instance identity"
+    );
+    let directory = root.join("instances").join(instance);
+    let ready = directory.join("ready.json");
+    let deadline = Instant::now() + Duration::from_millis(300);
+    loop {
+        match read_ipc(&ready, deadline.saturating_duration_since(Instant::now())).await {
+            Ok(bytes) => {
+                if let Ok(value) = serde_json::from_slice::<Value>(&bytes) {
+                    let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
+                    ensure!(
+                        value["bridge_instance"].as_str() == Some(instance)
+                            && value["protocol_version"].as_u64() == Some(PROTOCOL as u64)
+                            && value["last_poll_ms"]
+                                .as_u64()
+                                .is_some_and(|time| now.saturating_sub(time) <= 5000),
+                        "bound terminal instance is offline or changed; never route to another instance"
+                    );
+                    return Ok(directory);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        ensure!(
+            Instant::now() < deadline,
+            "bound terminal instance is not responding; never route to another instance"
+        );
+        sleep(Duration::from_millis(10)).await;
+    }
+}
 
 struct Connection {
     reader: BufReader<TcpStream>,
@@ -69,6 +122,9 @@ impl BridgeClient {
             config.host == "127.0.0.1" && secret.host == config.host && secret.port == config.port,
             "bridge endpoint mismatch; preserve config and repair bridge.json, do not reset policy"
         );
+        if let Some(directory) = &secret.ipc_dir {
+            return Self::new_file(config, secret.clone(), PathBuf::from(directory));
+        }
         Ok(Self::build(
             config,
             secret,
@@ -81,12 +137,12 @@ impl BridgeClient {
     pub fn new_file(config: BridgeConfig, secret: BridgeSecret, ipc_dir: PathBuf) -> Result<Self> {
         ensure!(
             ipc_dir.is_absolute(),
-            "Xshell IPC directory must be absolute"
+            "Terminal IPC directory must be absolute"
         );
         if let Some(configured) = &secret.ipc_dir {
             ensure!(
                 PathBuf::from(configured) == ipc_dir,
-                "Xshell IPC directory mismatch; run init"
+                "Terminal IPC directory mismatch; run init"
             );
         }
         Ok(Self::build(
@@ -291,7 +347,7 @@ impl BridgeClient {
                 continue;
             }
             let ready_path = entry.path().join("ready.json");
-            let bytes = match fs::read(&ready_path).await {
+            let bytes = match read_ipc(&ready_path, Duration::from_millis(250)).await {
                 Ok(bytes) => bytes,
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(error) => return Err(error.into()),
@@ -329,10 +385,38 @@ impl BridgeClient {
     }
 
     async fn call_file(&self, method: &str, params: Value, state: &FileTransport) -> Result<Value> {
+        // Session/attachment identities and capture routes remain authoritative
+        // across a transient heartbeat publication gap. Never fall back to the
+        // only OTHER online instance when an already-bound instance is missing.
+        let route_key = ["session", "attachment_id", "capture_id"]
+            .iter()
+            .find_map(|key| params[*key].as_str())
+            .map(str::to_owned);
+        if let Some(key) = route_key.as_deref() {
+            let instance = {
+                let routes = state.routes.lock().await;
+                key.split_once('/')
+                    .map(|(prefix, _)| prefix.to_owned())
+                    .or_else(|| routes.get(key).cloned())
+            };
+            if let Some(instance) = instance {
+                let directory = require_file_instance(&state.root, &instance).await?;
+                let value = self
+                    .call_file_instance(method, params.clone(), state, &instance, &directory)
+                    .await?;
+                let mut routes = state.routes.lock().await;
+                routes.insert(key.to_owned(), instance.clone());
+                if let Some(capture) = value["capture_id"].as_str() {
+                    routes.insert(capture.to_owned(), instance);
+                }
+                return Ok(value);
+            }
+            anyhow::bail!("unbound terminal handle; list and attach to an explicit instance first");
+        }
         let instances = self.file_instances(state).await?;
         ensure!(
             !instances.is_empty(),
-            "Xshell bridge is not running; start the script in each Xshell process"
+            "Terminal bridge is not running; start its script inside the terminal process"
         );
         if method == "list_sessions" {
             let mut sessions = Vec::new();
@@ -407,7 +491,7 @@ impl BridgeClient {
             None
         };
         let selected = selected.or_else(|| (instances.len() == 1).then(|| instances[0].clone()))
-            .context("Xshell instance route is ambiguous; use a session or attachment returned by connector_list/connector_open")?;
+            .context("Terminal instance route is ambiguous; use a session or attachment returned by connector_list/connector_open")?;
         let value = self
             .call_file_instance(method, params.clone(), state, &selected.0, &selected.1)
             .await?;
@@ -444,14 +528,19 @@ impl BridgeClient {
         self.counters.connects.fetch_add(1, Ordering::Relaxed);
         let deadline = Instant::now() + Duration::from_millis(self.config.request_timeout_ms);
         loop {
-            match fs::read(&response_path).await {
+            match read_ipc(
+                &response_path,
+                deadline.saturating_duration_since(Instant::now()),
+            )
+            .await
+            {
                 Ok(bytes) => {
                     let response: Value = serde_json::from_slice(&bytes)
-                        .context("invalid Xshell IPC response; exchange outcome unknown")?;
+                        .context("invalid Terminal IPC response; exchange outcome unknown")?;
                     let _ = fs::remove_file(&response_path).await;
                     ensure!(
                         response["bridge_instance"].as_str() == Some(instance),
-                        "Xshell IPC response came from the wrong bridge instance"
+                        "Terminal IPC response came from the wrong bridge instance"
                     );
                     return self.finish_response(response, &id);
                 }
@@ -460,7 +549,7 @@ impl BridgeClient {
             }
             if Instant::now() >= deadline {
                 return Err(anyhow::anyhow!(
-                    "Xshell IPC timeout: outcome may be unknown; NEVER automatically replay a command"
+                    "Terminal IPC timeout: outcome may be unknown; NEVER automatically replay a command"
                 ));
             }
             sleep(Duration::from_millis(20)).await;
@@ -491,5 +580,37 @@ impl BridgeClient {
                 .or_insert_with(|| response["bridge_instance"].clone());
         }
         Ok(result)
+    }
+}
+
+#[cfg(all(test, windows))]
+mod file_read_tests {
+    use super::*;
+    use std::os::windows::fs::OpenOptionsExt;
+
+    #[tokio::test]
+    async fn sharing_lock_retries_only_the_original_read() {
+        let path = std::env::temp_dir().join(format!("mcp-read-{}.json", Uuid::new_v4()));
+        std::fs::write(&path, b"original-response").unwrap();
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&path)
+            .unwrap();
+        let task_path = path.clone();
+        let reading =
+            tokio::spawn(async move { read_ipc(&task_path, Duration::from_secs(1)).await });
+        sleep(Duration::from_millis(60)).await;
+        assert!(!reading.is_finished());
+        drop(held);
+        assert_eq!(reading.await.unwrap().unwrap(), b"original-response");
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(&path)
+            .unwrap();
+        assert!(read_ipc(&path, Duration::from_millis(30)).await.is_err());
+        drop(held);
+        std::fs::remove_file(path).unwrap();
     }
 }
