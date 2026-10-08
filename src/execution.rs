@@ -415,6 +415,7 @@ impl Engine {
         let settle = Duration::from_millis(p.settle_ms.unwrap_or(750));
         let mut parser = MarkerParser::new(begin, end);
         let mut prompt_tail = String::new();
+        let mut prompt_progress = false;
         let (mut state, mut code, mut reason) = loop {
             if stop.load(Ordering::SeqCst) {
                 break (
@@ -484,12 +485,17 @@ impl Engine {
                 );
             }
             if p.mode == CaptureMode::Prompt {
+                prompt_progress |= !chunk.is_empty();
                 prompt_tail.push_str(chunk);
                 let wait_for = p.wait_for.as_deref().unwrap_or("");
+                // The old idle prompt may remain visible before native redraw.
+                // A screen-only match cannot complete a command until capture
+                // has observed post-send output progress.
                 let prompt_observed = literal_prompt_observed(&prompt_tail, wait_for)
-                    || response["current_line"]
-                        .as_str()
-                        .is_some_and(|line| !wait_for.is_empty() && line.trim_end() == wait_for);
+                    || (prompt_progress
+                        && response["current_line"].as_str().is_some_and(|line| {
+                            !wait_for.is_empty() && line.trim_end() == wait_for
+                        }));
                 if let Some(index) = prompt_tail.rfind('\n') {
                     prompt_tail = prompt_tail[index + 1..].to_owned();
                 }

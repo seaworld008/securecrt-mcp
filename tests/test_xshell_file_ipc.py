@@ -207,9 +207,25 @@ def test_compiled_mcp_uses_real_xshell_adapter_for_reuse_batch_and_rejection(mon
             if value == chr(3):
                 self.pending = self._text + '\r\nphp-test# '
                 return
-            begin = re.search(r'MCP_BEGIN_[a-f0-9]+', value).group()
+            match = re.search(r'MCP_BEGIN_[a-f0-9]+', value)
+            if match is None:
+                self.delayed = self._text + value.rstrip('\r') + '\nPROMPT_DELAYED_OUTPUT\nphp-test# '
+                self.reveal_at = time.monotonic() + .4
+                return
+            begin = match.group()
             end = re.search(r'MCP_END_[a-f0-9]+', value).group()
             self.pending = self._text + '\r\n' + begin + '\r\nfixture\r\n' + end + ' 0\r\nphp-test# '
+        @property
+        def CurrentRow(self):
+            if hasattr(self, 'delayed') and time.monotonic() >= self.reveal_at:
+                self.pending = self.delayed
+                del self.delayed
+            return super().CurrentRow
+        def WaitForStrings(self, sentinels, milliseconds):
+            if hasattr(self, 'delayed'):
+                time.sleep(milliseconds / 1000)
+                return 0
+            return super().WaitForStrings(sentinels, milliseconds)
     monkeypatch.setattr(MODULE, 'show_startup_notice', lambda logger=None: None)
     with tempfile.TemporaryDirectory() as directory:
         home = Path(directory)
@@ -248,6 +264,11 @@ def test_compiled_mcp_uses_real_xshell_adapter_for_reuse_batch_and_rejection(mon
             denied = client.tool('connector_exec', dict(params,operation_id='denied',expected_prompt='wrong'))
             assert denied['state'] == 'rejected' and denied['sent'] is False
             assert len(app.Screen.sent) == 5
+            delayed = client.tool('connector_exec', {'session_id':sid, 'command':'printf delayed',
+                'mode':'prompt', 'expected_prompt':'php-test#', 'wait_for':'php-test#',
+                'timeout_ms':2000, 'wait_ms':3000})
+            assert delayed['state'] == 'completed' and 'PROMPT_DELAYED_OUTPUT' in delayed['text'], delayed
+            assert delayed['timing']['poll_calls'] > 1
         finally:
             client.close()
             stop.set()

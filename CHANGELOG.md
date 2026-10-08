@@ -4,6 +4,7 @@
 
 ## [0.5.2] - 2026-10-08
 
+- Reject the unchanged pre-send prompt as completion until capture observes output progress.
 - Include JSON desktop acceptance receipts in every release archive.
 - Verify relative Markdown links against actual archive members during packaging.
 - Carries the Windows Xshell reliability fixes and live acceptance from 0.5.1;
