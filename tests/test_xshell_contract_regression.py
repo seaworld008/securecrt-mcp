@@ -274,3 +274,29 @@ def test_idle_ack_does_not_refresh_another_clients_attachment():
                    screen_token=screen["screen_token"], expected_prompt=screen["current_line"])["ok"]
     assert adapter.attachments[other]["context"] == before
     assert adapter.attachments[aid]["context"]["cursor_row"] == screen["cursor_row"]
+
+
+def test_raw_capture_keeps_unterminated_output_without_duplication():
+    app, adapter, sid, aid = opened()
+    assert request(adapter, "prepare_and_begin", session=sid, attachment_id=aid,
+                   expected_prompt=None, text="printf fixture", capture_id="raw", runtime_ms=2000)["ok"]
+    app.Screen.pending = None
+    app.Screen.text = "php-test# printf fixture\nPARTIAL"
+    first = request(adapter, "poll", capture_id="raw")["result"]
+    assert "PARTIAL" in first["text"]
+    assert request(adapter, "poll", capture_id="raw")["result"]["text"] == ""
+    app.Screen.text += "_CONTINUED"
+    assert request(adapter, "poll", capture_id="raw")["result"]["text"] == "_CONTINUED"
+    app.Screen.text += "\nphp-test# "
+    tail = request(adapter, "poll", capture_id="raw")["result"]["text"]
+    assert "PARTIAL" not in tail and tail.startswith("\n")
+
+
+def test_prompt_completion_reuses_original_input_boundary_after_row_change():
+    app, adapter, sid, aid = opened()
+    assert request(adapter, "prepare_and_begin", session=sid, attachment_id=aid,
+                   expected_prompt=None, text="printf fixture", capture_id="raw", runtime_ms=2000)["ok"]
+    app.Screen.pending = None
+    app.Screen.text = "php-test# printf fixture\noutput\nphp-test# "
+    assert request(adapter, "end", capture_id="raw", confirmed_complete=True)["ok"]
+    assert begin(adapter, sid, aid)["ok"]

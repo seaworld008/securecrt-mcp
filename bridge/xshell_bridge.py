@@ -736,7 +736,12 @@ class NativeAdapter:
             budget = max(1, min(128, MAX_CHUNK // (max(1, int(screen.Columns))*4 + 2)))
             last = min(current_row - 1, first + budget - 1)
             if last >= first:
-                chunk = str(screen.Get(first, capture["read_column"], first, int(screen.Columns))) + "\n"
+                row_text = str(screen.Get(first, capture["read_column"], first, int(screen.Columns)))
+                previous = capture.pop("partial_text", "")
+                if not row_text.startswith(previous):
+                    overflow = True
+                    break
+                chunk = row_text[len(previous):] + "\n"
                 self.metrics["native_reads"] += 1
                 if last > first:
                     chunk += str(screen.Get(first + 1, 1, last, int(screen.Columns))) + "\n"
@@ -746,7 +751,27 @@ class NativeAdapter:
                     chunk = ""
                     break
                 capture["read_row"], capture["read_column"] = last + 1, 1
-                break
+                if capture["marker"] or capture["read_row"] < current_row:
+                    break
+            if not capture["marker"] and capture["read_row"] == current_row:
+                # Snapshot/prompt/stream must expose a partial current row. Track
+                # its actual text prefix rather than the asynchronously redrawn
+                # cursor, so late characters and subsequent row completion are
+                # neither lost nor duplicated.
+                partial = str(screen.Get(current_row, capture["read_column"],
+                                         current_row, int(screen.Columns)))
+                self.metrics["native_reads"] += 1
+                previous = capture.get("partial_text", "")
+                if not partial.startswith(previous):
+                    overflow = True
+                    break
+                chunk += partial[len(previous):]
+                if len(chunk.encode("utf-8")) > MAX_CHUNK:
+                    overflow, chunk = True, ""
+                    break
+                capture["partial_text"] = partial
+                if chunk:
+                    break
             if now_ms() >= capture["until"] or not yield_to_xshell(self.app, 20, self.logger):
                 break
             if time.monotonic() - started >= 0.15:
@@ -776,7 +801,7 @@ class NativeAdapter:
                                         owner=capture["owner"], deadline_expired=True)
         attachment = self.attachments.get(capture["attachment_id"])
         if attachment:
-            attachment["awaiting_prompt"] = bool(confirmed_complete and not errors and capture["marker"])
+            attachment["awaiting_prompt"] = bool(confirmed_complete and not errors)
             attachment["completion_marker"] = capture["marker"]
         return dict(released=True, unresolved=sid in self.unresolved, restore_errors=errors)
 
