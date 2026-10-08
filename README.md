@@ -6,7 +6,7 @@
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange)](https://www.rust-lang.org/)
 [English](README.en.md)
 
-**securecrt-mcp 0.5.1** 是一个面向生产环境的 Rust MCP Server：让 Codex、Claude 等 MCP 客户端通过统一的 `connector_*` 接口安全、可审计地操作 SecureCRT、Xshell 中已经登录的 SSH 会话，以及系统 OpenSSH/PTY 连接器。
+**securecrt-mcp 0.5.2** 是一个面向生产环境的 Rust MCP Server：让 Codex、Claude 等 MCP 客户端通过统一的 `connector_*` 接口安全、可审计地操作 SecureCRT、Xshell 中已经登录的 SSH 会话，以及系统 OpenSSH/PTY 连接器。
 
 它复用操作员已经完成的 VPN、堡垒机、SSH 密钥和 MFA 流程，不建立第二条 SSH 连接，也不导出服务器凭据。项目独立于 VanDyke Software。
 
@@ -81,7 +81,7 @@ OpenSSH 示例：
 
 ## 已验证范围
 
-0.5.1 的 Rust、Bridge、MCP stdio、批量执行、daemon、故障注入、打包和连接器自动化测试已通过。真实桌面验收需要在当前 SecureCRT/Xshell 进程重新加载对应脚本后完成：
+0.5.2 的 Rust、Bridge、MCP stdio、批量执行、daemon、故障注入、打包和连接器自动化测试已通过。真实桌面验收需要在当前 SecureCRT/Xshell 进程重新加载对应脚本后完成：
 
 - Linux SSH Tab：`hostname`、`uptime`、`pwd`、`id` 连续执行成功。
 - 四命令 batch 完成，逐条返回输出和退出码。
@@ -98,7 +98,7 @@ OpenSSH 示例：
 从 [最新 Release](https://github.com/seaworld008/securecrt-mcp/releases/latest) 下载 Windows x64 ZIP，同时下载 `SHA256SUMS`，在 PowerShell 中校验：
 
 ```powershell
-Get-FileHash .\securecrt-mcp-0.5.1-x86_64-pc-windows-msvc.zip -Algorithm SHA256
+Get-FileHash .\securecrt-mcp-0.5.2-x86_64-pc-windows-msvc.zip -Algorithm SHA256
 Get-Content .\SHA256SUMS
 ```
 

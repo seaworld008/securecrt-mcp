@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/github/license/seaworld008/securecrt-mcp)](LICENSE)
 [中文说明](README.md)
 
-**securecrt-mcp 0.5.1** is a production-oriented Rust MCP server for operating SSH sessions that are already authenticated in SecureCRT or Xshell from Codex, Claude, or another MCP client, with an explicit persistent OpenSSH/PTY connector option.
+**securecrt-mcp 0.5.2** is a production-oriented Rust MCP server for operating SSH sessions that are already authenticated in SecureCRT or Xshell from Codex, Claude, or another MCP client, with an explicit persistent OpenSSH/PTY connector option.
 
 It reuses the operator's VPN, bastion, SSH key, and MFA flow. It does not create a second SSH connection or export server credentials. This project is independent of VanDyke Software.
 
@@ -81,7 +81,7 @@ Use the returned `session_id` with `connector_exec`, `connector_exec_batch`, `co
 
 ## Verified scope
 
-The 0.5.1 Rust, Bridge, MCP stdio, batch, daemon, fault-injection, packaging, and connector automation tests pass. Real desktop acceptance must be completed after the current SecureCRT/Xshell processes reload the matching scripts:
+The 0.5.2 Rust, Bridge, MCP stdio, batch, daemon, fault-injection, packaging, and connector automation tests pass. Real desktop acceptance must be completed after the current SecureCRT/Xshell processes reload the matching scripts:
 
 - Three Linux SSH tabs (`php_test`, `php_dev`, `k8s-master1`) completed `hostname`, `uptime`, and `pwd` batches after a SecureCRT restart.
 - Long output was read through cursor pagination.
@@ -96,7 +96,7 @@ These results do not claim native SSH equivalence. Validate the actual targets, 
 Download the Windows x64 archive and `SHA256SUMS` from the [latest Release](https://github.com/seaworld008/securecrt-mcp/releases/latest):
 
 ```powershell
-Get-FileHash .\securecrt-mcp-0.5.1-x86_64-pc-windows-msvc.zip -Algorithm SHA256
+Get-FileHash .\securecrt-mcp-0.5.2-x86_64-pc-windows-msvc.zip -Algorithm SHA256
 Get-Content .\SHA256SUMS
 ```
 
