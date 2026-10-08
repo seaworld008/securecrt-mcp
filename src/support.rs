@@ -280,11 +280,17 @@ mod tests {
     }
     #[test]
     fn stale_runtime_without_source_identity_is_rejected() {
-        assert!(validate_runtime("xshell", &json!({"bridge_version":"0.5.1"})).is_err());
         assert!(
             validate_runtime(
                 "xshell",
-                &json!({"bridge_version":"0.5.1",
+                &json!({"bridge_version":env!("CARGO_PKG_VERSION")})
+            )
+            .is_err()
+        );
+        assert!(
+            validate_runtime(
+                "xshell",
+                &json!({"bridge_version":env!("CARGO_PKG_VERSION"),
             "adapter_sha256":crate::digest::sha256_hex(crate::XSHELL_BRIDGE_SCRIPT)})
             )
             .is_ok()

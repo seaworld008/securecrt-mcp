@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import tomllib
 import zipfile
 
@@ -26,7 +27,7 @@ with zipfile.ZipFile(archive) as package:
     expected.update(p.relative_to(root).as_posix() for pattern in ('*.py','*.ps1') for p in (root/'clients').glob(pattern))
     expected.update(p.relative_to(root).as_posix() for p in (root/'support').glob('*.json'))
     expected.update(p.relative_to(root).as_posix() for p in (root/'bridge').glob('*.py'))
-    expected.update('tests/'+name for name in ('connector_acceptance.py','securecrt_desktop_smoke.py','mcp_smoke.py','protocol_harness.py','performance_smoke.py'))
+    expected.update('tests/'+name for name in ('connector_acceptance.py','securecrt_desktop_smoke.py','mcp_smoke.py','protocol_harness.py','performance_smoke.py','test_bridge.py'))
     assert set(package.namelist()) == expected, sorted(set(package.namelist()) ^ expected)
     assert len(package.namelist()) == len(expected), 'duplicate archive members'
     for member in package.namelist():
@@ -38,4 +39,8 @@ with zipfile.ZipFile(archive) as package:
                 target_member = posixpath.normpath(posixpath.join(posixpath.dirname(member), link))
                 assert target_member in expected, f'{member}: missing archive link {link}'
     assert 'clients/persistent_client.py' in expected and 'docs/migration-0.3.md' in expected
+    with tempfile.TemporaryDirectory() as extracted:
+        package.extractall(extracted)
+        subprocess.run([sys.executable, str(Path(extracted)/'tests/performance_smoke.py'), '--help'],
+                       check=True, capture_output=True, timeout=15)
 print('PASS: executable/archive byte identity, expected manifest and SHA-256 sidecar; no release published')

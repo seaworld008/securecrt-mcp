@@ -10,6 +10,8 @@ import time
 
 from mcp_smoke import MCP
 
+CURRENT_VERSION = re.search(r'BRIDGE_VERSION = "([^"]+)"', (Path(__file__).parents[1]/"bridge"/"xshell_bridge.py").read_text(encoding="utf-8")).group(1)
+
 
 def test_compiled_mcp_discovers_xshell_through_file_ipc():
     binary = Path(__file__).parents[1] / "target" / "debug" / "securecrt-mcp.exe"
@@ -107,7 +109,7 @@ def test_compiled_mcp_aggregates_and_routes_multiple_xshell_instances():
                         if method == "ping":
                             apis=json.loads((Path(__file__).parents[1]/"support"/"policy.json").read_text())["required_apis"]["xshell"]
                             digest=hashlib.sha256((Path(__file__).parents[1]/"bridge"/"xshell_bridge.py").read_bytes()).hexdigest()
-                            result = {"bridge_version": "0.5.1", "protocol_version": 2,
+                            result = {"bridge_version": CURRENT_VERSION, "protocol_version": 2,
                                       "python":"3.11.17","xshell_version":"8.0",
                                       "api_capabilities":{name:True for name in apis},
                                       "adapter_sha256":digest if instance=="instance-a" else "stale-source",

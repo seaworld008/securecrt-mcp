@@ -19,7 +19,7 @@ with zipfile.ZipFile(archive, 'w', compression=zipfile.ZIP_DEFLATED) as z:
     files+=list((root/'docs').rglob('*.md'))+list((root/'docs').rglob('*.json'))
     files+=list((root/'clients').glob('*.py'))+list((root/'clients').glob('*.ps1'))
     files+=list((root/'support').glob('*.json'))+list((root/'bridge').glob('*.py'))
-    files+=[root/'tests'/name for name in ('connector_acceptance.py','securecrt_desktop_smoke.py','mcp_smoke.py','protocol_harness.py','performance_smoke.py')]
+    files+=[root/'tests'/name for name in ('connector_acceptance.py','securecrt_desktop_smoke.py','mcp_smoke.py','protocol_harness.py','performance_smoke.py','test_bridge.py')]
     for path in files:
         z.write(path,path.relative_to(root).as_posix())
 checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
