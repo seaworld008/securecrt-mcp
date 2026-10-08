@@ -61,7 +61,7 @@ class FakeScreen:
 
     @property
     def Rows(self):
-        return 24
+        return max(24, len(self._lines) + 1)
 
     @property
     def Columns(self):
@@ -69,16 +69,24 @@ class FakeScreen:
 
     @property
     def CurrentRow(self):
+        if self.pending is not None:
+            self.text, self.pending = self.pending, None
         return len(self._lines)
 
     @property
     def CurrentColumn(self):
         return len(self._lines[-1]) + 1
 
-    def Get(self, first_row, _first_column, last_row, _last_column):
-        if first_row == 1 and last_row == self.Rows:
-            return self._text
-        return self._lines[first_row - 1]
+    def Get(self, first_row, first_column, last_row, last_column):
+        lines = [self._lines[row-1] if 1 <= row <= len(self._lines) else ""
+                 for row in range(first_row, last_row+1)]
+        if not lines:
+            return ""
+        if len(lines) == 1:
+            return lines[0][first_column-1:last_column]
+        lines[0] = lines[0][first_column-1:]
+        lines[-1] = lines[-1][:last_column]
+        return "\n".join(lines)
 
     def Send(self, value):
         command = value.rstrip("\r\n")
@@ -97,44 +105,69 @@ class FakeDialog:
         return None
 
 
-def test_yield_to_xshell_uses_short_session_sleep_for_ui_responsiveness():
+def test_yield_to_xshell_pumps_native_events_without_session_sleep():
     calls = []
-
+    class Screen:
+        def WaitForStrings(self, sentinels, milliseconds):
+            calls.append((sentinels, milliseconds))
+            return 0
     class Session:
         def Sleep(self, milliseconds):
-            calls.append(milliseconds)
-
-    app = type("App", (), {"Session": Session()})()
-
+            raise AssertionError("native Sleep deallocates None on this host")
+    app = type("App", (), {"Session": Session(), "Screen": Screen()})()
     assert MODULE.yield_to_xshell(app, 50) is True
-    assert calls == [MODULE.HOST_WAIT_MS]
+    assert len(calls) == 1 and calls[0][1] == 20
+    assert isinstance(calls[0][0], list) and len(calls[0][0]) == 1
+
+
+def test_yield_to_xshell_handles_observed_iterator_binding_error():
+    class Screen:
+        def WaitForStrings(self, *args):
+            try:
+                raise SystemError("null argument to internal routine")
+            except SystemError as cause:
+                raise SystemError("WaitForStrings returned a result with an error set") from cause
+    app = type("App", (), {"Screen": Screen()})()
+    assert MODULE.yield_to_xshell(app, 20) is True
+
+
+def test_yield_to_xshell_preserves_other_binding_failures():
+    class Screen:
+        def WaitForStrings(self, *args):
+            raise SystemError("unexpected native failure")
+    app = type("App", (), {"Screen": Screen()})()
+    assert MODULE.yield_to_xshell(app, 20) is False
 
 
 def test_yield_to_xshell_converts_host_cancel_to_clean_stop():
-    class CancelledSession:
-        def Sleep(self, _milliseconds):
+    class Screen:
+        def WaitForStrings(self, *args):
             raise KeyboardInterrupt()
-
-    app = type("App", (), {"Session": CancelledSession()})()
+    app = type("App", (), {"Screen": Screen()})()
     assert MODULE.yield_to_xshell(app, 7) is False
 
 
 def test_yield_to_xshell_converts_unstructured_host_cancel_to_clean_stop():
-    class CancelledSession:
-        def Sleep(self, _milliseconds):
+    class Screen:
+        def WaitForStrings(self, *args):
             raise TypeError("'NoneType' object is not callable")
-
-    app = type("App", (), {"Session": CancelledSession()})()
+    app = type("App", (), {"Screen": Screen()})()
     assert MODULE.yield_to_xshell(app, 7) is False
 
 
-def test_yield_to_xshell_falls_back_without_session_sleep(monkeypatch):
-    calls = []
-    monkeypatch.setattr(MODULE.time, "sleep", lambda seconds: calls.append(seconds))
+def test_yield_to_xshell_fails_closed_without_native_message_pump():
     app = type("App", (), {})()
+    assert MODULE.yield_to_xshell(app, 50) is False
 
-    assert MODULE.yield_to_xshell(app, 50) is True
-    assert calls == [0.05]
+
+def test_yield_to_xshell_never_uses_zero_timeout():
+    calls = []
+    class Screen:
+        def WaitForStrings(self, strings, timeout):
+            calls.append(timeout)
+            return 0
+    assert MODULE.yield_to_xshell(type("App", (), {"Screen": Screen()})(), 0)
+    assert calls == [1]
 
 def test_startup_notice_uses_external_process_without_host_modal(monkeypatch):
     calls = []
@@ -539,3 +572,31 @@ def test_xshell_file_ipc_server_round_trip_without_socket_modules():
         thread.join(1)
         assert not thread.is_alive()
         assert not ready.exists()
+
+
+def test_external_engine_resolves_actual_script_folder_without_file_global(tmp_path):
+    from types import SimpleNamespace
+    script = tmp_path / "securecrt-mcp-xshell.py"
+    script.write_text("# installed bridge")
+    app = SimpleNamespace(Session=SimpleNamespace(ScriptFolderPath=str(tmp_path)))
+    assert MODULE.runtime_script_path(app, {}) == script
+
+
+def test_external_engine_refuses_to_guess_source_from_working_directory(tmp_path):
+    import pytest
+    from types import SimpleNamespace
+    app = SimpleNamespace(Session=SimpleNamespace(ScriptFolderPath=str(tmp_path)))
+    with pytest.raises(ValueError, match="script_path_unavailable"):
+        MODULE.runtime_script_path(app, {})
+
+
+def test_external_main_executes_the_bytes_whose_digest_it_reports(tmp_path):
+    import hashlib, types
+    app = types.SimpleNamespace(Session=types.SimpleNamespace(ScriptFolderPath=str(tmp_path)), records=[])
+    source = b"def main():\n    xsh.records.append((_EXECUTED_SOURCE_SHA256, __file__, 'current_source'))\n"
+    script = tmp_path / "securecrt-mcp-xshell.py"
+    script.write_bytes(source)
+    entry = types.FunctionType(MODULE.Main.__code__, {"xsh": app, "hashlib": hashlib,
+                               "runtime_script_path": MODULE.runtime_script_path})
+    entry()
+    assert app.records == [(hashlib.sha256(source).hexdigest(), str(script), "current_source")]

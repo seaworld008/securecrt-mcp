@@ -153,20 +153,19 @@ cancel, and final cleanup; tokens and terminal contents are never logged. The
 development regression suite also runs two fake Xshell instances concurrently
 and verifies that both stop cleanly:
 
-The idle loop uses Xshell's `Session.Sleep(1)` host wait. The one-millisecond
-wait returns control to Xshell's message pump frequently enough for multiple
-bridge instances while keeping **Tools -> Script -> Cancel** responsive. On
-cancellation, Xshell may return an unstructured `NoneType`/`TypeError` from that
-COM call; the bridge records the host-wait failure, treats it as a normal stop,
-and removes the IPC registration. A normal Python `time.sleep` must not be used
-for the Xshell production path because it can leave XshellCore waiting on the
-embedded script and produce a Windows `AppHangXProcB1` report. The bridge does
-not change `Screen.Synchronous` for its entire lifetime because that property
-can also raise an unstructured host `SystemError` during cancellation. Command
-execution manages synchronization only around its own `Screen.Send` operation.
-`Screen.WaitForStrings` remains a diagnostic capability check; it is not used
-as the idle loop because this Xshell build exposes it without a timeout
-argument. Startup notices run in one foreground `wscript.exe` process and use a
+The idle loop uses bounded `Screen.WaitForStrings([sentinel], ms)` calls on
+Xshell's script thread. The observed Xshell 8 / Python 3.8.6 binding returns
+borrowed `None` from `Session.Sleep`, eventually crashing the host. A plain
+Python sleep does not pump terminal events. `WaitForStrings` returns an integer;
+its observed iterator-end `SystemError` is handled only for the exact error chain.
+Other native failures and cancellation stop the bridge and clean up registration.
+Synchronization is managed per capture and restored on completion and shutdown.
+Captures read newly completed native rows; eviction or redraw is reported as
+incomplete instead of mixing old history into a command's result.
+Non-ASCII POSIX input crosses the ANSI Python binding as an ASCII octal `printf`
+and `eval` envelope, retaining the current shell's cwd/environment. Non-ASCII
+prompt input is rejected before sending because that binding cannot preserve it.
+Startup notices run in one foreground `wscript.exe` process and use a
 temporary lock so repeated launches cannot stack duplicate dialogs. The popup
 has a finite timeout as a crash safety net, and the bridge keeps the process
 handle for its own popup so it can close it silently during normal cleanup. The

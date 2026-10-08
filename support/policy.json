@@ -39,14 +39,15 @@
       "xsh.Session.SelectTabName",
       "xsh.Session.SessionName",
       "xsh.Session.TabText",
-      "xsh.Session.Sleep",
       "xsh.Screen.Get",
       "xsh.Screen.CurrentRow",
       "xsh.Screen.CurrentColumn",
       "xsh.Screen.Rows",
       "xsh.Screen.Columns",
       "xsh.Screen.Synchronous",
-      "xsh.Screen.Send"
+      "xsh.Screen.Send",
+      "xsh.Screen.WaitForStrings",
+      "xsh.binding_reference_safe"
     ]
   },
   "retirement_notice_days": 90,

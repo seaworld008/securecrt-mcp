@@ -35,13 +35,9 @@ STARTUP_NOTICE = "Xshell MCP 已启动；当前脚本只控制已连接的命名
 STALE_INSTANCE_MS = 300_000
 STARTUP_NOTICE_STYLE = 0x50040  # information + foreground + topmost
 STARTUP_NOTICE_TIMEOUT_SECONDS = 15
-# Xshell's script host must own the idle wait so Tools -> Script -> Cancel can
-# interrupt the script without hanging XshellCore. On this build a long
-# Session.Sleep call can return an unstructured NoneType exception during
-# cancellation; one-millisecond host waits avoid that cancellation window while
-# still yielding to Xshell's message pump. The exception is handled below as a
-# normal stop.
-HOST_WAIT_MS = 1
+# The observed Xshell 8 Python binding decrements None's reference count on
+# each Session.Sleep call. Never use that void-returning native wait in a loop.
+HOST_POLL_MS = 20
 
 
 def fail(message):
@@ -58,6 +54,60 @@ def now_ms():
     return int(time.time() * 1000)
 
 
+def native_command_text(text, completion_marker):
+    """Keep Unicode POSIX input out of Xshell's ANSI Python string binding."""
+    if text.isascii():
+        return text
+    if not completion_marker:
+        fail("unicode_input_requires_posix: native prompt input cannot preserve Unicode; nothing sent")
+    # PyArg_ParseTuple('s') produces UTF-8, but the observed Xshell wrapper
+    # converts it through Windows' ANSI code page. Decode the exact UTF-8 bytes
+    # using POSIX printf and eval in the current shell, preserving cwd/env and
+    # the existing completion envelope without adding a user-command subshell.
+    octal = "".join("\\%03o" % byte for byte in text.encode("utf-8"))
+    wire = 'eval "$(printf \'' + octal + '\')"'
+    string(wire, "encoded_native_text", MAX_FRAME)
+    return wire
+
+
+def host_version(app):
+    """Read the running host's version without ctypes or external Python."""
+    value = getattr(app, "Version", None)
+    if value:
+        return str(value)
+    path = Path(sys.executable)
+    if path.name.lower() not in ("xshell.exe", "xshellcore.exe"):
+        return "unknown"
+    try:
+        if path.stat().st_size > 64 * 1024 * 1024:
+            return "unknown"
+        data = path.read_bytes()
+        key = "VS_VERSION_INFO\0".encode("utf-16le")
+        index = data.find(key)
+        if index < 6:
+            return "unknown"
+        start = index - 6
+        length, value_length, kind = (int.from_bytes(data[start+i:start+i+2], "little") for i in (0, 2, 4))
+        offset = start + ((6 + len(key) + 3) // 4) * 4
+        if kind != 0 or value_length != 52 or start + length > len(data) or offset + 52 > start + length:
+            return "unknown"
+        values = [int.from_bytes(data[offset+i:offset+i+4], "little") for i in range(0, 52, 4)]
+        if values[0] == 0xFEEF04BD:
+            return ".".join(str(n) for n in
+                            (values[4] >> 16, values[4] & 65535,
+                             values[5] >> 16, values[5] & 65535))
+    except (OSError, ValueError):
+        pass
+    return "unknown"
+
+
+def unsafe_embedded_binding(app):
+    """Reject the exact native binding with reproduced borrowed-None returns."""
+    return (sys.version_info[:3] == (3, 8, 6) and
+            type(app.Screen).__module__ == "Xsh" and
+            host_version(app) == "8.0.0.26")
+
+
 def probe_capabilities(app):
     """Read native API availability; never send input or call a wait function."""
     def available(path):
@@ -69,44 +119,45 @@ def probe_capabilities(app):
             return callable(value) if path.split('.')[-1] in methods else value is not None
         except Exception:
             return False
-    return {'xsh.' + name: available(name) for name in
+    capabilities = {'xsh.' + name: available(name) for name in
             ('Version', 'Session.Connected', 'Session.SelectTabName', 'Session.SessionName',
              'Session.TabText', 'Session.Path', 'Session.RemoteAddress', 'Session.RemotePort',
              'Session.UserName', 'Session.Sleep', 'Screen.Get', 'Screen.CurrentRow',
              'Screen.CurrentColumn', 'Screen.Rows', 'Screen.Columns', 'Screen.Synchronous',
              'Screen.Send', 'Screen.WaitForStrings')}
+    capabilities['xsh.binding_reference_safe'] = not unsafe_embedded_binding(app)
+    return capabilities
 
 
 def yield_to_xshell(app, milliseconds, logger=None):
-    """Yield through Xshell's message pump and tolerate Script > Cancel."""
-    session_sleep = getattr(getattr(app, "Session", None), "Sleep", None)
-    if callable(session_sleep):
-        try:
-            # A one-millisecond host wait is intentional. It is the smallest
-            # stable wait on Xshell 8 and keeps cancellation outside a long COM
-            # call. Xshell may raise ``TypeError: NoneType is not callable``
-            # when the operator cancels the script; that is a normal stop.
-            session_sleep(HOST_WAIT_MS)
-            return True
-        except (KeyboardInterrupt, SystemExit):
-            if logger:
-                logger("host_wait_cancelled", method="Session.Sleep")
-            return False
-        except Exception as exc:
-            if logger:
-                logger("host_wait_failed", method="Session.Sleep", error=str(exc)[:256])
-            return False
-
-    # Older/non-Xshell hosts may not expose Session.Sleep. Keep a bounded
-    # fallback for diagnostics; the Xshell production path above is the only
-    # path that can service the host message pump and support safe cancellation.
+    """Pump host events with an integer-returning, bounded native wait."""
     try:
-        time.sleep(max(0, milliseconds) / 1000.0)
+        # A Python sleep blocks Xshell's terminal/message processing. Session.Sleep
+        # instead returns borrowed None on the observed Python 3.8 binding and
+        # eventually crashes the host. WaitForStrings returns a Python integer.
+        try:
+            app.Screen.WaitForStrings(["__MCP_HOST_YIELD_" + str(os.getpid()) + "__"],
+                                      max(1, min(HOST_POLL_MS, milliseconds)))
+        except SystemError as exc:
+            # Xshell 8's iterable wrapper calls PyObject_Size(NULL) at exhaustion,
+            # then performs the native wait and returns an integer with that error
+            # still set. Accept only this observed error chain; other SDK errors
+            # and Script > Cancel stop the bridge normally.
+            cause = exc.__cause__
+            if not (isinstance(cause, SystemError) and
+                    str(cause) == "null argument to internal routine" and
+                    "WaitForStrings" in str(exc) and "error set" in str(exc)):
+                raise
         return True
     except (KeyboardInterrupt, SystemExit):
         if logger:
-            logger("fallback_wait_cancelled", method="time.sleep")
+            logger("host_wait_cancelled", method="Screen.WaitForStrings")
         return False
+    except Exception as exc:
+        if logger:
+            logger("host_wait_failed", method="Screen.WaitForStrings", error=str(exc)[:256])
+        return False
+
 
 def make_logger(ipc_root, instance):
     """Create a bounded JSONL lifecycle log for one Xshell script instance."""
@@ -336,6 +387,9 @@ class NativeAdapter:
         self.attachments = {}
         self.unresolved = {}
         self.owner = "legacy"
+        self.product_version = host_version(app)
+        self.send_attempted = False
+        self.request_deadline = None
         self.logger = None
         self.metrics = dict(requests=0, native_reads=0, native_read_ms=0,
                             connections=0, context_rejections=0)
@@ -361,8 +415,8 @@ class NativeAdapter:
         if known:
             metadata = known["metadata"]
             target = metadata["session_name"] or metadata["tab_text"]
-        elif target.startswith("xshell/"):
-            target = target.rsplit("/", 1)[-1]
+        elif "/" in target:
+            fail("stale_session: list sessions again; opaque IDs cannot select names")
         current = self._metadata()
         if target not in (current["session_name"], current["tab_text"]):
             try:
@@ -372,7 +426,10 @@ class NativeAdapter:
                 fail("session_select_failed: " + str(exc))
         if not self._connected():
             fail("session_not_connected")
-        return self._metadata()
+        result = self._metadata()
+        if known and self._session_id(result) != self._session_id(metadata):
+            fail("stale_session: target metadata changed; nothing sent")
+        return result
 
     def _session_id(self, metadata):
         name = "\0".join((metadata["session_name"], metadata["remote_address"],
@@ -441,17 +498,77 @@ class NativeAdapter:
                 errors.append(dict(name=original, error="restore_failed"))
         return sessions, errors, len(names)
 
+    def _input(self):
+        screen = self.app.Screen
+        row, column, columns = int(screen.CurrentRow), int(screen.CurrentColumn), int(screen.Columns)
+        return dict(current_line=str(screen.Get(row, 1, row, columns)).rstrip(),
+                    cursor_row=row, cursor_column=column, columns=columns)
+
     def _screen(self):
         screen = self.app.Screen
-        rows, columns = int(screen.Rows), int(screen.Columns)
-        text = str(screen.Get(1, 1, rows, columns))
+        value = self._input()
+        row, columns = value["cursor_row"], value["columns"]
+        # Xshell Rows includes scrollback, not just the visible terminal.
+        visible = min(50, int(getattr(screen, "CurrentRowInScreen", 50)))
+        start = max(0, row - max(1, visible) + 1)
+        end = min(int(screen.Rows), row + 1)
+        text = str(screen.Get(start, 1, end, columns))
         if len(text.encode("utf-8")) > MAX_CHUNK:
             fail("screen_too_large: resize the terminal")
-        row, column = int(screen.CurrentRow), int(screen.CurrentColumn)
-        line = str(screen.Get(row, 1, row, columns)).rstrip()
-        digest = hashlib.sha256((text + "\0" + str(row) + ":" + str(column)).encode("utf-8")).hexdigest()
-        return dict(text=text, current_line=line, cursor_row=row, cursor_column=column,
-                    rows=rows, columns=columns, digest=digest)
+        digest = hashlib.sha256((text + "\0" + str(row) + ":" + str(value["cursor_column"])).encode("utf-8")).hexdigest()
+        value.update(text=text, rows=end-start+1, digest=digest)
+        return value
+
+    def _before_send(self):
+        if self.request_deadline is not None and now_ms() >= self.request_deadline:
+            fail("expired request immediately before native send; nothing sent")
+
+    def _attachment(self, attachment_id, write=False):
+        value = self.attachments.get(self._attachment_key(attachment_id))
+        if not value or now_ms() > value["expires"]:
+            fail("stale_attachment: inspect and attach again")
+        if value["owner"] != self.owner:
+            fail("ownership_conflict")
+        if write and value["mode"] == "observe":
+            fail("observe attachment does not permit writes")
+        self._select(value["session"])
+        value["expires"] = now_ms() + 600000
+        return value
+
+    def _attachment_context(self, attachment):
+        expected = attachment["context"]
+        if not attachment.get("awaiting_prompt"):
+            if self._input() == expected:
+                return
+        else:
+            until = time.monotonic() + 1.5
+            stable = 0
+            for _ in range(1502):
+                self._before_send()
+                current = self._input()
+                if current["columns"] != expected["columns"]:
+                    break
+                if (current["current_line"] == expected["current_line"] and
+                        current["cursor_column"] == expected["cursor_column"]):
+                    stable += 1
+                    if stable == 2:
+                        attachment["context"] = current
+                        attachment["awaiting_prompt"] = False
+                        return
+                else:
+                    stable = 0
+                    line = current["current_line"]
+                    marker = attachment.get("completion_marker") or ""
+                    suffix = line[len(marker) + 1:] if marker and line.startswith(marker + " ") else ""
+                    owned = suffix.isascii() and suffix.isdigit() and 1 <= len(suffix) <= 3 and int(suffix) <= 255
+                    pending_cursor = (line == expected["current_line"] and
+                                      1 <= current["cursor_column"] < expected["cursor_column"])
+                    if line and not owned and not pending_cursor:
+                        break
+                if time.monotonic() >= until or not yield_to_xshell(self.app, 10, self.logger):
+                    break
+        self.metrics["context_rejections"] += 1
+        fail("context_changed: original input boundary changed or not ready; nothing sent")
 
     def _entry(self, session):
         metadata = self._select(session)
@@ -489,7 +606,9 @@ class NativeAdapter:
         sid, entry = self._entry(session)
         value = self._screen()
         token = str(uuid.uuid4())
-        self.tokens[token] = dict(session=sid, digest=value.pop("digest"), expires=now_ms() + SCREEN_MS)
+        self.tokens[token] = dict(session=sid, digest=value.pop("digest"), expires=now_ms() + SCREEN_MS,
+                                 context={key: value[key] for key in
+                                          ("current_line", "cursor_row", "cursor_column", "columns")})
         value.update(session=sid, screen_token=token, token_expires_ms=now_ms() + SCREEN_MS,
                      configured_endpoint=entry["metadata"],
                      context_warning="Configured endpoint is not proof of the current nested SSH target.")
@@ -498,7 +617,7 @@ class NativeAdapter:
     def _guard(self, session, screen_token, expected_prompt, attachment_id=None):
         sid, entry = self._entry(session)
         if attachment_id:
-            attachment = self.attachments.get(attachment_id)
+            attachment = self._attachment(attachment_id, write=True)
             if not attachment or attachment["session"] != sid:
                 fail("attachment_mismatch")
             if expected_prompt:
@@ -506,6 +625,7 @@ class NativeAdapter:
                 if current != str(expected_prompt).rstrip():
                     self.metrics["context_rejections"] += 1
                     fail("prompt_mismatch")
+            self._attachment_context(attachment)
             return sid, entry
         expected_prompt = string(expected_prompt, "expected_prompt", 512).rstrip()
         token = self.tokens.pop(screen_token, None)
@@ -525,16 +645,20 @@ class NativeAdapter:
             current = self._screen()["current_line"]
             if current != str(expected_prompt).rstrip():
                 fail("prompt_mismatch: target is not at the expected input context")
+        context = self._input()
+        if mode != "observe" and expected_prompt is None:
+            line = context["current_line"]
+            if not line.endswith(("$", "#", "%")) or any(
+                    word in line.lower() for word in ("password", "passphrase", "--more--", "密码")):
+                fail("input_context_required: inspect an idle shell before attaching")
         aid = str(uuid.uuid4())
-        self.attachments[aid] = dict(session=sid, mode=mode, entry=entry, expires=now_ms() + 600000)
+        self.attachments[aid] = dict(session=sid, mode=mode, entry=entry,
+                                     context=context, owner=self.owner, expires=now_ms() + 600000)
         return dict(attachment_id=aid, session=sid, mode=mode, configured_endpoint=entry["metadata"],
                     current_line=self._screen()["current_line"], capabilities=self._capabilities())
 
     def heartbeat(self, attachment_id):
-        attachment = self.attachments.get(self._attachment_key(attachment_id))
-        if not attachment:
-            fail("stale_attachment")
-        self._select(attachment["entry"]["metadata"]["session_name"])
+        attachment = self._attachment(attachment_id)
         attachment["expires"] = now_ms() + 600000
         return dict(attachment_id=attachment_id, session=attachment["session"],
                     unresolved=self.unresolved.get(attachment["session"]))
@@ -546,20 +670,39 @@ class NativeAdapter:
     def prepare_and_begin(self, session, attachment_id, expected_prompt, text, capture_id,
                           runtime_ms, completion_marker=None):
         aid = self._attachment_key(attachment_id)
-        attachment = self.attachments.get(aid)
-        if not attachment:
-            fail("stale_attachment")
+        attachment = self._attachment(aid, write=True)
         sid, entry = self._guard(session, "", expected_prompt, aid)
         if sid in self.unresolved:
             fail("unresolved: inspect and acknowledge idle first")
         string(text, "text")
         string(capture_id, "capture_id", 128)
-        self._select(entry["metadata"]["session_name"])
-        self.app.Screen.Synchronous = True
-        self.app.Screen.Send(text + "\r")
-        self.captures[capture_id] = dict(session=sid, entry=entry, until=now_ms() + int(runtime_ms),
-                                        marker=completion_marker, last=self._screen()["text"],
-                                        owner=self.owner)
+        if any(c["session"] == sid for c in self.captures.values()):
+            fail("busy: this session has an active capture")
+        if capture_id in self.captures:
+            fail("capture_id conflict")
+        if type(runtime_ms) is not int or not 1000 <= runtime_ms <= 3600000:
+            fail("invalid runtime_ms")
+        if unsafe_embedded_binding(self.app):
+            fail("unsafe_native_python_binding: use Xshell external 32-bit Python/pywin32; nothing sent")
+        wire_text = native_command_text(text, completion_marker)
+        self._select(sid)
+        self.captures[capture_id] = dict(session=sid, entry=entry, until=now_ms() + runtime_ms,
+                                        marker=completion_marker, read_row=int(self.app.Screen.CurrentRow),
+                                        read_column=int(self.app.Screen.CurrentColumn),
+                                        anchor_row=int(self.app.Screen.CurrentRow),
+                                        anchor_column=int(self.app.Screen.CurrentColumn),
+                                        anchor=str(self.app.Screen.Get(int(self.app.Screen.CurrentRow), 1,
+                                                   int(self.app.Screen.CurrentRow), max(1, int(self.app.Screen.CurrentColumn)-1))),
+                                        owner=self.owner, attachment_id=aid,
+                                        old_sync=self.app.Screen.Synchronous)
+        try:
+            self.app.Screen.Synchronous = True
+            self._before_send()
+            self.send_attempted = True
+            self.app.Screen.Send(wire_text + "\r")
+        except Exception:
+            self.end(capture_id, False)
+            raise
         return dict(capture_id=capture_id, sent=True)
 
     def poll(self, capture_id, wait_for=None):
@@ -568,60 +711,127 @@ class NativeAdapter:
     def poll_bulk(self, capture_id, wait_for=None, max_reads=128):
         capture = self.captures.get(string(capture_id, "capture_id"))
         if not capture:
-            old = self.unresolved.get(capture_id)
+            old = next((c for c in self.unresolved.values() if c["capture_id"] == capture_id), None)
             if old:
                 return dict(text="", overflow=False, expired=True, capture_may_be_incomplete=True)
             fail("capture_mismatch")
-        self._select(capture["entry"]["metadata"]["session_name"])
+        if capture["owner"] != self.owner:
+            fail("ownership_conflict")
+        self._select(capture["session"])
+        screen = self.app.Screen
         started = time.monotonic()
         chunk = ""
+        overflow = False
         for _ in range(max(1, min(int(max_reads), 128))):
-            value = self._screen()
-            current = value["text"]
-            old = capture["last"]
-            if current.startswith(old):
-                delta = current[len(old):]
-            elif old and old in current:
-                delta = current.split(old, 1)[1]
-            else:
-                delta = current
-            capture["last"] = current
-            chunk += delta
+            current_row = int(screen.CurrentRow)
+            anchor = str(screen.Get(capture["anchor_row"], 1, capture["anchor_row"],
+                                    max(1, capture["anchor_column"] - 1)))
             self.metrics["native_reads"] += 1
-            if capture["marker"] and capture["marker"] in chunk:
+            if anchor != capture["anchor"] or current_row < capture["read_row"]:
+                overflow = True  # Buffer eviction/redraw must not masquerade as complete output.
                 break
-            if delta:
+            first = capture["read_row"]
+            # Read completed physical rows only. Cursor and text redraw independently;
+            # consuming a still-rendering current row would lose its late characters.
+            budget = max(1, min(128, MAX_CHUNK // (max(1, int(screen.Columns))*4 + 2)))
+            last = min(current_row - 1, first + budget - 1)
+            if last >= first:
+                row_text = str(screen.Get(first, capture["read_column"], first, int(screen.Columns)))
+                previous = capture.pop("partial_text", "")
+                if not row_text.startswith(previous):
+                    overflow = True
+                    break
+                chunk = row_text[len(previous):] + "\n"
+                self.metrics["native_reads"] += 1
+                if last > first:
+                    chunk += str(screen.Get(first + 1, 1, last, int(screen.Columns))) + "\n"
+                    self.metrics["native_reads"] += 1
+                if len(chunk.encode("utf-8")) > MAX_CHUNK:
+                    overflow = True
+                    chunk = ""
+                    break
+                capture["read_row"], capture["read_column"] = last + 1, 1
+                if capture["marker"] or capture["read_row"] < current_row:
+                    break
+            if not capture["marker"] and capture["read_row"] == current_row:
+                # Snapshot/prompt/stream must expose a partial current row. Track
+                # its actual text prefix rather than the asynchronously redrawn
+                # cursor, so late characters and subsequent row completion are
+                # neither lost nor duplicated.
+                partial = str(screen.Get(current_row, capture["read_column"],
+                                         current_row, int(screen.Columns)))
+                self.metrics["native_reads"] += 1
+                previous = capture.get("partial_text", "")
+                if not partial.startswith(previous):
+                    overflow = True
+                    break
+                chunk += partial[len(previous):]
+                if len(chunk.encode("utf-8")) > MAX_CHUNK:
+                    overflow, chunk = True, ""
+                    break
+                capture["partial_text"] = partial
+                if chunk:
+                    break
+            if now_ms() >= capture["until"] or not yield_to_xshell(self.app, 20, self.logger):
                 break
-            if now_ms() >= capture["until"]:
-                break
-            if not yield_to_xshell(self.app, 20, self.logger):
-                break
-            if (time.monotonic() - started) >= 1.0:
+            if time.monotonic() - started >= 0.15:
                 break
         expired = now_ms() >= capture["until"]
-        return dict(text=chunk, current_line=self._screen()["current_line"], overflow=False, expired=expired,
-                    capture_may_be_incomplete=expired and not (capture["marker"] and capture["marker"] in chunk))
+        return dict(text=chunk, current_line=self._input()["current_line"], overflow=overflow,
+                    expired=expired, capture_may_be_incomplete=overflow or expired)
 
     def end(self, capture_id, confirmed_complete=False):
+        if type(confirmed_complete) is not bool:
+            fail("invalid confirmed_complete")
         capture = self.captures.pop(capture_id, None)
-        if capture:
-            self.app.Screen.Synchronous = False
-            if not confirmed_complete:
-                self.unresolved[capture["session"]] = dict(capture_id=capture_id, deadline_expired=True)
-        return dict(ended=True, unresolved=self.unresolved.get(capture["session"]) if capture else None,
-                    restore_errors=[])
-
-    def interrupt(self, capture_id):
-        capture = self.captures.get(string(capture_id, "capture_id"))
         if not capture:
+            old = next((c for c in self.unresolved.values() if c["capture_id"] == capture_id), None)
+            if old:
+                return dict(released=True, unresolved=True, restore_errors=[])
             fail("capture_mismatch")
-        self._select(capture["entry"]["metadata"]["session_name"])
+        sid = capture["session"]
+        errors = []
+        try:
+            self._select(sid)
+            self.app.Screen.Synchronous = capture["old_sync"]
+        except Exception as exc:
+            errors.append(type(exc).__name__)
+        if not confirmed_complete or errors:
+            self.unresolved[sid] = dict(capture_id=capture_id, session=sid,
+                                        owner=capture["owner"], deadline_expired=True)
+        attachment = self.attachments.get(capture["attachment_id"])
+        if attachment:
+            attachment["awaiting_prompt"] = bool(confirmed_complete and not errors)
+            attachment["completion_marker"] = capture["marker"]
+        return dict(released=True, unresolved=sid in self.unresolved, restore_errors=errors)
+
+    def interrupt(self, session, capture_id):
+        capture = self.captures.get(string(capture_id, "capture_id")) or self.unresolved.get(session)
+        if not capture or capture["session"] != session or capture.get("capture_id", capture_id) != capture_id:
+            fail("capture_mismatch: refusing to interrupt an unrelated program")
+        if capture["owner"] != self.owner:
+            fail("ownership_conflict")
+        self._select(session)
+        if unsafe_embedded_binding(self.app):
+            fail("unsafe_native_python_binding: use Xshell external 32-bit Python/pywin32; nothing sent")
+        self._before_send()
+        self.send_attempted = True
         self.app.Screen.Send(chr(3))
         return dict(interrupt_sent=True, remote_termination_confirmed=False)
 
     def acknowledge_idle(self, session, screen_token, expected_prompt):
+        if any(c["session"] == session for c in self.captures.values()):
+            fail("busy: cannot acknowledge active capture")
+        token = self.tokens.get(screen_token)
         sid, _ = self._guard(session, screen_token, expected_prompt)
         self.unresolved.pop(sid, None)
+        # The explicit, fresh screen acknowledgement authorizes this new input
+        # boundary only for attachments owned by the requesting client.
+        for attachment in self.attachments.values():
+            if attachment["session"] == sid and attachment["owner"] == self.owner:
+                attachment["context"] = dict(token["context"])
+                attachment["awaiting_prompt"] = False
+                attachment.pop("completion_marker", None)
         return dict(idle_acknowledged=True, session=sid, remote_termination_confirmed=False)
 
     def focus_session(self, session):
@@ -635,7 +845,7 @@ class NativeAdapter:
                     os_version=platform.version(), api_capabilities=probe_capabilities(self.app),
                     api_probe='attribute_presence_only',
                     adapter_sha256=SCRIPT_SHA256,
-                    xshell_version=str(getattr(self.app, "Version", "unknown")),
+                    xshell_version=self.product_version,
                     capabilities=self._capabilities(), enumeration="named_files",
                     metrics=self.metrics, native_keyboard_lock=False)
 
@@ -646,6 +856,7 @@ METHODS = ("ping", "list_sessions", "read_screen", "focus_session", "prepare_and
 
 
 def handle_request(adapter, request, token):
+    adapter.send_attempted = False
     response = dict(id="", protocol_version=PROTOCOL_VERSION,
                     bridge_instance=adapter.instance, ok=False, result=None, error=None)
     try:
@@ -665,11 +876,19 @@ def handle_request(adapter, request, token):
         params = request.get("params", {})
         adapter.owner = string(request.get("client_id", "legacy"), "client_id", 128)
         adapter.metrics["requests"] += 1
-        response.update(ok=True, result=getattr(adapter, method)(**params))
+        adapter.request_deadline = int(request["deadline_ms"])
+        if method == "end":
+            capture = adapter.captures.get(params.get("capture_id"))
+            if capture and capture["owner"] != adapter.owner:
+                fail("ownership_conflict")
+        try:
+            response.update(ok=True, result=getattr(adapter, method)(**params))
+        finally:
+            adapter.request_deadline = None
     except Exception as exc:
         response["error"] = str(exc)[:1024]
         response["error_code"] = str(exc).split(":", 1)[0][:64]
-    response["sent"] = True if response["ok"] else None
+    response["sent"] = (True if response["ok"] else None) if adapter.send_attempted else False
     return response
 
 
@@ -686,7 +905,7 @@ def serve(app, config, stop_event=None):
     logger, log_path = make_logger(ipc_root, adapter.instance)
     adapter.logger = logger
     logger("serve_start", log_path=str(log_path), has_stop_event=bool(stop_event))
-    logger("xshell_runtime", version=str(getattr(app, "Version", "unknown")),
+    logger("xshell_runtime", version=adapter.product_version,
            python=sys.version.split()[0], host_pid=os.getpid())
     logger("host_wait_capability",
            screen_wait_for_strings=callable(getattr(getattr(app, "Screen", None), "WaitForStrings", None)),
@@ -768,6 +987,11 @@ def serve(app, config, stop_event=None):
         raise
     finally:
         logger("serve_finally", requests=adapter.metrics["requests"])
+        for capture_id in list(adapter.captures):
+            try:
+                adapter.end(capture_id, False)
+            except Exception as exc:
+                logger("capture_cleanup_failed", error=type(exc).__name__)
         dismiss_startup_notice(notice, logger)
         try:
             ready.unlink()
@@ -797,12 +1021,25 @@ def load_config(script):
     fail("xshell_bridge.json missing; run securecrt-mcp init")
 
 
+def runtime_script_path(app, namespace):
+    supplied = namespace.get("__file__")
+    if supplied:
+        return Path(supplied).resolve()
+    folder = getattr(app.Session, "ScriptFolderPath", None)
+    if folder:
+        for name in ("securecrt-mcp-xshell.py", "xshell_bridge.py"):
+            candidate = Path(folder) / name
+            if candidate.is_file():
+                return candidate.resolve()
+    fail("script_path_unavailable: run the standard bridge installed by securecrt-mcp init")
+
+
 def main():
     global SCRIPT_SHA256
     if "xsh" not in globals():
         fail("Run this script inside Xshell via Tools > Script > Run")
-    script = Path(globals().get("__file__", "xshell_bridge.py")).resolve()
-    SCRIPT_SHA256 = hashlib.sha256(script.read_bytes()).hexdigest()
+    script = runtime_script_path(xsh, globals())
+    SCRIPT_SHA256 = globals().get("_EXECUTED_SOURCE_SHA256") or hashlib.sha256(script.read_bytes()).hexdigest()
     config = load_config(script)
     try:
         serve(xsh, config)
@@ -812,5 +1049,17 @@ def main():
         return
 
 
-if "xsh" in globals():
-    main()
+def Main():
+    """Entry point for embedded Python and the external Active Scripting engine."""
+    if "__file__" in globals():
+        main()
+        return
+    # Active Scripting supplies only a virtual <Script Block>, without __file__
+    # or a source-cache entry. Reload the standard file in its actual folder so
+    # the executed source and reported digest refer to the same bytes.
+    script = runtime_script_path(xsh, globals())
+    source = script.read_bytes()
+    namespace = {"__file__": str(script), "__name__": "xshell_bridge_runtime", "xsh": xsh}
+    exec(compile(source.decode("utf-8"), str(script), "exec"), namespace)
+    namespace["_EXECUTED_SOURCE_SHA256"] = hashlib.sha256(source).hexdigest()
+    namespace["main"]()

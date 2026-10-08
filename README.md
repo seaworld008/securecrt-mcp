@@ -6,7 +6,7 @@
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange)](https://www.rust-lang.org/)
 [English](README.en.md)
 
-**securecrt-mcp 0.5.0** 是一个面向生产环境的 Rust MCP Server：让 Codex、Claude 等 MCP 客户端通过统一的 `connector_*` 接口安全、可审计地操作 SecureCRT、Xshell 中已经登录的 SSH 会话，以及系统 OpenSSH/PTY 连接器。
+**securecrt-mcp 0.5.1** 是一个面向生产环境的 Rust MCP Server：让 Codex、Claude 等 MCP 客户端通过统一的 `connector_*` 接口安全、可审计地操作 SecureCRT、Xshell 中已经登录的 SSH 会话，以及系统 OpenSSH/PTY 连接器。
 
 它复用操作员已经完成的 VPN、堡垒机、SSH 密钥和 MFA 流程，不建立第二条 SSH 连接，也不导出服务器凭据。项目独立于 VanDyke Software。
 
@@ -81,7 +81,7 @@ OpenSSH 示例：
 
 ## 已验证范围
 
-0.5.0 的 Rust、Bridge、MCP stdio、批量执行、daemon、故障注入、打包和连接器自动化测试已通过。真实桌面验收需要在当前 SecureCRT/Xshell 进程重新加载对应脚本后完成：
+0.5.1 的 Rust、Bridge、MCP stdio、批量执行、daemon、故障注入、打包和连接器自动化测试已通过。真实桌面验收需要在当前 SecureCRT/Xshell 进程重新加载对应脚本后完成：
 
 - Linux SSH Tab：`hostname`、`uptime`、`pwd`、`id` 连续执行成功。
 - 四命令 batch 完成，逐条返回输出和退出码。
@@ -98,7 +98,7 @@ OpenSSH 示例：
 从 [最新 Release](https://github.com/seaworld008/securecrt-mcp/releases/latest) 下载 Windows x64 ZIP，同时下载 `SHA256SUMS`，在 PowerShell 中校验：
 
 ```powershell
-Get-FileHash .\securecrt-mcp-0.5.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256
+Get-FileHash .\securecrt-mcp-0.5.1-x86_64-pc-windows-msvc.zip -Algorithm SHA256
 Get-Content .\SHA256SUMS
 ```
 
@@ -119,6 +119,8 @@ Xshell 使用同一个 `init` 自动部署流程。初始化会把最新的
 `securecrt-mcp-xshell.py` 复制到 Xshell 的标准 `Scripts` 目录，并保留 Token
 配置在 MCP 私有目录。打开 Xshell 的 **Tools -> Script -> Run** 后，直接选择
 `securecrt-mcp-xshell.py`；不需要浏览 MCP 安装目录或手工复制脚本。每个需要接入的 Xshell 进程都运行一次脚本，单进程模式可开可关，MCP 会自动汇总活跃实例。同一进程内按标签焦点串行执行，不同进程可并发执行。Xshell 脚本通过 MCP 私有目录中的文件 IPC 与 Rust 通信，不依赖内嵌 Python 的网络模块。SecureCRT、Xshell 和 OpenSSH 可以同时连接。
+
+实测 Xshell 8 Build 0110（产品版本 8.0.0.26）内置 Python 3.8.6 存在原生引用计数缺陷，当前 Bridge 会在发送前拒绝该组合。请按[支持策略中的外部 Python 配置](docs/support-policy.md#xshell-内置-python-例外)启用厂商支持的 32 位 Python + pywin32，引擎版本以 Bridge 报告为准；配置后仍需进行真实会话验收。
 
 ```powershell
 .\securecrt-mcp.exe doctor
