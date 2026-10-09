@@ -136,19 +136,17 @@ mod tests {
     use super::*;
     #[test]
     fn config_preserves_comments_and_operator_approval() {
+        let app_root = std::env::temp_dir().join("securecrt-mcp-install-test-root");
+        let expected_root = app_root.to_string_lossy().into_owned();
         let old = "# keep comment\nmodel = \"existing\"\n[mcp_servers.other]\ncommand = \"unchanged\"\n[mcp_servers.securecrt]\ncommand = \"old\"\nargs = [\"old\"]\ndefault_tools_approval_mode = \"prompt\"\nenabled_tools = [\"connector_list\"]\n";
-        let new = configure_codex(
-            old,
-            Path::new("/test/private/securecrt-mcp"),
-            Path::new("/test/private/app-root"),
-        )
-        .unwrap();
+        let new =
+            configure_codex(old, Path::new("/test/private/securecrt-mcp"), &app_root).unwrap();
         assert!(new.contains("# keep comment"));
         let parsed: toml::Value = toml::from_str(&new).unwrap();
         assert_eq!(parsed["model"].as_str(), Some("existing"));
         assert_eq!(
             parsed["mcp_servers"]["securecrt"]["env"]["SECURECRT_MCP_HOME"].as_str(),
-            Some("/test/private/app-root")
+            Some(expected_root.as_str())
         );
         assert_eq!(
             parsed["mcp_servers"]["other"]["command"].as_str(),
@@ -166,25 +164,17 @@ mod tests {
             1
         );
         assert_eq!(
-            configure_codex(
-                &new,
-                Path::new("/test/private/securecrt-mcp"),
-                Path::new("/test/private/app-root")
-            )
-            .unwrap(),
+            configure_codex(&new, Path::new("/test/private/securecrt-mcp"), &app_root).unwrap(),
             new
         );
     }
 
     #[test]
     fn env_keys_and_comments_are_preserved_and_invalid_env_is_rejected() {
+        let app_root = std::env::temp_dir().join("securecrt-mcp-env-test-root");
+        let expected_root = app_root.to_string_lossy().into_owned();
         let old = "[mcp_servers.securecrt]\n# keep env comment\n[mcp_servers.securecrt.env]\nOTHER = \"preserve\"\n";
-        let new = configure_codex(
-            old,
-            Path::new("/bin/securecrt-mcp"),
-            Path::new("/chosen/root"),
-        )
-        .unwrap();
+        let new = configure_codex(old, Path::new("/bin/securecrt-mcp"), &app_root).unwrap();
         assert!(new.contains("# keep env comment"));
         let parsed: toml::Value = toml::from_str(&new).unwrap();
         assert_eq!(
@@ -193,11 +183,11 @@ mod tests {
         );
         assert_eq!(
             parsed["mcp_servers"]["securecrt"]["env"]["SECURECRT_MCP_HOME"].as_str(),
-            Some("/chosen/root")
+            Some(expected_root.as_str())
         );
 
         let invalid = "[mcp_servers.securecrt]\nenv = \"not-a-table\"\ncommand = \"keep\"\n";
-        assert!(configure_codex(invalid, Path::new("/bin"), Path::new("/root")).is_err());
+        assert!(configure_codex(invalid, Path::new("/bin"), &app_root).is_err());
         let parsed: toml::Value = toml::from_str(invalid).unwrap();
         assert_eq!(
             parsed["mcp_servers"]["securecrt"]["command"].as_str(),
@@ -206,10 +196,11 @@ mod tests {
     }
     #[test]
     fn new_config_is_additive_and_invalid_toml_is_rejected() {
+        let app_root = std::env::temp_dir().join("securecrt-mcp-new-config-test-root");
         let output = configure_codex(
             "",
             Path::new("/binary with spaces/securecrt-mcp"),
-            Path::new("/chosen/root"),
+            &app_root,
         )
         .unwrap();
         let parsed: toml::Value = toml::from_str(&output).unwrap();
@@ -217,8 +208,6 @@ mod tests {
             parsed["mcp_servers"]["securecrt"]["args"][0].as_str(),
             Some("serve")
         );
-        assert!(
-            configure_codex("this is not TOML", Path::new("/binary"), Path::new("/root")).is_err()
-        );
+        assert!(configure_codex("this is not TOML", Path::new("/binary"), &app_root).is_err());
     }
 }
