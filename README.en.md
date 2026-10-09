@@ -1,235 +1,86 @@
 # securecrt-mcp
 
-Self-contained Windows script entries and the separate Windows/Mac desktop gates
-are documented in [Desktop acceptance](docs/desktop-acceptance.md). The Windows
-entries require no Python; macOS retains the native Python bridge and requires
-its own real desktop receipt.
-
 [![CI](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/seaworld008/securecrt-mcp?display_name=tag)](https://github.com/seaworld008/securecrt-mcp/releases)
-[![License](https://img.shields.io/github/license/seaworld008/securecrt-mcp)](LICENSE)
-[中文说明](README.md)
+[中文](README.md) · [Installation](docs/installation.md) · [Desktop acceptance](docs/desktop-acceptance.md)
 
-**securecrt-mcp 0.5.2** is a production-oriented Rust MCP server for operating SSH sessions that are already authenticated in SecureCRT or Xshell from Codex, Claude, or another MCP client, with an explicit persistent OpenSSH/PTY connector option.
+**securecrt-mcp 0.5.2** is a Rust MCP server for reusing authenticated SecureCRT / Xshell SSH tabs. Unified `connector_*` tools provide opaque target handles, command/batch state, real exit codes, pagination, bounded output and audit. Client approvals and remote account permissions remain operator-owned. Desktop backends reuse existing VPN, bastion, keys and MFA without exporting credentials or opening another SSH connection. Explicit `openssh` sessions use system OpenSSH, Agent, ssh_config and known_hosts for persistent exec / PTY.
 
-It reuses the operator's VPN, bastion, SSH key, and MFA flow. It does not create a second SSH connection or export server credentials. This project is independent of VanDyke Software.
+## Install
 
-> **Production scope:** suitable for operations diagnostics, release checks, log inspection, and controlled changes. It is a SecureCRT session connector, not a native SSH/PTY implementation and not a second AI approval system. Client approval, remote account authorization, and human target confirmation remain required.
+Use a release or CI bundle containing the current source. A merge to main does not replace old public release assets. Verify SHA256SUMS and inspect the package for `install.cmd` / `install.command` and the platform entries.
 
-> **High-performance connector (opt-in):** the new `connector_*` tools can open persistent system OpenSSH command or PTY sessions explicitly. SecureCRT remains the default backend. OpenSSH uses the user's `ssh_config`, Agent, ProxyJump and known_hosts; MCP does not store passwords. See [Unified connectors](docs/connectors.md).
-
-The reproduced Xshell 8 Build 0110 (product version 8.0.0.26) / embedded
-Python 3.8.6 binding has a native reference-count defect. The bridge rejects
-writes on that exact combination. Use the vendor-supported external 32-bit
-Python + pywin32 engine described in [the support policy](docs/support-policy.md),
-confirm the engine reported by the bridge, and perform live-session acceptance.
-
-## What it provides
-
-- Opaque session handles for existing SecureCRT tabs instead of mutable tab indexes.
-- `attach -> exec` reuse for repeated commands on one verified tab.
-- `exec_batch` with up to 20 explicit commands, independent output, exit codes, audits, and command IDs.
-- Batched native reads, incremental output, cursor pagination, and explicit truncation/gap reporting.
-- Per-session leases, capture interlocks, timeouts, interrupts, idle acknowledgement, and unresolved-work quarantine.
-- An optional loopback daemon for CLI, Python, and PowerShell clients that need one retained Engine.
-- A narrow catastrophic-operation guard; routine command decisions stay with the MCP client and remote account.
-- No automatic replay of unknown commands, implicit Ctrl+C, tab rebinding, or approval bypass.
-- Persistent OpenSSH `ssh -T`/`ssh -tt` sessions provide command execution, long-running streams, PTY input, resize and absolute-cursor pagination.
-
-## Architecture and connectors
-
-```mermaid
-flowchart LR
-    A["Codex / Claude / MCP client<br/>approval, risk and credential decisions"] -->|MCP stdio| B["securecrt-mcp Rust server<br/>unified API, sessions, output and audit"]
-    B --> C["SecureCRT backend<br/>connector_*"]
-    C -->|protocol 2 / 127.0.0.1| D["SecureCRT Bridge<br/>native script thread"]
-    D --> E["Authenticated SecureCRT tab<br/>screen sampling, context checks and input"]
-    B --> F["OpenSSH backend (explicit opt-in)<br/>connector_*"]
-    F --> G["System OpenSSH<br/>persistent ssh -T / ssh -tt + PTY"]
-    G --> H["Remote server"]
-    E --> H
-    I["CLI / Python / PowerShell"] -->|optional loopback daemon| B
-```
-
-If the client does not render Mermaid, the same two paths are:
-
-```text
-MCP client (Codex / Claude)
-        |
-        v
-Rust securecrt-mcp (sessions, output, status and no-replay semantics)
-        +--> SecureCRT backend --> 127.0.0.1 Bridge --> authenticated tab
-        \--> OpenSSH backend (explicit opt-in) --> persistent ssh/PTY --> remote host
-```
-
-| Backend | Main tools | Connection | Best for |
+| Platform | One-click installer | Native entry | User runtime |
 | --- | --- | --- | --- |
-| SecureCRT | `securecrt_*` (compatibility) or `connector_*` | Existing authenticated tab through the local Bridge | Reusing the operator's VPN, bastion, MFA and desktop session |
-| OpenSSH/PTY | `connector_*` | Persistent system `ssh -T` or `ssh -tt` session | High-frequency commands, long-running streams, REPLs, paging and raw PTY interaction |
+| Windows SecureCRT | `install.cmd` | `%USERPROFILE%\.securecrt-mcp\securecrt-mcp-securecrt.js` | System JScript; no Python, Node or Rust |
+| Windows Xshell | `install.cmd` | `securecrt-mcp-xshell.js` in the standard Xshell Scripts folder | System JScript; no Python, Node or Rust |
+| macOS SecureCRT | `install.command` | `~/.securecrt-mcp/securecrt_bridge.py` | A Python engine loadable by SecureCRT; standard library only |
 
-SecureCRT remains the default backend. OpenSSH must be selected explicitly with `backend: "openssh"`; the server never switches between backends automatically. OpenSSH uses the local `ssh_config`, Agent, ProxyJump and `known_hosts`; MCP does not store passwords or disable host-key verification by default. The upper-layer model owns approval, risk and credential use; MCP owns connection lifecycle, output streaming, exit state, pagination and no-replay handling for unknown results.
+The CLI equivalent is `securecrt-mcp install`. It installs into the private user directory, deploys platform entries and updates only the securecrt MCP executable/arguments in Codex configuration, preserving other settings, comments and existing approval/tool restrictions. Tokens, policy, custom deny rules and SSH logins are retained. No global PATH changes are made.
 
-OpenSSH example:
+Reload Codex, then select the fixed entry with **Script → Run** in an idle connected terminal. Each SecureCRT process needs one script covering every connected Tab. Duplicate starts show a friendly notice and retain the original instance. To stop it, select a Tab where Cancel is enabled and choose **Script → Cancel**. Xshell uses its actual native discovery scope.
 
-```json
-{
-  "name": "connector_open",
-  "arguments": {
-    "backend": "openssh",
-    "target": "php-test",
-    "mode": "exec"
-  }
-}
-```
+Windows users may also select the self-contained `.js` entry directly from an extracted bundle; it releases the matching Rust binary automatically. Mac has no vendor-supported JScript/ActiveX native interface, so a single minimum Python adapter remains. Build, package, client and acceptance controllers use JS/Rust. No additional Python upper bound is imposed once the terminal has loaded the engine and the required APIs/source identity match. SecureCRT's own loader version/architecture requirements still apply. [Vendor scripting platforms](https://www.vandyke.com/products/securecrt/scripts.html)
 
-Use the returned `session_id` with `connector_exec`, `connector_exec_batch`, `connector_read` or the PTY stream tools. To reuse an existing SecureCRT or Xshell tab, select the matching backend in `connector_open`.
+Reuse an already working Mac engine. No pip or pywin32 is required. If the engine is absent, follow the installed terminal's supported-version notice and official installation instructions, then restart SecureCRT. The project does not promise that arbitrary Python versions can be loaded by the vendor's native engine. [Official Mac engine loading](https://www.vandyke.com/support/tips/how-to-use-python-scripting-securecrt-on-macos.html)
 
-## Verified scope
+## Upgrade and diagnose
 
-The 0.5.2 Rust, Bridge, MCP stdio, batch, daemon, fault-injection, packaging, and connector automation tests pass. Real desktop acceptance must be completed after the current SecureCRT/Xshell processes reload the matching scripts:
+Run `install` again from a new bundle to replace the private executable and fixed entry. Source developers use:
 
-- Three Linux SSH tabs (`php_test`, `php_dev`, `k8s-master1`) completed `hostname`, `uptime`, and `pwd` batches after a SecureCRT restart.
-- Long output was read through cursor pagination.
-- An `observe` attachment rejected execution with `sent=false`.
-- Slow or uncertain prompt redraw returns `context_changed` without sending the next command.
-- Running the Bridge script twice shows a friendly already-running message instead of a Python bind traceback.
-
-These results do not claim native SSH equivalence. Validate the actual targets, client approval UI, SecureCRT/Xshell build, and business workflow in every production environment; replacing a script file does not replace a script already loaded in client memory.
-
-## Install on Windows
-
-The new self-contained Windows `.js` entries require a source build or CI test bundle containing this change. The existing official `v0.5.2` release uses the older entries; merging main does not overwrite its published assets.
-
-Download the Windows x64 archive and `SHA256SUMS` from the [latest Release](https://github.com/seaworld008/securecrt-mcp/releases/latest):
-
-```powershell
-Get-FileHash .\securecrt-mcp-0.5.2-x86_64-pc-windows-msvc.zip -Algorithm SHA256
-Get-Content .\SHA256SUMS
-```
-
-Unpack and initialize:
-
-```powershell
-.\securecrt-mcp.exe init
-.\securecrt-mcp.exe paths
-```
-
-Alternatively, select a `.js` directly from the extracted Windows package. It initializes the private files on first run:
-
-| Client | Script | Fixed entry updated by `init/upgrade` |
-| --- | --- | --- |
-| SecureCRT | `securecrt-mcp-securecrt.js` | `%USERPROFILE%\.securecrt-mcp\securecrt-mcp-securecrt.js` |
-| Xshell | `securecrt-mcp-xshell.js` | The same filename in Xshell's standard `Scripts` directory |
-
-The Windows entries embed the Rust executable and use system JScript. No Python, pywin32 or Rust installation is required.
-SecureCRT uses **Script -> Run**. Start once per application process to manage all connected tabs in that process;
-a second start reports that it is already running. Use **Script -> Cancel** in the original script tab to stop it.
-Xshell uses **Tools -> Script -> Run**; discovery coverage depends on the native window/session mode, and MCP aggregates active instances.
-
-The startup notice reports the connected session count and closes automatically while the bridge continues running.
-Native diagnostics contain lifecycle events and counters in the private `<backend>-native-ipc/instances/<instance>/diagnostic.json`, without tokens, commands or terminal history.
-COM method property reads may invoke the method, so online checks inspect safe scalar properties only.
-Send/capture methods are reported as verified after successful real calls, and remain unknown before use.
-
-```powershell
-.\securecrt-mcp.exe doctor
-.\securecrt-mcp.exe doctor --backend xshell
-```
-
-Python entries remain available for existing installations and macOS. See [support policy](docs/support-policy.md) for vendor engine requirements.
-
-### Upgrade
-
-```powershell
+```sh
 git pull --ff-only origin main
-cargo build --locked --release
-.\target\release\securecrt-mcp.exe upgrade
-.\target\release\securecrt-mcp.exe doctor --offline
+cargo build --release --locked
+./target/release/securecrt-mcp install
 ```
 
-`upgrade` preserves tokens, policy and custom deny rules, and replaces the fixed Windows `.js` entries. Cancel the old script when idle and select the same file again; replacing a file does not update a script already loaded in memory. Existing Python upgrade behavior is retained; this trial adds no backup management. Do not use `init --force` for routine upgrades.
+`upgrade` only refreshes configured entries. Do not use `init --force` for routine upgrades. Replacing a file does not reload it in a running terminal: cancel when idle, run the same entry, restart MCP and rediscover targets; old handles remain invalid.
 
-## MCP client setup
+Use the absolute executable path printed by installation:
 
-Generate additive Codex terminal configuration:
-
-```powershell
-.\securecrt-mcp.exe codex-config --toolset terminal --approval-mode prompt
+```sh
+securecrt-mcp doctor --offline
+securecrt-mcp doctor --backend securecrt
+securecrt-mcp doctor --backend xshell
+securecrt-mcp doctor --backend openssh
 ```
 
-Merge the output into the existing Codex configuration. Example for Claude Code:
+Offline checks validate local files. Online checks report the actual terminal engine, native APIs and source identity. Windows send/read methods are observed only after actual calls; unknown APIs are not claimed as tested. Doctor or compilation alone does not establish desktop acceptance.
 
-```powershell
-claude mcp add --transport stdio --scope user securecrt -- `
-  "C:\Tools\securecrt-mcp.exe" serve
+## Workflow
+
+1. Discover with `connector_list`, verify backend, title and current screen.
+2. Bind with `connector_open` and retain its returned `session_id`.
+3. Reuse the attachment with `connector_exec` or an explicit batch of at most 20 commands.
+4. Check `state`, `sent`, `exit_code`, `error_code` and cursor-paginated output.
+5. Stop on uncertainty. Inspect the original terminal; acknowledge only after the original command is finished and a fresh idle screen token is available. Commands, Ctrl+C and idle recovery are never retried automatically.
+
+Each Tab retains its own capture/interlock. An operation ID is deduplicated in one MCP process, not across arbitrary process restarts. Batch entries keep independent outputs and exit codes; uncertainty stops subsequent entries. OpenSSH stream tools support logs, pagers, REPLs, PTY input and resizing; desktop screens are not native PTYs.
+
+An optional authenticated loopback daemon lets CLI / JS / PowerShell clients share one retained Engine. Native MCP is already persistent and does not need another daemon. See [persistent terminals](docs/persistent-terminal.md), [CLI clients](docs/clients/command-line.md), [connectors](docs/connectors.md) and [security model](docs/security-model.md).
+
+## Acceptance and development
+
+[Desktop cases](docs/desktop-test-cases.md) define D01–D14 and real UI U01–U04. Windows historical receipts and new Mac receipts are separate, tied to exact binary/source hashes and working-tree status. Keep FAIL receipts; do not enlarge the original 10-second long-output budget to manufacture a pass. Never publish endpoints, user names, session IDs, tokens or prior terminal history.
+
+For explicitly authorized idle test tabs only:
+
+```sh
+node tests/desktop_matrix.js target/release/securecrt-mcp --backend securecrt --all-idle --expect-securecrt 2 --exercise-recovery --output-dir .local-evidence/mac-desktop-UNIQUE
 ```
 
-Start with `prompt` while validating client rejection and zero terminal input, then choose the approval mode required by your operating policy.
+Use repeated explicit `--target securecrt=OPAQUE_ID` arguments when business tabs are present. Duplicate launch, cancellation/reload and disconnect/reconnect require actual native UI evidence.
 
-## Daily workflow
+Develop with Rust 1.88+ and Node. Only native Mac adapter contract development tests require Python; Windows installed users require none of those developer tools.
 
-1. List sessions and inspect the target screen.
-2. Attach once to the verified tab and retain the `attachment_id`.
-3. Reuse that attachment for `connector_exec`, or submit a small explicit `connector_exec_batch`.
-4. Check `state`, `sent`, `exit_code`, `error_code`, cursors, and audit fields on every result.
-5. Use `connector_stream_*` for long-running output and explicit `connector_interrupt` for a foreground process that must be interrupted.
-
-```json
-{
-  "attachment_id": "actual attachment id",
-  "command": "hostname",
-  "mode": "posix",
-  "timeout_ms": 30000
-}
-```
-
-Batch is not a transaction or permanent authorization. Every command must be visible in the first client approval context. Unknown, timed-out, changed-context, and transport-failed work stops without replay.
-
-## Safety boundaries
-
-- The Bridge listens only on `127.0.0.1`, with a random token, request deadlines, and frame limits.
-- `client` mode delegates routine approval to Codex/Claude. The built-in guard blocks only a small set of catastrophic mistakes; it is not a shell parser or sandbox.
-- `shared`, `exclusive`, and `observe` are cooperative connector modes, not a SecureCRT keyboard lock. Human input, reconnects, and nested SSH targets still require operator confirmation.
-- Attachments are not permanent authorization, and daemon restart does not provide exactly-once durability.
-- A POSIX completion marker proves foreground return, not that background children terminated.
-- MySQL, pagers, REPLs, editors, and password prompts are not ordinary POSIX shells; inspect before sending shell commands.
-
-See [security model](docs/security-model.md), [persistent terminal guide](docs/persistent-terminal.md), and the [production checklist](docs/production-readiness.md).
-
-## Production checklist
-
-- [ ] Run `doctor` on the target SecureCRT installation and confirm the Bridge version and capabilities.
-- [ ] Reject one harmless command in the real client approval UI and verify zero terminal input.
-- [ ] Complete repeated commands and a small batch on the same attachment.
-- [ ] Verify slow redraw fails closed with `context_changed` and never duplicates a command.
-- [ ] Distinguish POSIX shells from MySQL/REPL, pager, and editor contexts.
-- [ ] Protect the daemon endpoint, audit directory, and token backups with local OS permissions.
-- [ ] Start with a non-production tab before enabling production sessions.
-
-## Documentation
-
-- [中文生产验收](docs/production-readiness.md)
-- [Persistent terminal](docs/persistent-terminal.md)
-- [Security model](docs/security-model.md)
-- [Architecture](docs/architecture.md) · [Bridge protocol](docs/bridge-protocol.md)
-- [Performance and limits](docs/performance.md)
-- [Unified connectors and OpenSSH/PTY](docs/connectors.md)
-- [Troubleshooting](docs/troubleshooting.md)
-- [Codex](docs/clients/codex.en.md) · [Claude](docs/clients/claude.md)
-- [Release process](docs/releases.md)
-
-## Development
-
-```powershell
+```sh
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-targets --all-features
-python -m pytest -q tests
-python scripts/validate_repository.py
+cargo build --locked
+node tests/windows_bridge_test.js
+node tests/mcp_smoke.js target/debug/securecrt-mcp
+node tests/mac_adapter_contract.js
+node scripts/validate_repository.js
 ```
 
-Contributions: [CONTRIBUTING.md](CONTRIBUTING.md). Private security reports: [SECURITY.md](SECURITY.md).
-
-## License
-
-MIT License. See [LICENSE](LICENSE).
+See [testing](docs/testing.md), [support policy](docs/support-policy.md), [support matrix](docs/support-matrix.md), [troubleshooting](docs/troubleshooting.md), [contribution guide](CONTRIBUTING.md) and [license](LICENSE). Client approval rejection remains a separate client-side acceptance check; installation never silently widens existing approvals.

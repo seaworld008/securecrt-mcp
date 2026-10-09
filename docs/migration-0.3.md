@@ -1,3 +1,5 @@
+> 历史版本/设计记录。当前入口与工具已迁移为 Windows JScript、JS/Rust 工具及单个 Mac Python 原生适配层；安装按[当前说明](installation.md)执行。下文历史实测不代表新提交认证。
+
 # 升级到 0.3.0-preview.1
 
 这是持久终端性能预览版，Bridge 协议仍为2（增加能力协商）。旧接口保留，新 attachment/批量/stream 需要新版适配器。旧脚本没有声明新能力时，兼容 run 路径会保守降级；不能把它当作已经启用性能优化。
@@ -28,7 +30,7 @@ cargo build --locked --release
 
 ## 第一轮验收
 
-常驻 MCP 路径使用 list → attach → 多次exec/一次batch → detach；不要每条命令运行一次 CLI。Python/PowerShell 频繁独立调用时才显式启动 daemon。审批仍由客户端配置决定，新增工具未伪装成只读，拒绝后应观察零输入。
+常驻 MCP 路径使用 list → attach → 多次exec/一次batch → detach；不要每条命令运行一次 CLI。JS/PowerShell 频繁独立调用时才显式启动 daemon。审批仍由客户端配置决定，新增工具未伪装成只读，拒绝后应观察零输入。
 
 分别记录：20条短命令用时；三Tab是否互相busy；100KB日志、超长行完整性；stream增量/游标缺口；人工输入造成的上下文变化；断连后旧操作不会重发；明确中断和未决恢复。真实桌面验证完成前不要把模拟基准描述为实际SSH等效性能。
 

@@ -28,6 +28,7 @@ portable-pty = "0.9"
 toml = "0.9"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["v4"] }
+toml_edit = "0.23"
 
 [profile.release]
 lto = "thin"

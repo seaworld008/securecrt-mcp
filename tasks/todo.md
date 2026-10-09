@@ -1,16 +1,11 @@
-# 验收任务
+# 验收与交付门槛
 
-- [x] 拉取仓库、检查远端 PR/issue、执行基线验证
-- [x] 处理原有五个依赖 PR
-- [x] Mac 真实 MCP/SSH、Computer Use、Ctrl+C 与恢复验证
-- [x] Xshell API 路由与恢复确认修复及回归
-- [x] OpenSSH 有界捕获修复 PR #30 CI/审查/合并
-- [x] 官方 API/语法/特性清单与最低已确认版本证据
-- [x] 可复用最小真机冒烟和证据采集
-- [ ] （按操作者要求暂缓）Windows 10/11 系统矩阵
-- [ ] 实际安装的 Xshell 本机最小冒烟与证据
-- [x] docs/support-matrix.md 与 docs/support-policy.md
-- [x] doctor 能力/Tier/修复指引及回归
-- [x] MCP 2026-07-28 和 2025-11-25 一致性测试
-- [x] CONTRIBUTING 与 CHANGELOG 的 MSRV 策略
-- [ ] 最终本地、CI、精确 head 合并与目录同步
+- 已拉取并核对`82d667b`，保留工作区原状态。
+- 已完成两个获准Mac真实SSH Tab的完整legacy/modern矩阵、同附件20条、2,500行中文10秒预算与完整分页、显式超时/Ctrl+C恢复和实际捕获重叠隔离。
+- 已完成原生重复提示、取消/重载保持登录、新句柄和第一专用Tab断开/重连拒绝旧附件。
+- 已移除Windows Python桥接与33个旧Python工具，保留唯一Mac原生文件；工具/客户端/打包/CI使用JS/Rust。
+- 已实现用户目录一键安装和增量Codex配置，保留Token/策略/既有审批，未修改全局PATH。
+- 已更新当前安装/接口/测试/支持文档，保存脱敏PASS和先前FAIL；历史回执保持原数据。
+- 交付必须通过审查、PR全部CI、零未解决审查线程、精确HEAD合并与远端main核对；实际状态以GitHub为准。
+
+证据入口：[Mac回执](../docs/acceptance/mac-native-matrix-2026-10-09.md)。未测事项明确写在回执，不用CI/模拟填补。

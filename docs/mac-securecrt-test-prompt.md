@@ -1,3 +1,5 @@
+> 当前安装与平台入口见[一键安装](installation.md)。Windows 仅使用 `.js`；Mac 仅保留 `securecrt_bridge.py` 原生层，工具均为 JS/Rust。
+
 # Mac SecureCRT 真机验收提示词
 
 将下面内容直接交给 Mac 上的 Codex。Windows 的回执只能作为参照，不作为
@@ -11,7 +13,7 @@ Mac 通过的证明。
 完整版本及实际脚本引擎。已有仓库先 fetch，确认工作区干净再切 main 并 pull
 --ff-only；保留我的未提交修改，存在冲突时使用隔离工作区，不 reset/clean。
 没有仓库则克隆。记录 origin/main 与实际 HEAD，确保包含 Windows 自包含脚本
-及 tests/desktop_matrix.py；读 docs/desktop-acceptance.md、
+及 tests/desktop_matrix.js；读 docs/desktop-acceptance.md、
 docs/desktop-test-cases.md 和 Windows 脱敏验收回执（若仓库中提供）。
 
 构建 cargo build --release --locked，执行 ./target/release/securecrt-mcp upgrade
@@ -23,12 +25,13 @@ Windows 的 .js。不要依据终端里的 python --version 猜测 SecureCRT 的
 
 在我现有 SecureCRT 窗口里、空闲时取消旧脚本并加载新入口；若你无法操作原生
 菜单，只让我完成这一步，其余自动执行。不要用 /SCRIPT 另开未连接窗口。
+Mac执行附件绑定会原生选择对应测试Tab；首次绑定不发送探测输入。
 一个 SecureCRT 进程运行一次脚本，要覆盖这个进程的所有已连接测试 Tab；
 至少两个 Tab。明确列出数量并确认这些是允许执行无业务修改测试的空闲
 POSIX 终端，不能漏掉 Tab 后宣称全部通过。其他不属于测试的会话不要发送输入。
 
 先做真实会话发现和新鲜屏幕检查，随后执行：
-python3 tests/desktop_matrix.py target/release/securecrt-mcp --backend securecrt
+node tests/desktop_matrix.js target/release/securecrt-mcp --backend securecrt
   --all-idle --expect-securecrt <实际确认的测试Tab数量> --exercise-recovery
   --output-dir .local-evidence/mac-desktop-<本次唯一编号>
 上面是一条命令；仅当全部已连接会话均为获准测试的终端时使用 --all-idle，
@@ -52,8 +55,8 @@ python3 tests/desktop_matrix.py target/release/securecrt-mcp --backend securecrt
 修复后加载与新二进制配套的脚本，只重新验证受影响项；最终完整矩阵也要
 通过。可并行独立 Tab，避免无理由重复构建、长等待或整套测试。
 
-修复需要同时保持 Windows 共享核心及脚本契约兼容，运行相关 Rust、Python、
-Node 和编译后 MCP 回归；不要声称 Mac 能验证 Windows 原生 UI。
+修复需要同时保持 Windows 共享核心及脚本契约兼容，运行相关 Rust、Node、Mac 原生适配契约
+及编译后 MCP 回归；不要声称 Mac 能验证 Windows 原生 UI。
 
 输出脱敏 matrix.json/matrix.md：代码提交及是否有未提交改动、二进制/桥接
 SHA-256、系统/架构/SecureCRT/实际引擎版本、覆盖 Tab 数量、每项 PASS/FAIL/

@@ -1,8 +1,8 @@
-> **0.3.0 update:** Continuous diagnostics should use the persistent terminal workflow: [attach / exec / batch / daemon](../persistent-terminal.md). Client permissions remain operator-owned; client mode now includes the narrow catastrophic guard. The earlier one-call API remains compatible. New installs generate the terminal tool preset; existing configuration is never silently replaced.
+> 当前安装与平台入口见[一键安装](../installation.md)。Windows 仅使用 `.js`；Mac 仅保留 `securecrt_bridge.py` 原生层，工具均为 JS/Rust。
 
-# Rust CLI、Python 和 PowerShell 调用
+# Rust CLI、JS 和 PowerShell 调用
 
-推荐 Agent 直接接入持久 MCP 并使用 run_command。下面的客户端适合手工调试和不便直接调用 MCP 的工具。它们共用 Rust 引擎，不维护第二套状态机，不绕过本地协议保护，也不新建 SSH 连接。
+推荐 Agent 直接接入持久 MCP 并使用 connector_exec。下面的客户端适合手工调试和不便直接调用 MCP 的工具。它们共用 Rust 引擎，不维护第二套状态机，不绕过本地协议保护，也不新建 SSH 连接。
 
 ## Rust CLI：不需要手工拼 JSON-RPC
 
@@ -31,15 +31,15 @@ run 保持进程直到任务到达本地终态，不因 wait_ms=0 就退出。st
 
 一次性进程退出后，其任务缓存不再提供后续页。返回值明确包含 output_available_after_exit=false；需要持续状态和长输出分页时使用持久 MCP。不要将两个独立 CLI 进程视为共享的 exactly-once 事务。
 
-## Python 标准库封装
+## 可选 Node JS 封装
 
 ```powershell
-python clients/securecrt_client.py --binary .\target\release\securecrt-mcp.exe sessions
-python clients/securecrt_client.py --binary .\target\release\securecrt-mcp.exe run --input request.json
-python clients/securecrt_client.py --binary .\target\release\securecrt-mcp.exe policy-check --input request.json
+node clients/securecrt_client.js --binary .\target\release\securecrt-mcp.exe sessions
+node clients/securecrt_client.js --binary .\target\release\securecrt-mcp.exe run --input request.json
+node clients/securecrt_client.js --binary .\target\release\securecrt-mcp.exe policy-check --input request.json
 ```
 
-无需第三方 Python 包。封装用 argv 启动 Rust CLI，继承标准字节流，不使用 shell=True，不复制 Bridge Token，不自行轮询或重试。Python 版本要求与 SecureCRT 内嵌 Python 是两回事；这个包装器也可以不用，直接调用 Rust CLI。
+无需第三方 Node 包。封装使用 argv 调用 Rust CLI，不经过本地 Shell，不复制 Bridge Token，不自行重试。Node 仅是可选 JS 客户端依赖，终端运行和一键安装不需要 Node；也可直接调用 Rust CLI。
 
 ## PowerShell 封装
 

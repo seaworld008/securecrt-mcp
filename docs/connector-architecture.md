@@ -1,3 +1,5 @@
+> 当前安装与平台入口见[一键安装](installation.md)。Windows 仅使用 `.js`；Mac 仅保留 `securecrt_bridge.py` 原生层，工具均为 JS/Rust。
+
 # Connector architecture
 
 ## Compatibility and lifecycle contract
@@ -107,80 +109,22 @@ SecureCRT reuses the logged-in tab through the protocol-2 in-process bridge. It
 has screen context, per-session captures, attachments, interruption and idle
 acknowledgement, but no native PTY.
 
-Xshell uses `bridge/xshell_bridge.py`, run from Xshell's Script menu. Xshell's
-script API exposes `SessionName`, `TabText`, `Path`, `RemoteAddress`,
-`Screen.Get`, `Screen.Send`, `WaitForStrings`, and `SelectTabName`.
-Each Xshell process registers an isolated file-IPC instance. Rust aggregates
-live instances and routes attachments back to their originating process. The
-adapter uses the current session file's folder as a name index, reads only
-`.xsh` filenames, probes each name with `SelectTabName`, and restores the
-original tab. This is reported as `enumeration: "instance_registry"`; unlisted
-unsaved tabs still require an explicit known session name.
+Xshell and Windows SecureCRT share `bridge/windows_bridge.js`. Generated self-contained `securecrt-mcp-xshell.js` / `securecrt-mcp-securecrt.js` entries embed the matching Rust binary. The system JScript host exposes native COM APIs; Python bindings, pywin32 and interpreter registration are removed. [Install](installation.md) deploys fixed entries and additive Codex configuration without changing PATH.
 
-The embedded Python environment does not provide socket modules, so this
-adapter uses the private authenticated file IPC directory created by `init`.
-Requests and responses use unique IDs and atomic file replacement. Xshell
-processes one request at a time because tab selection and native screen focus
-are process-global. Separate Xshell processes use independent lanes and remain
-concurrently usable with SecureCRT and OpenSSH.
+Each native Windows process owns an authenticated private file-IPC registry. Rust routes attachments to their original live instance and does not substitute another instance after timeout, publication gaps or ambiguous responses. Xshell enumerates names through native APIs and `.xsh` filename indexing; unsaved/unlisted tabs are not silently claimed. Source identity and observed send/read interfaces are reported separately.
 
-System OpenSSH uses the user's `ssh_config`, Agent, ProxyJump and known_hosts.
-It is the backend for native PTY, resize, raw input, REPL and pager workflows.
-The MCP server does not add `StrictHostKeyChecking=no`, capture passwords, or
-silently fall back to a desktop client.
+Mac retains only `bridge/securecrt_bridge.py` for the vendor-supported native SDK. It uses loopback TCP, retained Tab references, bounded ReadString primitives and input freshness checks. Completed POSIX captures drain the original prompt from the pre-display buffer before restoring capture settings. Get2 can advance rendering: cursor metadata is sampled after the line, full-screen tokens require consistent frames, and initial attachment waits through native yields for a stable prompt boundary. A changed prompt or operator input is refused with no send; no broad retry or guessed idle acknowledgement is introduced.
 
-## Xshell rollout
+System OpenSSH uses ssh_config, Agent, ProxyJump and known_hosts. It provides persistent exec and native PTY/resize/raw input. No backend fallback or disabled host-key validation is added.
 
-1. Run `securecrt-mcp.exe init` once. This creates the private bridge files and
-   installs `securecrt-mcp-xshell.py` into Xshell's standard `Scripts` folder.
-   The separate file-IPC token and directory remain in the MCP private directory.
-2. Run `securecrt-mcp-xshell.py` from Xshell's Script menu in every Xshell
-   process that should be controlled. Single-process mode is optional.
-3. Call `connector_list` and verify the returned `backend`, `session_name`,
-   `remote_address`, `enumeration`, and `capabilities` before opening it.
-4. Use the returned `xshell/<attachment>` handle for `connector_exec` or
-   `connector_exec_batch`; use `connector_read_screen` before an explicit
-   acknowledgement.
+## Native rollout
 
-The first live acceptance uses harmless `hostname`, `pwd`, and a fixed probe
-string on each test tab. It must verify output, exit state, no duplicate send
-after the same `operation_id`, and a rejected stale-screen acknowledgement.
+1. Run the one-click installer or `securecrt-mcp install`, preserve existing policy and tokens.
+2. Select the fixed platform entry inside the terminal when idle. One SecureCRT script manages its process; Xshell uses its actual discovery scope.
+3. Discover and verify explicit targets, native runtime/API/source identity and fresh idle screens.
+4. Reuse returned attachments for command/batch/status/pagination; recover only after original-session inspection and a fresh token.
 
-The Xshell bridge writes one bounded JSONL lifecycle log per running script to
-`%USERPROFILE%\.securecrt-mcp\xshell-ipc\logs`. Entries include startup,
-detached notice creation, request method and result, host-yield failures,
-cancel, and final cleanup; tokens and terminal contents are never logged. The
-development regression suite also runs two fake Xshell instances concurrently
-and verifies that both stop cleanly:
-
-The idle loop uses bounded `Screen.WaitForStrings([sentinel], ms)` calls on
-Xshell's script thread. The observed Xshell 8 / Python 3.8.6 binding returns
-borrowed `None` from `Session.Sleep`, eventually crashing the host. A plain
-Python sleep does not pump terminal events. `WaitForStrings` returns an integer;
-its observed iterator-end `SystemError` is handled only for the exact error chain.
-Other native failures and cancellation stop the bridge and clean up registration.
-Synchronization is managed per capture and restored on completion and shutdown.
-Captures read newly completed native rows; eviction or redraw is reported as
-incomplete instead of mixing old history into a command's result.
-Non-ASCII POSIX input crosses the ANSI Python binding as an ASCII octal `printf`
-and `eval` envelope, retaining the current shell's cwd/environment. Non-ASCII
-prompt input is rejected before sending because that binding cannot preserve it.
-Startup notices run in one foreground `wscript.exe` process and use a
-temporary lock so repeated launches cannot stack duplicate dialogs. The popup
-has a finite timeout as a crash safety net, and the bridge keeps the process
-handle for its own popup so it can close it silently during normal cleanup. The
-notice marker is scoped to the Xshell process ID, so a second script in the same
-Xshell process is suppressed while a new Xshell process gets a fresh startup
-notice.
-
-If a lifecycle log contains `host_wait_failed` with a `NoneType` or `TypeError`
-message, that is the expected cancellation signature on the affected Xshell
-build, not a bridge request failure. If it appears during startup without a
-script cancellation, stop the script and inspect the Xshell application log.
-
-```powershell
-python -m pytest -q tests/test_xshell_bridge.py
-```
+Full real desktop acceptance is [D01–D14 plus U01–U04](desktop-test-cases.md). Developer contracts run with `node tests/windows_bridge_test.js` and `node tests/mac_adapter_contract.js`. Protocol/controller/fault tests use the real compiled Rust binary and Node transports; their fake native terminals do not certify UI behavior.
 
 ## Future adapters
 

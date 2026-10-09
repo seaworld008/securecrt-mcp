@@ -1,0 +1,171 @@
+{
+  "scope": "Retained sanitized failures before the final paired-source native PASS; no command replay or budget widening",
+  "tested_on": "2026-10-09",
+  "attempts": [
+    {
+      "attempt": "matrix-run1",
+      "passed": false,
+      "binary_sha256": "893ed60aa99471db0438814cccf1f8b8378ca4319d23df158827f40ee54caac3",
+      "code_revision": {
+        "commit": "82d667bebeac3ea8ffdc4f92cc633a774032d1ac",
+        "working_tree_modified": false
+      },
+      "wall_seconds": 10.97,
+      "failures": [
+        {
+          "label": "securecrt-tab-2",
+          "phase": "full-legacy",
+          "error_type": "AssertionError",
+          "failure": {
+            "check": "Unicode and no-newline capture"
+          }
+        },
+        {
+          "label": "securecrt-tab-1",
+          "phase": "full-legacy",
+          "error_type": "AssertionError",
+          "failure": {
+            "check": "POSIX marker completion"
+          }
+        }
+      ]
+    },
+    {
+      "attempt": "matrix-serial-diagnostic",
+      "passed": false,
+      "binary_sha256": "893ed60aa99471db0438814cccf1f8b8378ca4319d23df158827f40ee54caac3",
+      "code_revision": {
+        "commit": "82d667bebeac3ea8ffdc4f92cc633a774032d1ac",
+        "working_tree_modified": false
+      },
+      "wall_seconds": 8.75,
+      "failures": [
+        {
+          "label": "securecrt-tab-1",
+          "phase": "full-legacy",
+          "error_type": "KeyError"
+        },
+        {
+          "label": "securecrt-tab-2",
+          "phase": "full-legacy",
+          "error_type": "AssertionError",
+          "failure": {
+            "check": "Unicode and no-newline capture"
+          }
+        }
+      ]
+    },
+    {
+      "attempt": "matrix-run2-prompt-drain",
+      "passed": false,
+      "binary_sha256": "e10e45fbf8f9a0a1fc534ec5ab82bb87df429d4547a8b75792197eb15c2b087f",
+      "code_revision": {
+        "commit": "82d667bebeac3ea8ffdc4f92cc633a774032d1ac",
+        "working_tree_modified": true
+      },
+      "wall_seconds": 15.6,
+      "failures": [
+        {
+          "label": "securecrt-tab-2",
+          "phase": "full-legacy",
+          "error_type": "AssertionError",
+          "failure": {
+            "check": "timeout preserves uncertainty"
+          }
+        }
+      ]
+    },
+    {
+      "attempt": "matrix-run3-stable-frame",
+      "passed": false,
+      "binary_sha256": "58f2147694e9d97bd8b515d268bc8f6213303b021e04f6a6ab66e12c9bcb7a96",
+      "code_revision": {
+        "commit": "82d667bebeac3ea8ffdc4f92cc633a774032d1ac",
+        "working_tree_modified": true
+      },
+      "wall_seconds": 10.264,
+      "failures": [
+        {
+          "label": "securecrt-tab-2",
+          "phase": "full-legacy",
+          "error_type": "AssertionError",
+          "failure": {
+            "phase": "continuous_reuse",
+            "index": 0,
+            "state": "rejected",
+            "sent": false,
+            "error_code": "context_changed"
+          }
+        }
+      ]
+    },
+    {
+      "attempt": "matrix-run4-initial-boundary",
+      "passed": false,
+      "binary_sha256": "9c9b52fe261cde1505056ca0182c726bc33c87f4524ebec128076a9bc5d8ee8e",
+      "code_revision": {
+        "commit": "82d667bebeac3ea8ffdc4f92cc633a774032d1ac",
+        "working_tree_modified": true
+      },
+      "wall_seconds": 11.246,
+      "failures": [
+        {
+          "label": "securecrt-tab-2",
+          "phase": "full-legacy",
+          "error_type": "AssertionError",
+          "failure": {
+            "check": "Unicode and no-newline capture"
+          }
+        },
+        {
+          "label": "securecrt-tab-1",
+          "phase": "full-legacy",
+          "error_type": "AssertionError",
+          "failure": {
+            "check": "POSIX marker completion"
+          }
+        }
+      ]
+    },
+    {
+      "attempt": "matrix-run5-single-controller",
+      "passed": false,
+      "binary_sha256": "9c9b52fe261cde1505056ca0182c726bc33c87f4524ebec128076a9bc5d8ee8e",
+      "code_revision": {
+        "commit": "82d667bebeac3ea8ffdc4f92cc633a774032d1ac",
+        "working_tree_modified": true
+      },
+      "wall_seconds": 10.577,
+      "failures": [
+        {
+          "label": "securecrt-tab-2",
+          "phase": "full-legacy",
+          "error_type": "AssertionError",
+          "failure": {
+            "check": "Unicode and no-newline capture"
+          }
+        }
+      ]
+    },
+    {
+      "attempt": "matrix-run6-complete-prefix",
+      "passed": false,
+      "binary_sha256": "9ba93891b24c40787947bd98eaaa4256ae6e6c8f97fad6b28c703ee71c67ffac",
+      "code_revision": {
+        "commit": "fd0a026d4973481d4d622a4acb76320922e25247",
+        "working_tree_modified": true
+      },
+      "wall_seconds": 19.802,
+      "failures": [
+        {
+          "label": "securecrt-tab-2",
+          "phase": "full-legacy",
+          "error_type": "AssertionError",
+          "failure": {
+            "check": "POSIX marker completion"
+          }
+        }
+      ]
+    }
+  ]
+}

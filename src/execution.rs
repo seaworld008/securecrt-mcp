@@ -585,6 +585,12 @@ impl Engine {
             let Some(job) = registry.jobs.get_mut(id) else {
                 return;
             };
+            // Explicit interrupt can publish a terminal result while a native
+            // poll is still returning. A subsequent inspected-idle acknowledgement
+            // must not be undone when that old runner eventually finishes.
+            if job.finished.is_some() && !job.requires_idle_ack {
+                return;
+            }
             job.state = state;
             job.requires_idle_ack = !release;
             job.exit_code = code;

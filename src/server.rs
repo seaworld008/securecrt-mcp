@@ -123,7 +123,7 @@ impl SecureCrtServer {
                         Err(_) => response["xshell_error"] = json!("Xshell session probe timed out"),
                     }
                 } else {
-                    response["xshell_error"] = json!("Xshell bridge is not configured; run init and start xshell_bridge.py inside Xshell");
+                    response["xshell_error"] = json!("Xshell bridge is not configured; run init and start securecrt-mcp-xshell.js inside Xshell");
                 }
                 Ok(response)
             }
@@ -142,7 +142,7 @@ impl SecureCrtServer {
         if p.backend == crate::connector::ConnectorBackend::Xshell {
             let Some(xshell) = &self.xshell else {
                 return result(Err(anyhow::anyhow!(
-                    "Xshell bridge is not configured; run init and start xshell_bridge.py inside Xshell"
+                    "Xshell bridge is not configured; run init and start securecrt-mcp-xshell.js inside Xshell"
                 )));
             };
             if p.mode != crate::connector::ConnectorMode::Exec {

@@ -1,3 +1,5 @@
+> 当前安装与平台入口见[一键安装](installation.md)。Windows 仅使用 `.js`；Mac 仅保留 `securecrt_bridge.py` 原生层，工具均为 JS/Rust。
+
 # Performance methodology and native limits
 
 ## Root causes verified in preview.2
@@ -23,11 +25,11 @@ An error after a write is never retried. An idle closed/dirty socket may be disc
 
 **These are synthetic connector results, NOT real SSH throughput, not guarantees, and not model-visible end-to-end latency.** The multiline completion measurement includes a50ms test status sampling interval and excludes fetching all output pages. Short timings include MCP/adapter work but no real terminal rendering, encryption, VPN, bastion, remote process scheduling, human approval or LLM reasoning. Do not market the ratio as an equivalent speedup of all SSH operations. Raw JSON retains all samples and scope labels.
 
-Test source: [performance_smoke.py](../tests/performance_smoke.py). Re-run:
+Test source: [performance_smoke.js](../tests/performance_smoke.js). Re-run:
 
 ```sh
 cargo build --locked
-python tests/performance_smoke.py target/debug/securecrt-mcp --output performance.json
+node tests/performance_smoke.js target/debug/securecrt-mcp --output performance.json
 ```
 
 Use the `.exe` suffix on Windows. No SSH target is contacted. Additional transport, stream and daemon tests exercise fragmented persistent frames, lost-after-send uncertainty, explicit cancellation, multi-tab execution, cache gaps and reusable CLI processes.
@@ -76,8 +78,8 @@ A normally ready prompt adds roughly one sample interval, **not** a fixed 1.5s s
 Regression entrypoints:
 
 ```sh
-python -m pytest -q tests
-python tests/prompt_readiness_smoke.py target-latest-test/release/securecrt-mcp
+node tests/mac_adapter_contract.js
+node tests/mcp_smoke.js target-latest-test/release/securecrt-mcp
 ```
 
 Use `.exe` on Windows. The smoke test drives the actual compiled Rust MCP, TCP framing and adapter against deterministic fake CRT redraws; it verifies sequential reuse, a three-command batch with independent output/exit/audit, uncertain-context batch stopping even with `continue`, two-tab isolation and timeout/no replay. Unit cases include delayed/blank/marker/premature single samples, partial manual input, changed width/prompt, deadline and lease expiry. No business host is contacted. These tests are functional race regressions, **not real SecureCRT latency measurements or native PTY certification**. The older benchmark JSON files above remain unchanged and are not relabelled as this release's performance.

@@ -7,6 +7,7 @@ mod daemon;
 mod digest;
 mod execution;
 mod fault;
+mod installation;
 mod local_cli;
 mod model;
 mod policy;
@@ -25,7 +26,6 @@ use config::{
     BridgeSecret, Config, MAX_FRAME, PROTOCOL, app_dir, bridge_config_path, bridge_script_path,
     config_path, load_bridge_secret, load_xshell_bridge_secret, xshell_bridge_config_path,
     xshell_bridge_script_path, xshell_installed_script_path, xshell_ipc_dir_path,
-    xshell_script_dir_path,
 };
 use execution::Engine;
 use policy::PolicyEngine;
@@ -35,7 +35,6 @@ use std::{fs, io::Write, path::Path};
 use uuid::Uuid;
 
 const BRIDGE_SCRIPT: &str = include_str!("../bridge/securecrt_bridge.py");
-const XSHELL_BRIDGE_SCRIPT: &str = include_str!("../bridge/xshell_bridge.py");
 const WINDOWS_BRIDGE_SCRIPT: &str = include_str!("../bridge/windows_bridge.js");
 
 #[derive(Parser)]
@@ -60,6 +59,8 @@ enum Command {
         #[arg(long)]
         expected_sha256: String,
     },
+    /// Install the binary, platform bridge and an additive Codex configuration.
+    Install,
     Serve,
     /// Retain one Engine for separate CLI clients. Foreground only, never auto-spawned.
     Daemon {
@@ -176,6 +177,7 @@ async fn main() -> Result<()> {
             }
             ended?;
         }
+        Command::Install => installation::install()?,
         Command::Init { force } => initialize(force)?,
         Command::Upgrade => initialize(false)?,
         Command::Doctor {
@@ -326,43 +328,38 @@ fn initialize(force: bool) -> Result<()> {
     secret.host = config.bridge.host.clone();
     secret.port = config.bridge.port;
     replace_with_backup(&secret_file, &serde_json::to_string_pretty(&secret)?)?;
+    #[cfg(not(windows))]
     replace_with_backup(&bridge_script_path()?, BRIDGE_SCRIPT)?;
-    let xshell_secret_file = xshell_bridge_config_path()?;
-    let mut xshell_secret = if xshell_secret_file.exists() && !force {
-        load_xshell_bridge_secret()?
-    } else {
-        BridgeSecret {
-            host: config.bridge.host.clone(),
-            port: config
-                .bridge
-                .port
-                .checked_add(1)
-                .context("bridge port is too high for Xshell")?,
-            token: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
-            max_request_bytes: MAX_FRAME,
-            ipc_dir: Some(xshell_ipc_dir_path()?.display().to_string()),
+    #[cfg(windows)]
+    {
+        // Both Windows clients use authenticated native file IPC; preserve
+        // tokens and existing chosen directories, never deploy Python scripts.
+        let mut native_secret = load_bridge_secret()?;
+        if native_secret.ipc_dir.is_none() {
+            native_secret.ipc_dir = Some(dir.join("securecrt-native-ipc").display().to_string());
+            replace_with_backup(&secret_file, &serde_json::to_string_pretty(&native_secret)?)?;
         }
-    };
-    if xshell_secret.ipc_dir.is_none() {
-        xshell_secret.ipc_dir = Some(xshell_ipc_dir_path()?.display().to_string());
+        let xshell_secret_file = xshell_bridge_config_path()?;
+        let xshell_secret = if xshell_secret_file.exists() && !force {
+            load_xshell_bridge_secret()?
+        } else {
+            BridgeSecret {
+                host: config.bridge.host.clone(),
+                port: config
+                    .bridge
+                    .port
+                    .checked_add(1)
+                    .context("bridge port is too high for Xshell")?,
+                token: format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple()),
+                max_request_bytes: MAX_FRAME,
+                ipc_dir: Some(dir.join("xshell-native-ipc").display().to_string()),
+            }
+        };
+        replace_with_backup(
+            &xshell_secret_file,
+            &serde_json::to_string_pretty(&xshell_secret)?,
+        )?;
     }
-    reject_symlink(&xshell_ipc_dir_path()?)?;
-    fs::create_dir_all(xshell_ipc_dir_path()?)?;
-    for entry in fs::read_dir(xshell_ipc_dir_path()?)? {
-        let path = entry?.path();
-        if path.is_file() {
-            fs::remove_file(path)?;
-        }
-    }
-    replace_with_backup(
-        &xshell_secret_file,
-        &serde_json::to_string_pretty(&xshell_secret)?,
-    )?;
-    replace_with_backup(&xshell_bridge_script_path()?, XSHELL_BRIDGE_SCRIPT)?;
-    let xshell_script_dir = xshell_script_dir_path()?;
-    reject_symlink(&xshell_script_dir)?;
-    fs::create_dir_all(&xshell_script_dir)?;
-    replace_with_backup(&xshell_installed_script_path()?, XSHELL_BRIDGE_SCRIPT)?;
     #[cfg(windows)]
     portable::install_scripts()?;
     println!(
@@ -377,11 +374,6 @@ fn initialize(force: bool) -> Result<()> {
     println!(
         "Stop the old adapter with Script > Cancel, then Script > Run: {}",
         bridge_script_path()?.display()
-    );
-    #[cfg(not(windows))]
-    println!(
-        "Xshell script is installed in its Script menu: {}",
-        xshell_installed_script_path()?.display()
     );
     #[cfg(windows)]
     println!(
@@ -470,12 +462,6 @@ async fn doctor(offline: bool) -> Result<()> {
 async fn doctor_xshell(offline: bool) -> Result<()> {
     let config = Config::load()?;
     let secret = load_xshell_bridge_secret()?;
-    if secret.ipc_dir.as_deref() == Some(xshell_ipc_dir_path()?.to_string_lossy().as_ref()) {
-        ensure!(
-            fs::read_to_string(xshell_installed_script_path()?)? == XSHELL_BRIDGE_SCRIPT,
-            "installed Xshell bridge differs; run upgrade, then restart the script"
-        );
-    }
     if offline {
         local_cli::emit(&support::report("xshell", None))?;
         return Ok(());
