@@ -152,15 +152,23 @@ async function stress(work, source, cscript) {
   if (!primaryFailure && !cleanupFailure) {
     try {
       assert.equal(proc.exitCode, 0, diagnostic);
-      assert(
-        !fs.existsSync(path.join(directory, "ready.json")),
-        "cancel left registry",
-      );
     } catch (error) {
       primaryFailure = error;
     }
   }
+  // Check cancellation registration even when startup/IPC already failed.
+  // Keep that original failure and attach any additional cleanup evidence.
+  const registryRemaining = fs.existsSync(path.join(directory, "ready.json"));
+  try {
+    assert(!registryRemaining, "cancel left registry");
+  } catch (error) {
+    if (!primaryFailure) primaryFailure = error;
+    else if (!cleanupFailure) cleanupFailure = error;
+    else cleanupFailure.registry_error = error.message;
+  }
   const state = {
+    registry_check_performed: true,
+    registry_remaining: registryRemaining,
     scope: "isolated Windows WSH/native fixture; no SSH",
     phase,
     completed_requests: completedRequests,
