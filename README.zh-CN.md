@@ -1,6 +1,6 @@
 # securecrt-mcp
 
-[English](README.md) · [简体中文](README.zh-CN.md) · [文档地图](docs/README.md)
+[简体中文](README.md) · [English](README.en.md) · [文档地图](docs/README.md)
 
 让 AI 助手通过你已经登录的 SSH Tab 工作。**securecrt-mcp** 是本机 Rust MCP Server，面向通过 **SecureCRT 或 Windows Xshell** 管理远端系统的用户，可接入 Codex、Claude 等 MCP 客户端。
 

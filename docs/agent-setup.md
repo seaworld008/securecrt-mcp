@@ -1,16 +1,58 @@
-# Install with an AI Agent / 用 AI Agent 安装
+# 用 AI Agent 安装
 
-[Documentation map](README.md) · [Installation](installation.md) · [Daily use](agent-usage.md)
+[文档地图](README.md) · [安装说明](installation.md) · [日常使用](agent-usage.md) · [English prompt](#english-prompt) · [English documentation map](README.en.md)
 
-Copy one prompt into Codex, Claude Code or another Agent with local filesystem and command tools. A chat-only client cannot install local software. This authorizes setup; real terminal input still requires explicit authorization for an idle test target. Human-only UI steps should be handed back with exact menu actions and paths.
+将下面任一提示词复制给 Codex、Claude Code 或其他具备本地文件与命令工具的 Agent。纯聊天客户端无法安装本地软件。提示词授权安装配置；真实终端输入仍需明确授权的空闲测试目标。原生 UI 可用且已获准时，Agent 可实际操作；无法操作时，应交接准确菜单步骤与路径。已明确的授权不必重复询问。
+
+## 中文提示词
+
+```text
+请帮我配置 https://github.com/seaworld008/securecrt-mcp。
+1. 先识别 OS/架构、AI 客户端/版本、终端/版本及已有 MCP/应用配置。阅读官方仓库
+   README、docs/installation.md、docs/support-matrix.md 和对应客户端指南。
+   检查有关配置但不打印秘密，不读取凭据文件或无关终端历史。
+2. 选择可核验的匹配来源。公开 v0.5.2 来自
+   3c3489ba267008af2e7bdcc09b0f890c56feb71b，早于 install 和当前 Windows
+   自包含脚本。检查所选包文件及 CLI help，不杜撰资产、不混搭二进制与适配器。
+   缺少当前入口时，保留最新 main 及配套文档，用 git rev-parse HEAD 记录提交，
+   核对该提交的成功 CI，再用 Rust 1.88+ 执行 cargo build --release --locked；
+   或选择成功 CI 中对应已测试提交、OS/架构的包。
+   用同来源的 Release SHA256SUMS 或 CI ZIP sidecar 校验，记录源码与二进制身份。
+3. 增量修改，保留其他 MCP、审批、工具范围、策略、令牌和 SSH 登录。不改全局
+   PATH、不绕过系统安全提示。说明 install 即使只用 Claude 也会写 Codex；
+   Claude-only 应使用 init，将稳定路径的已校验二进制单独注册到 Claude。
+   Claude Code 与 Desktop 是两套配置。所有入口使用二进制绝对路径、["serve"]
+   及同一绝对路径 SECURECRT_MCP_HOME。Windows 自定义目录时确认终端进程也继承
+   该变量；选脚本路径或只设置 MCP env 不足以生效。优先沿用已有/默认目录，
+   不为切换目录破坏已登录终端。
+4. 用同一二进制/应用目录执行 doctor --offline；Xshell 另做后端离线检查。
+   可用且已获准时，使用原生 UI 工具在空闲边界加载桥接；否则只暂停依赖步骤，
+   给出准确的 Script > Run 菜单与路径。
+   Mac 优先复用已有可加载 Python 引擎；缺少时遵循当前终端官方版本/架构要求，
+   不静默叠加运行时、不放宽策略、不绕过安全弹窗。
+5. 实际观察到桥接加载和客户端重载后（人工步骤由我确认），执行在线诊断
+   和 connector_list。若尚未明确测试范围，询问我授权哪一个专用空闲 POSIX
+   测试 Tab，并检查原终端。
+   不自动确认空闲、不选择业务 Tab。仅绑定获准目标，用 connector_read_screen
+   核对屏幕后，以新 operation_id 执行
+   一条无害 printf，核对 state、sent、exit_code 与输出。不执行业务命令，
+   不自动重放、Ctrl+C 或空闲确认；结果不确定先检查原会话。
+6. 报告来源/提交、二进制/应用/客户端路径、脱敏改动、实际命令/结果与人工步骤。
+   区分编译、配置、离线诊断、桥接连通、真实执行和客户端审批验证；
+   未运行的检查明确标未测。
+```
 
 ## English prompt
+
+[English installation](installation.en.md) · [English daily use](agent-usage.en.md) · [Codex](clients/codex.en.md) · [Claude](clients/claude.en.md)
+
+Copy this prompt into an Agent with local filesystem and command tools; a chat-only client cannot install local software. It authorizes setup. Real terminal input still requires an explicitly authorized idle test target. Use authorized native UI tools when available; otherwise hand off exact menu actions and paths. Do not ask again for authorization already established.
 
 ```text
 Set up https://github.com/seaworld008/securecrt-mcp for me.
 1. Identify OS/architecture, AI client/version, terminal/version and existing
-   MCP/application configuration. Read official repository README,
-   docs/installation.md, docs/support-matrix.md and the selected client guide.
+   MCP/application configuration. Read official repository README.en.md,
+   docs/installation.en.md, docs/support-matrix.md and the selected client guide.
    Inspect relevant configuration without printing secrets; do not read
    credential files or unrelated terminal history.
 2. Choose a matching, verifiable source. Public v0.5.2 is from
@@ -54,43 +96,18 @@ Set up https://github.com/seaworld008/securecrt-mcp for me.
    and client approval verification. Mark every unrun check as untested.
 ```
 
-## 中文提示词
+## 完成安装后应报告什么
 
-```text
-请帮我配置 https://github.com/seaworld008/securecrt-mcp。
-1. 先识别 OS/架构、AI 客户端/版本、终端/版本及已有 MCP/应用配置。阅读官方仓库
-   README、docs/installation.md、docs/support-matrix.md 和对应客户端指南。
-   检查有关配置但不打印秘密，不读取凭据文件或无关终端历史。
-2. 选择可核验的匹配来源。公开 v0.5.2 来自
-   3c3489ba267008af2e7bdcc09b0f890c56feb71b，早于 install 和当前 Windows
-   自包含脚本。检查所选包文件及 CLI help，不杜撰资产、不混搭二进制与适配器。
-   缺少当前入口时，保留最新 main 及配套文档，用 git rev-parse HEAD 记录提交，
-   核对该提交的成功 CI，再用 Rust 1.88+ 执行 cargo build --release --locked；
-   或选择成功 CI 中对应已测试提交、OS/架构的包。
-   用同来源的 Release SHA256SUMS 或 CI ZIP sidecar 校验，记录源码与二进制身份。
-3. 增量修改，保留其他 MCP、审批、工具范围、策略、令牌和 SSH 登录。不改全局
-   PATH、不绕过系统安全提示。说明 install 即使只用 Claude 也会写 Codex；
-   Claude-only 应使用 init，将稳定路径的已校验二进制单独注册到 Claude。
-   Claude Code 与 Desktop 是两套配置。所有入口使用二进制绝对路径、["serve"]
-   及同一绝对路径 SECURECRT_MCP_HOME。Windows 自定义目录时确认终端进程也继承
-   该变量；选脚本路径或只设置 MCP env 不足以生效。优先沿用已有/默认目录，
-   不为切换目录破坏已登录终端。
-4. 用同一二进制/应用目录执行 doctor --offline；Xshell 另做后端离线检查。
-   可用且已获准时，使用原生 UI 工具在空闲边界加载桥接；否则只暂停依赖步骤，
-   给出准确的 Script > Run 菜单与路径。
-   Mac 优先复用已有可加载 Python 引擎；缺少时遵循当前终端官方版本/架构要求，
-   不静默叠加运行时、不放宽策略、不绕过安全弹窗。
-5. 实际观察到桥接加载和客户端重载后（人工步骤由我确认），执行在线诊断
-   和 connector_list。若尚未明确测试范围，询问我授权哪一个专用空闲 POSIX
-   测试 Tab，并检查原终端。
-   不自动确认空闲、不选择业务 Tab。仅绑定获准目标，用 connector_read_screen
-   核对屏幕后，以新 operation_id 执行
-   一条无害 printf，核对 state、sent、exit_code 与输出。不执行业务命令，
-   不自动重放、Ctrl+C 或空闲确认；结果不确定先检查原会话。
-6. 报告来源/提交、二进制/应用/客户端路径、脱敏改动、实际命令/结果与人工步骤。
-   区分编译、配置、离线诊断、桥接连通、真实执行和客户端审批验证；
-   未运行的检查明确标未测。
-```
+| 验证层 | 证据 | 不能据此证明 |
+| --- | --- | --- |
+| 来源/包 | 提交、OS/架构、配套摘要和入口检查 | 任意终端版本都兼容 |
+| 配置 | 脱敏的新增/更新条目，包含绝对二进制路径、`serve` 和应用目录 | 客户端已加载 |
+| 离线 doctor | 真实退出状态与本地检查结果 | 桥接 UI 加载、SSH 执行、监听器已停止或审批行为 |
+| 在线后端 doctor | 真实运行时/API/来源报告 | 命令已完成或所有桌面用例已通过 |
+| 获准测试 | 核实的目标、最终状态、发送证据、真实退出码和预期输出 | 生产工作负载安全或远端子孙进程已终止 |
+| 客户端审批检查 | 在专用测试 Tab 观察到拒绝且无输入 | 其他客户端/版本也有相同策略保证 |
+
+客户端注册与审批检查见 [Codex](clients/codex.md) 或 [Claude](clients/claude.md)。本地工具、下载、UI 操作或审批不可用时，报告准确的剩余步骤，不要用成功声明代替。
 
 ## What a completed setup report should show
 
@@ -103,4 +120,4 @@ Set up https://github.com/seaworld008/securecrt-mcp for me.
 | Authorized test | Verified target, final state, send evidence, real exit code and intended output | Production workload safety or remote descendant termination |
 | Client approval check | Observed rejection with zero input in a dedicated test tab | A policy guarantee for other clients/versions |
 
-Follow [Codex](clients/codex.en.md) or [Claude](clients/claude.md) for client registration and approval checks. If a local tool, download, UI action or approval is unavailable, report the exact remaining step; do not replace it with a claim of success.
+Follow [Codex](clients/codex.en.md) or [Claude](clients/claude.en.md) for client registration and approval checks. If a local tool, download, UI action or approval is unavailable, report the exact remaining step; do not replace it with a claim of success.

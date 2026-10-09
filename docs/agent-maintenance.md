@@ -1,15 +1,17 @@
 # Agent development and maintenance guide
 
-[Documentation map](README.md) · [Contributing](../CONTRIBUTING.md) · [Testing](testing.md)
+[中文文档地图](README.md) · [English documentation map](README.en.md) · [Contributing](../CONTRIBUTING.md) · [Testing](testing.md)
 
-Read root `AGENTS.md` → overview → contributing → this guide → relevant contract/source → testing. For installation on a user's machine use [Agent setup](agent-setup.md); for operations use [Agent usage](agent-usage.md). Keep detailed procedures in those existing guides.
+中文摘要：维护先核对契约与源码，再按改动类型验证。中文主入口与镜像必须字节一致，英文备选保留同等能力和边界。真实 UI、SSH 与客户端审批需独立证据；未测环境明确交接。提交、推送、合并和发布需要对应授权，历史验收与公开资产按其原始来源保留。下方保留跨 Agent 使用的英文维护规则。
+
+Read root `AGENTS.md` → overview → contributing → this guide → relevant contract/source → testing. For installation on a user's machine use [Agent setup](agent-setup.md#english-prompt); for operations use [Agent usage](agent-usage.en.md). Keep detailed procedures in those existing guides.
 
 ## Find the authoritative implementation
 
 | Area | Implementation / directory | Contract and checks |
 | --- | --- | --- |
-| CLI and setup | `src/main.rs`, `src/installation.rs`, `src/config.rs` | [Installation](installation.md), client guides, `tests/installation_env_smoke.js` |
-| MCP and connector lifecycle | `src/server.rs`, `src/connector.rs`, `src/connector/`, `src/execution.rs`, `src/terminal.rs` | [Connectors](connectors.md), [connector architecture](connector-architecture.md), [Agent workflow](agent-usage.md) |
+| CLI and setup | `src/main.rs`, `src/installation.rs`, `src/config.rs` | [Installation](installation.en.md), client guides, `tests/installation_env_smoke.js` |
+| MCP and connector lifecycle | `src/server.rs`, `src/connector.rs`, `src/connector/`, `src/execution.rs`, `src/terminal.rs` | [Connectors](connectors.md), [connector architecture](connector-architecture.md), [Agent workflow](agent-usage.en.md) |
 | Native adapters | `bridge/`, `src/portable.rs`, `src/bridge.rs` | [Bridge protocol](bridge-protocol.md), [API compatibility](api-compatibility.md), Windows/portable and Mac adapter tests |
 | Policy and audit | `src/policy.rs`, `src/audit.rs`, `src/config.rs` | [Security model](security-model.md); rejection/uncertainty regressions |
 | Persistent local calling | `src/daemon.rs`, `src/local_cli.rs`, `clients/` | [Persistent terminals](persistent-terminal.md), [CLI clients](clients/command-line.md) |
@@ -27,7 +29,7 @@ node scripts/validate_repository.js
 git diff --check
 ```
 
-The validator checks version/protocol assertions, the English README mirror, navigation and local links. Also compare Chinese/English capability and source boundaries, shell/PowerShell/TOML/JSON paths, client-specific scopes and actual CLI definitions. A link existing locally does not prove external availability or GitHub rendering.
+The validator checks version/protocol assertions, the Simplified Chinese README mirror, bilingual navigation and examples, eight-line setup prompts, local links and bilingual guide anchors. Also compare Chinese/English capability and source boundaries, shell/PowerShell/TOML/JSON paths, client-specific scopes and actual CLI definitions. A link existing locally does not prove external availability or GitHub rendering.
 
 For code changes use Rust 1.88+, platform linker and Node 22; Mac adapter contract development also uses Python:
 

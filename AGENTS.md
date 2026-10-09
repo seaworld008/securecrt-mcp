@@ -1,8 +1,12 @@
 # Repository guide for AI Agents
 
+[中文入口](README.md) · [English overview](README.en.md) · [中文文档地图](docs/README.md) · [English documentation map](docs/README.en.md)
+
+中文摘要：开发前阅读贡献与维护指南，再核对相关契约和实现；用户安装从 Agent 安装提示词及对应客户端指南开始。保留已有配置、审批、令牌和 SSH 登录；真实终端输入必须有明确授权的空闲测试目标。区分自动检查与真实桌面验收，提交、推送和发布按各自任务授权执行。下方英文规则适用于所有 Agent。
+
 ## Start here
 
-Read `README.md` (English) or `README.zh-CN.md`, then [documentation map](docs/README.md), [contributing](CONTRIBUTING.md) and [Agent maintenance](docs/agent-maintenance.md). For user installation read [Agent setup](docs/agent-setup.md) and the selected client guide instead. Read the relevant contract and implementation before editing.
+Read [`README.md`](README.md) (Simplified Chinese, mirrored by `README.zh-CN.md`) or [`README.en.md`](README.en.md), then the [documentation map](docs/README.md) ([English](docs/README.en.md)), [contributing](CONTRIBUTING.md) and [Agent maintenance](docs/agent-maintenance.md). For user installation read [Agent setup](docs/agent-setup.md) and the selected client guide instead. Read the relevant contract and implementation before editing.
 
 ## Repository map and facts
 
@@ -16,7 +20,7 @@ The current main installer writes Codex configuration. Claude-only setup uses `i
 
 ## Editing and validation
 
-Keep changes within the assigned scope and preserve others' work. Do not change dependencies, protocols, version, approvals or release policy as a side effect of documentation work. `README.md` must equal `README.en.md`; Chinese entry capabilities and boundaries must agree. Preserve existing version/protocol assertions in validation scripts.
+Keep changes within the assigned scope and preserve others' work. Do not change dependencies, protocols, version, approvals or release policy as a side effect of documentation work. `README.md` must be byte-identical to `README.zh-CN.md`; the complete English alternative `README.en.md` must agree on capabilities and boundaries. Preserve existing version/protocol assertions in validation scripts.
 
 For documentation: `node scripts/validate_repository.js` and `git diff --check`. For code: follow [testing](docs/testing.md) with locked Rust commands and applicable Node/adapter contracts. Report exact commands/results and untested environments. Never infer real desktop or client approval success from compilation, mock tests or doctor.
 

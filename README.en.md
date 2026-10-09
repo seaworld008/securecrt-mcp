@@ -1,6 +1,6 @@
 # securecrt-mcp
 
-[English](README.md) · [简体中文](README.zh-CN.md) · [Documentation map](docs/README.md)
+[简体中文](README.md) · [English](README.en.md) · [Documentation map](docs/README.en.md)
 
 Let your AI assistant work through SSH tabs you have already logged into. **securecrt-mcp** is a local Rust MCP server for Codex, Claude and other MCP clients, for people operating remote systems through **SecureCRT or Windows Xshell**.
 
@@ -18,13 +18,13 @@ MCP lets an AI client call tools running on your computer. Desktop backends reus
 
 ## Get started
 
-**[Installation and upgrade](docs/installation.md)** · [Codex](docs/clients/codex.en.md) · [Claude Code / Desktop](docs/clients/claude.md) · **[Agent setup prompts](docs/agent-setup.md)**
+**[Installation and upgrade](docs/installation.en.md)** · [Codex](docs/clients/codex.en.md) · [Claude Code / Desktop](docs/clients/claude.en.md) · **[Agent setup prompts](docs/agent-setup.md#english-prompt)**
 
 Paste this into Codex, Claude Code or another Agent with local tools:
 
 ```text
 Install https://github.com/seaworld008/securecrt-mcp for my AI client.
-Read its current docs/agent-setup.md and docs/installation.md first.
+Read its current docs/agent-setup.md and docs/installation.en.md first.
 Identify my OS, architecture and terminal; verify the source and checksum.
 Preserve existing MCP entries, approvals, policies, tokens and SSH logins.
 Use my client's documented setup route and run doctor --offline.
@@ -62,16 +62,16 @@ Check the [main CI runs](https://github.com/seaworld008/securecrt-mcp/actions/wo
 cargo build --release --locked
 ```
 
-The executable is `target/release/securecrt-mcp` (`securecrt-mcp.exe` on Windows). Alternatively, choose a successful [main CI run](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml?query=branch%3Amain), verify its commit and platform/architecture, and inspect `native-test-bundle-<OS>-<ARCH>`. These artifacts are test bundles, not public releases. Verify the inner ZIP against its `.zip.sha256`; release downloads use their own `SHA256SUMS`. See [installation](docs/installation.md) for checksum commands and package inspection.
+The executable is `target/release/securecrt-mcp` (`securecrt-mcp.exe` on Windows). Alternatively, choose a successful [main CI run](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml?query=branch%3Amain), verify its commit and platform/architecture, and inspect `native-test-bundle-<OS>-<ARCH>`. These artifacts are test bundles, not public releases. Verify the inner ZIP against its `.zip.sha256`; release downloads use their own `SHA256SUMS`. See [installation](docs/installation.en.md) for checksum commands and package inspection.
 
 ### Initialize, connect and verify
 
 1. **Codex users:** run the selected binary's `install`, or `install.cmd` / `install.command` only if the selected package contains it. This installs a private binary and updates Codex's `securecrt` entry, preserving other settings and existing approval/tool restrictions. It does not configure every AI client or modify global PATH.
-2. **Claude-only / other clients:** use the selected binary's `init` to initialize the bridge without writing Codex configuration. Register a stable **absolute binary path**, `args = ["serve"]` and the same absolute `SECURECRT_MCP_HOME`. See [Claude configuration](docs/clients/claude.md).
+2. **Claude-only / other clients:** use the selected binary's `init` to initialize the bridge without writing Codex configuration. Register a stable **absolute binary path**, `args = ["serve"]` and the same absolute `SECURECRT_MCP_HOME`. See [Claude configuration](docs/clients/claude.en.md).
 3. With the same binary and application home, run `doctor --offline`. In an explicitly authorized idle terminal, load the entry shown by `paths` via **Script → Run**. SecureCRT needs one script per process; cancel it in its original launching tab. Xshell uses its actual discovery scope. Reload the AI client and run the selected backend's online doctor.
 4. Discover with `connector_list`, verify the authorized target, bind with `connector_open`, then inspect it with `connector_read_screen`. Only after verifying an explicitly authorized idle POSIX test tab, run a harmless `printf` and check `state`, `sent`, `exit_code` and output. Configuration and doctor checks do not prove execution or client approval behavior.
 
-Updating files does not reload a running bridge. Upgrade when idle, cancel the old instance, load the fixed entry, restart MCP and rediscover targets. Ordinary upgrades retain tokens and policy; **do not use `init --force`**. See [installation](docs/installation.md), [Agent workflow](docs/agent-usage.md) and [troubleshooting](docs/troubleshooting.md).
+Updating files does not reload a running bridge. Upgrade when idle, cancel the old instance, load the fixed entry, restart MCP and rediscover targets. Ordinary upgrades retain tokens and policy; **do not use `init --force`**. See [installation](docs/installation.en.md), [Agent workflow](docs/agent-usage.en.md) and [troubleshooting](docs/troubleshooting.md).
 
 ## Learn more and contribute
 

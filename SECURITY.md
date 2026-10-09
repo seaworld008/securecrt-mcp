@@ -1,10 +1,12 @@
 # Security policy
 
+[中文入口](README.md) · [English overview](README.en.md) · [中文文档地图](docs/README.md) · [English documentation map](docs/README.en.md)
+
 Read the [security model](docs/security-model.md) for policy, authentication, audit and execution boundaries. This project is not a sandbox for remote systems: AI client approvals and SSH account permissions remain essential. Desktop backends reuse existing sessions; optional OpenSSH opens a separate connection.
 
 ## Supported versions
 
-During v0.x, fixes target current main and the latest release line. A main fix is not present in a published asset until a new release is explicitly published. Check the exact source/binary identity and [installation source boundary](docs/installation.md); do not infer coverage from a shared version string.
+During v0.x, fixes target current main and the latest release line. A main fix is not present in a published asset until a new release is explicitly published. Check the exact source/binary identity and [installation source boundary](docs/installation.en.md); do not infer coverage from a shared version string.
 
 ## Report a vulnerability
 

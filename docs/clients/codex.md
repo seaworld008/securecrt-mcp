@@ -1,6 +1,6 @@
 # Codex 接入与审批
 
-[English](codex.en.md) · [安装说明](../installation.md) · [文档地图](../README.md)
+[简体中文](codex.md) · [English](codex.en.md) · [安装说明](../installation.md) · [文档地图](../README.md)
 
 ## 自动安装或手工注册
 

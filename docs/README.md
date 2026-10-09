@@ -1,27 +1,27 @@
-# Documentation map / 文档地图
+# 文档地图
 
-[English overview](../README.md) · [中文入口](../README.zh-CN.md)
+[简体中文](README.md) · [English](README.en.md) · [项目概览](../README.md)
 
-Start with your intent. The setup and maintenance guides below are in English; the setup prompt is available in English and Chinese. Some detailed operational/evidence documents are currently in Chinese.
+按你的目标选择阅读路线。概览、安装、日常使用和客户端指南默认展示简体中文，并提供完整英文备选。安装提示词保留双语模板；开发维护指南保留英文正文及中文入口，部分详细运行与验收文档目前仅有中文。
 
-| I want to… / 目标 | Read |
+| 我想…… | 阅读路线 |
 | --- | --- |
-| Decide whether this fits my platform | [Overview](../README.md), [support matrix](support-matrix.md), [runtime support policy](support-policy.md) |
-| Install and connect an AI client / 安装 | [Copy a setup prompt](agent-setup.md) → [installation](installation.md) → [Codex](clients/codex.en.md) ([中文](clients/codex.md)) or [Claude Code / Desktop](clients/claude.md) |
-| Use sessions daily / 日常使用 | [Agent workflow](agent-usage.md), [connector tools](connectors.md), [persistent terminals](persistent-terminal.md), [CLI / JS / PowerShell](clients/command-line.md) |
-| Upgrade an existing setup / 升级 | [Installation: Upgrade](installation.md#upgrade), [troubleshooting](troubleshooting.md); retain policy/token and reload the bridge |
-| Diagnose a problem / 排障 | [Troubleshooting](troubleshooting.md), [support policy](support-policy.md), [API compatibility](api-compatibility.md) |
-| Understand security or report a vulnerability | [Security model](security-model.md), [security reporting](../SECURITY.md) |
-| Understand interfaces and architecture | [Connector contract](connectors.md), [connector architecture](connector-architecture.md), [architecture](architecture.md), [bridge protocol](bridge-protocol.md), [vendor references](references.md) |
-| Develop or run automated tests / 开发测试 | [Contributing](../CONTRIBUTING.md) → [Agent maintenance](agent-maintenance.md) → [testing](testing.md); root `AGENTS.md` is the repository guide |
-| Verify an actual desktop / 真机验收 | [Acceptance rules](desktop-acceptance.md), [test cases](desktop-test-cases.md), [Mac test prompt](mac-securecrt-test-prompt.md), [support evidence](support-matrix.md) |
-| Maintain a release / 发布维护 | [Agent maintenance: release boundary](agent-maintenance.md#commit-and-release-boundaries), [release process](releases.md), [changelog](../CHANGELOG.md) |
-| Read performance or historical decisions | [Performance](performance.md), [readiness evidence](production-readiness.md), [0.2 migration](migration-0.2.md), [0.3 migration](migration-0.3.md); `releases/`, `plans/`, `superpowers/` contain historical records |
+| 判断是否适合我的平台 | [项目概览](../README.md)、[支持矩阵](support-matrix.md)、[运行时支持策略](support-policy.md) |
+| 安装并接入 AI 客户端 | [复制安装提示词](agent-setup.md#中文提示词) → [安装说明](installation.md) → [Codex](clients/codex.md)（[English](clients/codex.en.md)）或 [Claude Code / Desktop](clients/claude.md) |
+| 日常使用会话 | [Agent 工作流](agent-usage.md)、[连接器工具](connectors.md)、[持久终端调用](persistent-terminal.md)、[CLI / JS / PowerShell](clients/command-line.md) |
+| 升级已有安装 | [安装说明：升级](installation.md#upgrade)、[排障](troubleshooting.md)；保留策略与令牌，并重新加载桥接 |
+| 排查问题 | [排障](troubleshooting.md)、[支持策略](support-policy.md)、[API 兼容性](api-compatibility.md) |
+| 理解安全边界或报告漏洞 | [安全模型](security-model.md)、[漏洞报告](../SECURITY.md) |
+| 理解接口与架构 | [连接器契约](connectors.md)、[连接器架构](connector-architecture.md)、[整体架构](architecture.md)、[桥接协议](bridge-protocol.md)、[厂商参考资料](references.md) |
+| 开发或运行自动测试 | [贡献指南](../CONTRIBUTING.md) → [Agent 维护指南](agent-maintenance.md) → [开发测试](testing.md)；根目录 `AGENTS.md` 是仓库工作指南 |
+| 验收真实桌面环境 | [验收规则](desktop-acceptance.md)、[测试用例](desktop-test-cases.md)、[Mac 测试提示词](mac-securecrt-test-prompt.md)、[支持证据](support-matrix.md) |
+| 维护发布 | [Agent 维护指南：提交与发布边界](agent-maintenance.md#commit-and-release-boundaries)、[发布流程](releases.md)、[变更记录](../CHANGELOG.md) |
+| 阅读性能与历史决策 | [性能](performance.md)、[就绪证据](production-readiness.md)、[0.2 迁移](migration-0.2.md)、[0.3 迁移](migration-0.3.md)；`releases/`、`plans/`、`superpowers/` 保存历史记录 |
 
-## Reading order for Agents
+## Agent 阅读顺序
 
-**Setup:** overview → [Agent setup](agent-setup.md) → [installation](installation.md) → selected client guide → [Agent usage](agent-usage.md). Inspect the selected package's own docs and source before applying current-main instructions.
+**安装：** 项目概览 → [Agent 安装提示词](agent-setup.md) → [安装说明](installation.md) → 所选客户端指南 → [Agent 工作流](agent-usage.md)。应用当前 main 的步骤前，先检查所选包自己的文档和源码。
 
-**Development/maintenance:** root `AGENTS.md` → [contributing](../CONTRIBUTING.md) → [Agent maintenance](agent-maintenance.md) → relevant architecture/contract → [testing](testing.md) → applicable acceptance/release rules.
+**开发与维护：** 根目录 `AGENTS.md` → [贡献指南](../CONTRIBUTING.md) → [Agent 维护指南](agent-maintenance.md) → 相关架构与契约 → [开发测试](testing.md) → 适用的验收与发布规则。
 
-The published v0.5.2 source predates the current installer. [Installation](installation.md) records the release source, current-main build and CI artifact checks. Historical receipts certify only their recorded source, hashes and environment, not current main or every compatible-looking device.
+公开 v0.5.2 的源码早于当前安装器。[安装说明](installation.md)列出发布来源、当前 main 构建和 CI artifact 核对方法。历史验收记录仅证明其中记载的源码、摘要和环境，不能代表当前 main，也不能代表所有看似兼容的设备。

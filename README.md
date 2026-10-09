@@ -1,54 +1,54 @@
 # securecrt-mcp
 
-[English](README.md) · [简体中文](README.zh-CN.md) · [Documentation map](docs/README.md)
+[简体中文](README.md) · [English](README.en.md) · [文档地图](docs/README.md)
 
-Let your AI assistant work through SSH tabs you have already logged into. **securecrt-mcp** is a local Rust MCP server for Codex, Claude and other MCP clients, for people operating remote systems through **SecureCRT or Windows Xshell**.
+让 AI 助手通过你已经登录的 SSH Tab 工作。**securecrt-mcp** 是本机 Rust MCP Server，面向通过 **SecureCRT 或 Windows Xshell** 管理远端系统的用户，可接入 Codex、Claude 等 MCP 客户端。
 
 [![CI main](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml?query=branch%3Amain)
-[![Latest release](https://img.shields.io/github/v/release/seaworld008/securecrt-mcp?display_name=tag)](https://github.com/seaworld008/securecrt-mcp/releases/latest)
+[![最新发布](https://img.shields.io/github/v/release/seaworld008/securecrt-mcp?display_name=tag)](https://github.com/seaworld008/securecrt-mcp/releases/latest)
 [![MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Rust 1.88+](https://img.shields.io/badge/Rust-1.88%2B-orange)](Cargo.toml)
 
-MCP lets an AI client call tools running on your computer. Desktop backends reuse the terminal's existing login, VPN, bastion and MFA context without exporting SSH credentials or opening another SSH connection. The optional **OpenSSH** backend opens its own connection with your system SSH client, agent, configuration and host keys.
+MCP 让 AI 客户端调用你电脑上的本机工具。桌面后端沿用终端已有的登录、VPN、堡垒机与 MFA 上下文，不导出 SSH 凭据、不另建 SSH 连接。可选 **OpenSSH** 后端会另建连接，使用系统 SSH 客户端、SSH Agent、配置和主机密钥。
 
-- Discover tabs and bind an explicit target; reuse that attachment for commands or batches of up to 20 commands.
-- Track state, actual POSIX exit codes, paginated output, timeouts and local audit records.
-- Use OpenSSH exec / PTY streams for logs, pagers and REPLs. Desktop backends capture screens; they are not native PTYs.
-- Keep client approvals and remote account permissions under your control. Unknown results require inspection; commands and idle recovery are never retried automatically.
+- 发现 Tab、显式绑定目标，同一附件可连续执行命令或最多 20 条的批量任务。
+- 跟踪命令状态、真实 POSIX 退出码、分页输出、超时和本地审计记录。
+- OpenSSH 提供 exec / PTY 流，适合日志、分页器和 REPL；桌面后端捕获屏幕，并非原生 PTY。
+- 客户端审批和远端账号权限由操作者掌握；结果未知时先检查，不自动重发命令或确认空闲。
 
-## Get started
+## 开始使用
 
-**[Installation and upgrade](docs/installation.md)** · [Codex](docs/clients/codex.en.md) · [Claude Code / Desktop](docs/clients/claude.md) · **[Agent setup prompts](docs/agent-setup.md)**
+**[安装与升级](docs/installation.md)** · [Codex](docs/clients/codex.md) · [Claude Code / Desktop](docs/clients/claude.md) · **[Agent 安装提示词](docs/agent-setup.md)**
 
-Paste this into Codex, Claude Code or another Agent with local tools:
+复制到 Codex、Claude Code 或其他具备本机工具的 Agent：
 
 ```text
-Install https://github.com/seaworld008/securecrt-mcp for my AI client.
-Read its current docs/agent-setup.md and docs/installation.md first.
-Identify my OS, architecture and terminal; verify the source and checksum.
-Preserve existing MCP entries, approvals, policies, tokens and SSH logins.
-Use my client's documented setup route and run doctor --offline.
-Load the bridge when authorized; hand off any unavailable native UI steps.
-Test harmlessly only in an explicitly authorized idle tab; never assume idle.
-Report passed, failed and untested layers; config checks are not SSH proof.
+请为我的 AI 客户端安装 https://github.com/seaworld008/securecrt-mcp。
+先读官方当前 docs/agent-setup.md 和 docs/installation.md。
+识别 OS、架构和终端，核对所选来源与摘要。
+保留已有 MCP、审批、策略、令牌和 SSH 登录。
+按对应客户端文档配置，并执行 doctor --offline。
+获准后加载桥接；无法操作的原生 UI 步骤给我准确交接。
+仅在明确授权的空闲 Tab 做无害验证，不自动判定空闲。
+分别报告通过、失败和未测项，不把配置检查当作 SSH 执行证明。
 ```
 
-### Choose a platform and source
+### 选择平台和来源
 
-The paths below describe **current main**. See the [support matrix](docs/support-matrix.md) for tested systems and exact evidence; other versions and architectures require validation.
+以下是 **当前 main** 的路径。已测系统与精确证据见[支持矩阵](docs/support-matrix.md)，其他版本、架构仍需验证。
 
-| Platform / backend | Native entry after initialization | End-user runtime |
+| 平台 / 后端 | 初始化后的原生入口 | 最终用户运行依赖 |
 | --- | --- | --- |
-| Windows / SecureCRT | `securecrt-mcp-securecrt.js` in the chosen application directory | Installed SecureCRT + system JScript; no Python, Node or Rust |
-| Windows / Xshell | `securecrt-mcp-xshell.js` in Xshell's Scripts folder; custom application home uses `xshell-scripts` | Installed Xshell + system JScript; no Python, Node or Rust |
-| macOS / SecureCRT | `securecrt_bridge.py` in the chosen application directory | Installed SecureCRT + a Python engine it can load; standard library only |
-| Windows, macOS, Linux / optional OpenSSH | Explicit `openssh` backend; no desktop bridge | System OpenSSH and separately authorized SSH access |
+| Windows / SecureCRT | 所选应用目录中的 `securecrt-mcp-securecrt.js` | 已安装 SecureCRT + 系统 JScript；无需 Python、Node、Rust |
+| Windows / Xshell | Xshell Scripts 目录中的 `securecrt-mcp-xshell.js`；自定义应用目录时在 `xshell-scripts` 下 | 已安装 Xshell + 系统 JScript；无需 Python、Node、Rust |
+| macOS / SecureCRT | 所选应用目录中的 `securecrt_bridge.py` | 已安装 SecureCRT + 它能加载的 Python 引擎；桥接仅用标准库 |
+| Windows、macOS、Linux / 可选 OpenSSH | 显式选择 `openssh`，无需桌面桥接 | 系统 OpenSSH 与另行授权的 SSH 访问 |
 
-Linux desktop SecureCRT is unverified in the current desktop matrix. **Source builds** need Rust 1.88+ and a platform linker; Node 22 is for development/testing/packaging, not installed Windows terminal use. macOS engine support is determined by the installed SecureCRT loader, not by your shell's Python version.
+本轮未验证 Linux 桌面 SecureCRT。**源码构建**需要 Rust 1.88+ 和平台链接器；Node 22 用于开发、测试和打包，不是已安装 Windows 终端的运行依赖。macOS 引擎兼容性由当前 SecureCRT 加载器决定，不能根据 shell 的 Python 版本推断。
 
-**Release boundary:** published **v0.5.2** comes from [`3c3489b`](https://github.com/seaworld008/securecrt-mcp/commit/3c3489ba267008af2e7bdcc09b0f890c56feb71b), before `install` and the current Windows self-contained scripts. The latest-release badge does not imply these features exist in its ZIP. Inspect the archive and its matching documentation; never mix old binaries with current adapters.
+**发布边界：** 公开 **v0.5.2** 的源码是 [`3c3489b`](https://github.com/seaworld008/securecrt-mcp/commit/3c3489ba267008af2e7bdcc09b0f890c56feb71b)，早于 `install` 和当前 Windows 自包含脚本。最新发布徽章不代表其 ZIP 含有这些功能。请核对包内文件及该包配套文档，不要混用旧二进制与当前适配器。
 
-For the current installation flow, keep the current main checkout and its matching documentation. Clone it and record the full commit:
+需要当前安装流程时，保留最新 main 源码及其配套文档，克隆后记录完整提交：
 
 ```sh
 git clone --branch main https://github.com/seaworld008/securecrt-mcp.git
@@ -56,25 +56,25 @@ cd securecrt-mcp
 git rev-parse HEAD
 ```
 
-Check the [main CI runs](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml?query=branch%3Amain) for a successful run on that exact commit, then build with Rust 1.88+:
+在 [main CI](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml?query=branch%3Amain) 核对该提交的成功运行，再用 Rust 1.88+ 构建：
 
 ```sh
 cargo build --release --locked
 ```
 
-The executable is `target/release/securecrt-mcp` (`securecrt-mcp.exe` on Windows). Alternatively, choose a successful [main CI run](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml?query=branch%3Amain), verify its commit and platform/architecture, and inspect `native-test-bundle-<OS>-<ARCH>`. These artifacts are test bundles, not public releases. Verify the inner ZIP against its `.zip.sha256`; release downloads use their own `SHA256SUMS`. See [installation](docs/installation.md) for checksum commands and package inspection.
+产物为 `target/release/securecrt-mcp`，Windows 为 `securecrt-mcp.exe`。也可在[成功的 main CI](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml?query=branch%3Amain) 中核对提交、平台与架构，选择 `native-test-bundle-<OS>-<ARCH>` artifact。这些是测试包，并非公开 Release。内层 ZIP 使用随附 `.zip.sha256` 校验；Release 使用自己的 `SHA256SUMS`。检查方法见[安装说明](docs/installation.md)。
 
-### Initialize, connect and verify
+### 初始化、接入和验证
 
-1. **Codex users:** run the selected binary's `install`, or `install.cmd` / `install.command` only if the selected package contains it. This installs a private binary and updates Codex's `securecrt` entry, preserving other settings and existing approval/tool restrictions. It does not configure every AI client or modify global PATH.
-2. **Claude-only / other clients:** use the selected binary's `init` to initialize the bridge without writing Codex configuration. Register a stable **absolute binary path**, `args = ["serve"]` and the same absolute `SECURECRT_MCP_HOME`. See [Claude configuration](docs/clients/claude.md).
-3. With the same binary and application home, run `doctor --offline`. In an explicitly authorized idle terminal, load the entry shown by `paths` via **Script → Run**. SecureCRT needs one script per process; cancel it in its original launching tab. Xshell uses its actual discovery scope. Reload the AI client and run the selected backend's online doctor.
-4. Discover with `connector_list`, verify the authorized target, bind with `connector_open`, then inspect it with `connector_read_screen`. Only after verifying an explicitly authorized idle POSIX test tab, run a harmless `printf` and check `state`, `sent`, `exit_code` and output. Configuration and doctor checks do not prove execution or client approval behavior.
+1. **Codex 用户：** 执行所选二进制的 `install`；仅在所选包确实包含时使用 `install.cmd` / `install.command`。它将二进制放入私有目录并增量更新 Codex 的 `securecrt` 条目，保留其他设置及既有审批/工具限制，不会配置所有 AI 客户端，也不改全局 PATH。
+2. **仅 Claude 或其他客户端：** 执行所选二进制的 `init`，初始化桥接而不写 Codex 配置。向客户端注册稳定的**二进制绝对路径**、`args = ["serve"]` 和同一绝对路径 `SECURECRT_MCP_HOME`，见 [Claude 接入](docs/clients/claude.md)。
+3. 用同一二进制和应用目录执行 `doctor --offline`。在明确授权的空闲终端，通过 **Script → Run** 加载 `paths` 显示的入口。SecureCRT 每个进程一次，取消要回到最初启动脚本的 Tab；Xshell 以实际发现范围为准。重新加载 AI 客户端，再运行对应后端的在线 doctor。
+4. `connector_list` 发现会话，核对获准目标后用 `connector_open` 绑定，再用 `connector_read_screen` 检查屏幕。只有核实明确授权的空闲 POSIX 测试 Tab 后才执行无害 `printf`，检查 `state`、`sent`、`exit_code` 与输出。配置和 doctor 检查不能代替真实执行或客户端审批验收。
 
-Updating files does not reload a running bridge. Upgrade when idle, cancel the old instance, load the fixed entry, restart MCP and rediscover targets. Ordinary upgrades retain tokens and policy; **do not use `init --force`**. See [installation](docs/installation.md), [Agent workflow](docs/agent-usage.md) and [troubleshooting](docs/troubleshooting.md).
+更新磁盘文件不会重载桥接。升级须等终端空闲，取消旧实例、加载固定入口、重启 MCP 并重新发现目标。常规升级保留令牌和策略，**不要使用 `init --force`**。详见[安装说明](docs/installation.md)、[Agent 工作流](docs/agent-usage.md)和[排障](docs/troubleshooting.md)。
 
-## Learn more and contribute
+## 深入阅读与贡献
 
-[Documentation map](docs/README.md) · [Interfaces](docs/connectors.md) · [Architecture](docs/architecture.md) · [Security model](docs/security-model.md) · [Security reporting](SECURITY.md) · [Support policy](docs/support-policy.md)
+[文档地图](docs/README.md) · [接口](docs/connectors.md) · [架构](docs/architecture.md) · [安全模型](docs/security-model.md) · [漏洞报告](SECURITY.md) · [支持策略](docs/support-policy.md)
 
-Start development with [contributing](CONTRIBUTING.md) and [Agent maintenance](docs/agent-maintenance.md). [Testing](docs/testing.md) and [desktop acceptance](docs/desktop-acceptance.md) separate automated checks from actual native UI, SSH and client approval evidence. Use [GitHub issues](https://github.com/seaworld008/securecrt-mcp/issues) for sanitized bug reports and questions; follow [SECURITY.md](SECURITY.md) for vulnerabilities.
+开发从[贡献指南](CONTRIBUTING.md)和 [Agent 维护导航](docs/agent-maintenance.md)开始。[开发测试](docs/testing.md)与[桌面验收](docs/desktop-acceptance.md)区分自动检查和真实原生 UI、SSH、客户端审批证据。问题与脱敏报告可到 [GitHub issues](https://github.com/seaworld008/securecrt-mcp/issues)，漏洞请遵循 [SECURITY.md](SECURITY.md)。
