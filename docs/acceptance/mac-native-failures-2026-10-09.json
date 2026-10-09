@@ -166,6 +166,54 @@
           }
         }
       ]
+    },
+    {
+      "attempt": "matrix-final-exact-binary",
+      "passed": false,
+      "binary_sha256": "20932d0cabb744bf709cade4da800372c237259b9b2bd5c6e3e91902d3d4268f",
+      "code_revision": {
+        "commit": "dbe6f5c3b2b67015b73191a9a8d7430d63a86e2e",
+        "working_tree_modified": true
+      },
+      "source_sha256": {
+        "bridge/windows_bridge.js": "a62951fe14e50db48f2d6f7614a8a6ab71e5dcba60047c1325f5cb39dbada92a",
+        "bridge/securecrt_bridge.py": "e7f8f84e630f2326b013eb3f5d2f6b01b01db94d489a0122bc573c0eae0cb7b4"
+      },
+      "wall_seconds": 20.081,
+      "failures": [
+        {
+          "label": "securecrt-tab-2",
+          "phase": "full-legacy",
+          "error_type": "AssertionError",
+          "failure": {
+            "check": "POSIX marker completion"
+          }
+        }
+      ]
+    },
+    {
+      "attempt": "matrix-final-after-ui",
+      "passed": false,
+      "binary_sha256": "bb02749f03acae9ff8c0f2fd57124a94359e936d8c1b057a43765f39de3f1925",
+      "code_revision": {
+        "commit": "3e796bc7f36a786cbd0e27ddc7a2170e13af8e22",
+        "working_tree_modified": true
+      },
+      "source_sha256": {
+        "bridge/windows_bridge.js": "a62951fe14e50db48f2d6f7614a8a6ab71e5dcba60047c1325f5cb39dbada92a",
+        "bridge/securecrt_bridge.py": "957437304f304f47d94e7cf58e33c369fe4bc4f6ca0a7cc72f88862481abd58e"
+      },
+      "wall_seconds": 18.445,
+      "failures": [
+        {
+          "label": "securecrt-tab-2",
+          "phase": "full-legacy",
+          "error_type": "AssertionError",
+          "failure": {
+            "check": "original prompt restored after finite sleep"
+          }
+        }
+      ]
     }
   ]
 }
