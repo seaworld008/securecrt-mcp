@@ -7,6 +7,7 @@ async function run(binary) {
   for (const name of [
     "windows_bridge_test.js",
     "client_contract.js",
+    "desktop_matrix_contract.js",
     "protocol_harness.js",
     "mcp_smoke.js",
     "ux_smoke.js",
@@ -25,7 +26,7 @@ async function run(binary) {
       120000,
     );
     process.stdout.write(result.stdout);
-    if (result.code !== 0) process.stderr.write(result.stderr);
+    if (result.stderr) process.stderr.write(result.stderr);
     assert.equal(result.code, 0, name + " failed");
   }
   const packageResult = await command(
@@ -39,7 +40,7 @@ async function run(binary) {
     120000,
   );
   process.stdout.write(packageResult.stdout);
-  if (packageResult.code !== 0) process.stderr.write(packageResult.stderr);
+  if (packageResult.stderr) process.stderr.write(packageResult.stderr);
   assert.equal(packageResult.code, 0, "package validation failed");
   if (process.platform === "win32") {
     const p = await command(
@@ -49,7 +50,7 @@ async function run(binary) {
       180000,
     );
     process.stdout.write(p.stdout);
-    if (p.code !== 0) process.stderr.write(p.stderr);
+    if (p.stderr) process.stderr.write(p.stderr);
     assert.equal(p.code, 0, "Windows WSH bootstrap failed");
   }
   console.log(

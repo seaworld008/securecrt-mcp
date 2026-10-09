@@ -4,7 +4,7 @@
 // These are native API doubles/contracts, not Python implementations of Node controllers.
 const { spawn } = require("node:child_process");
 const { ROOT } = require("./node_harness");
-const nativeContract = String.raw`import sys
+const nativeFixture = String.raw`import sys
 """Native SecureCRT calls are faked; no sockets or remote hosts are contacted."""
 import importlib.util
 from pathlib import Path
@@ -95,7 +95,11 @@ class Crt:
         pass
 
 
-class AdapterTests(unittest.TestCase):
+`;
+// Each interpreter receives fresh globals from one shared native SDK fixture.
+const nativeContract =
+  nativeFixture +
+  String.raw`class AdapterTests(unittest.TestCase):
     def setUp(self):
         self.assertIn('NativeAdapter', namespace, 'protocol-2 native adapter is missing')
         self.time = 1000000
@@ -846,16 +850,46 @@ class QueuedPromptTests(unittest.TestCase):
         reads=[]
         def read(patterns,seconds):
             reads.append((patterns,seconds))
-            if patterns==['user$']:
+            if patterns==['user$ ']:
                 screen.text='output\nuser$ '
                 screen.MatchIndex=1
             return ''
         screen.ReadString=read
         a.end('one',True)
-        self.assertEqual(reads,[(['user$'],1)])
+        self.assertEqual(reads,[(['user$ '],1)])
         a.prepare_and_begin(attachment_id=binding['attachment_id'],text='printf two',capture_id='two',runtime_ms=10000)
         self.assertEqual(screen.sent,['printf one\r','printf two\r'])
         self.assertFalse(app.tabs[0].Screen.sent)
+
+class CompletePrefixTests(unittest.TestCase):
+    def test_same_visible_prompt_still_drains_queued_final_space(self):
+        class PreciseScreen(Screen):
+            Rows=1;CurrentRow=1;CurrentColumn=7
+            def __init__(self):
+                super().__init__();self.text='demo$ ';self.reads=[]
+            def Get2(self,row,column,end,last):
+                # SecureCRT Mac appends a synthetic row newline even to single-row Get2.
+                return self.text[column-1:last]+'\n'
+            def ReadString(self,patterns,seconds):
+                self.reads.append((patterns,seconds))
+                if patterns==['demo$ ']:
+                    self.text='demo$ ';self.CurrentColumn=7;self.MatchIndex=1
+                return ''
+        app=Crt();screen=PreciseScreen();app.tabs[1].Screen=screen
+        adapter=namespace['NativeAdapter'](app)
+        sid=adapter.list_sessions()['sessions'][1]['id']
+        binding=adapter.attach(sid,expected_prompt='demo$')
+        self.assertEqual(screen.reads,[],'startup must not unconditionally drain remote input')
+        adapter.prepare_and_begin(attachment_id=binding['attachment_id'],text='printf first',capture_id='owned',runtime_ms=10000,completion_marker='END_owned')
+        screen.text='demo$';screen.CurrentColumn=6
+        adapter.end('owned',True)
+        self.assertEqual(screen.reads,[(['demo$ '],1)])
+        self.assertEqual(screen.CurrentColumn,7)
+        self.assertEqual(screen.sent,['printf first\r'])
+        self.assertFalse(app.tabs[0].Screen.sent)
+        self.assertEqual(adapter._input(adapter._session(sid))['input_prefix'],'demo$ ')
+        adapter.prepare_and_begin(attachment_id=binding['attachment_id'],text='printf second',capture_id='second',runtime_ms=10000)
+        self.assertEqual(screen.sent,['printf first\r','printf second\r'])
 
 class AtomicScreenTests(unittest.TestCase):
     def test_input_cursor_is_sampled_after_get2_pumps_rendering(self):
@@ -925,96 +959,9 @@ class CapabilityProbeTests(unittest.TestCase):
 
 unittest.main(argv=["mac-native-contract"], verbosity=2)
 `;
-const nativeWorker = String.raw`import sys,json,re,os
-"""Native SecureCRT calls are faked; no sockets or remote hosts are contacted."""
-import importlib.util
-from pathlib import Path
-import socket
-import threading
-import time
-import unittest
-
-PATH = Path(sys.argv[1]) / 'bridge' / 'securecrt_bridge.py'
-# Import definitions from the old script without launching its server.
-namespace = {'__name__': 'adapter_under_test', '__file__': str(PATH)}
-source = PATH.read_text(encoding='utf-8')
-if source.rstrip().endswith('main()') and '\nmain()' in source:
-    source = source.rsplit('\nmain()', 1)[0]
-exec(compile(source, str(PATH), 'exec'), namespace)
-
-
-class Screen:
-    Rows = 2
-    Columns = 80
-    CurrentRow = 2
-    CurrentColumn = 8
-    Synchronous = False
-    IgnoreEscape = False
-    MatchIndex = 0
-
-    def __init__(self):
-        self.sent = []
-        self.text = 'ready\nuser$ '
-        self.chunks = []
-
-    def Get2(self, start, col, end, last):
-        return '\n'.join(self.text.split('\n')[start - 1:end])
-
-    def Send(self, text):
-        self.sent.append(text)
-
-    def ReadString(self, patterns, seconds):
-        assert seconds == 1, 'only bounded one-second native waits allowed'
-        if self.chunks:
-            value, self.MatchIndex = self.chunks.pop(0)
-            return value
-        self.MatchIndex = 0
-        return ''
-
-
-class Config:
-    def __init__(self, hostname):
-        self.hostname = hostname
-
-    def GetOption(self, key):
-        return {'Hostname': self.hostname, 'Username': 'test',
-                'Protocol Name': 'SSH2', 'Port': 22}[key]
-
-
-class Session:
-    def __init__(self, hostname):
-        self.Connected = True
-        self.Config = Config(hostname)
-
-
-class Tab:
-    def __init__(self, app, hostname):
-        self.app, self.Caption = app, hostname
-        self.Session, self.Screen = Session(hostname), Screen()
-
-    @property
-    def Index(self):
-        return self.app.tabs.index(self) + 1
-
-    def Activate(self):
-        self.app.focus = self
-
-
-class Crt:
-    Version = 'fake-9.x'
-
-    def __init__(self):
-        self.tabs = [Tab(self, 'test-a'), Tab(self, 'test-b')]
-
-    def GetTabCount(self):
-        return len(self.tabs)
-
-    def GetTab(self, index):
-        return self.tabs[index - 1]
-
-    def Sleep(self, milliseconds):
-        pass
-
+const nativeWorker =
+  nativeFixture +
+  String.raw`import json,re,os
 
 class BufferedScreen(Screen):
     def __init__(self):

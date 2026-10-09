@@ -293,11 +293,24 @@ class FakeBridge {
       return socket.destroy();
     }
     if (this.delay) await sleep(this.delay);
-    socket.write(
+    const wire = Buffer.from(
       this.oversized
         ? "x".repeat(270000) + "\n"
         : JSON.stringify(response) + "\n",
     );
+    if (this.fragmentReplies) {
+      const utf8 = wire.findIndex((byte) => byte >= 128);
+      const cuts = [1, 17, ...(utf8 >= 17 ? [utf8 + 1] : []), wire.length];
+      let offset = 0;
+      for (const end of cuts) {
+        socket.write(wire.subarray(offset, end));
+        offset = end;
+        await sleep(1);
+      }
+      this.fragmentedResponses = (this.fragmentedResponses || 0) + 1;
+      if (utf8 >= 17)
+        this.fragmentedUTF8Responses = (this.fragmentedUTF8Responses || 0) + 1;
+    } else socket.write(wire);
   }
   async method(name, p) {
     if (name === "poll_bulk") name = "poll";

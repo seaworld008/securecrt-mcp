@@ -3,7 +3,7 @@
 const net = require("node:net"),
   { MCP, fixture, assert, sleep } = require("./node_harness");
 async function run(binary) {
-  const f = await fixture(binary, { persistent: true });
+  const f = await fixture(binary, { persistent: true, fragmentReplies: true });
   let m;
   try {
     await new Promise((resolve, reject) => {
@@ -107,8 +107,39 @@ async function run(binary) {
     }
     assert.equal(batch.state, "completed");
     assert.equal(batch.results.length, 2);
+    // Exercise the compiled Rust TCP reader with responses split inside UTF-8,
+    // not merely fragmented requests handled by the Node fixture parser.
+    const unicode = await m.tool("connector_exec", {
+      session_id: sid,
+      command: "large-output",
+      mode: "posix",
+      max_bytes: 4,
+      wait_ms: 10000,
+    });
+    assert.equal(unicode.state, "completed");
+    assert.equal(unicode.text, "中");
+    assert.equal(unicode.next_cursor, 3);
+    let cursor = 0,
+      text = "";
+    do {
+      const page = await m.tool("connector_read", {
+        command_id: unicode.command_id,
+        cursor,
+        max_bytes: 65536,
+      });
+      text += page.text;
+      cursor = page.next_cursor;
+    } while (cursor !== null);
+    assert(
+      text === "中".repeat(3000) + "\n",
+      "fragmented bridge UTF-8 response was corrupted",
+    );
+    assert(
+      f.bridge.fragmentedResponses > 0 && f.bridge.fragmentedUTF8Responses > 0,
+      "reply fragmentation fixture was not exercised",
+    );
     console.log(
-      "PASS: fragmented persistent wire, lost-after-send unknown, exactly one send, explicit recovery, batch",
+      "PASS: fragmented request and compiled Rust UTF-8 response wire, lost-after-send unknown, exactly one send, explicit recovery, batch",
     );
   } finally {
     if (m) await m.close();

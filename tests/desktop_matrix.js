@@ -179,47 +179,114 @@ async function discover(binary, backends, allIdle, explicit) {
     await client.close();
   }
 }
-async function isolation(binary, backend, targets) {
-  const client = await new MCP(binary).start(),
+async function isolation(
+  binary,
+  backend,
+  targets,
+  createClient = async () => new MCP(binary).start(),
+) {
+  const client = await createClient(),
     opened = [],
     jobs = [];
+  const evidence = {
+    expected_tabs: targets.length,
+    sleep_seconds: 3,
+    capture_budget_ms: 10000,
+    submitted_count: 0,
+    sent_count: 0,
+    overlap_running_count: 0,
+    overlap_states: [],
+  };
   let phase = "open";
   try {
-    for (let i = 0; i < targets.length; i++) {
-      phase = "open";
-      const v = await client.tool("connector_open", {
+    assert(
+      targets.length >= 2,
+      "overlap requires at least two explicitly selected Tabs",
+    );
+    // Open every selected Tab before dispatching. Attachment preparation must not
+    // consume the finite command overlap interval.
+    for (const target of targets) {
+      const value = await client.tool("connector_open", {
         backend,
-        target: targets[i].target,
+        target: target.target,
         mode: "exec",
       });
-      assert(v.session_id);
-      opened.push(v.session_id);
-      const marker =
-        "MATRIX_ISOLATION_" + i + "_" + crypto.randomBytes(8).toString("hex");
-      phase = "begin";
-      const job = await client.tool("connector_exec", {
-        session_id: v.session_id,
-        command: "printf '%s\\n' '" + marker + "'",
-        mode: "posix",
-        wait_ms: 0,
-        timeout_ms: 10000,
-      });
-      assert(job.command_id);
-      jobs.push({ id: job.command_id, marker });
+      assert(value.session_id, "isolation attachment rejected");
+      opened.push(value.session_id);
     }
+    const markers = targets.map(
+      (_, i) =>
+        "MATRIX_ISOLATION_" + i + "_" + crypto.randomBytes(8).toString("hex"),
+    );
+    phase = "begin";
+    const start = Date.now();
+    const submissions = await Promise.all(
+      opened.map((session_id, index) =>
+        client
+          .tool("connector_exec", {
+            session_id,
+            command: "sleep 3; printf '%s\\n' '" + markers[index] + "'",
+            mode: "posix",
+            wait_ms: 0,
+            timeout_ms: 10000,
+          })
+          .then((value) => ({ value, index }))
+          .catch((error) => ({ error, index })),
+      ),
+    );
+    evidence.submit_wall_ms = Date.now() - start;
+    for (const item of submissions) {
+      if (item.value?.command_id) {
+        jobs.push({ id: item.value.command_id, marker: markers[item.index] });
+        evidence.submitted_count++;
+      }
+      if (item.value?.sent === true) evidence.sent_count++;
+    }
+    evidence.submission_states = submissions.map(
+      (item) => item.value?.state || "dispatch_error",
+    );
+    assert(
+      submissions.every((item) => !item.error && item.value?.command_id),
+      "native dispatch did not return every tracked job",
+    );
+    assert(
+      evidence.sent_count === targets.length,
+      "not every native dispatch confirmed a send",
+    );
+    phase = "overlap";
+    const sampleStart = Date.now();
+    // Status requests are concurrent and inspect the retained Rust job registry.
+    // A slow native scheduler must fail this gate if the first command has
+    // already completed, rather than earning a sequential false PASS.
+    const statuses = await Promise.all(
+      jobs.map((job) =>
+        client.tool("connector_get_status", { command_id: job.id }),
+      ),
+    );
+    evidence.overlap_sample_wall_ms = Date.now() - sampleStart;
+    evidence.overlap_observed_after_dispatch_ms = Date.now() - start;
+    evidence.overlap_states = statuses.map((value) => value.state);
+    evidence.overlap_running_count = statuses.filter((value) =>
+      ["starting", "running"].includes(value.state),
+    ).length;
+    assert(
+      evidence.overlap_running_count === targets.length,
+      "not all selected Tabs were simultaneously starting/running after dispatch",
+    );
+    evidence.overlap_confirmed = true;
     for (const job of jobs) {
       phase = "status";
-      const v = await client.done(job.id);
-      assert(v.state === "completed" && v.exit_code === 0);
+      const value = await client.done(job.id);
+      assert(value.state === "completed" && value.exit_code === 0);
       phase = "read";
-      const p = await client.tool("connector_read", {
+      const page = await client.tool("connector_read", {
           command_id: job.id,
           max_bytes: 65536,
         }),
-        text = (p.output || p).text;
+        text = (page.output || page).text;
       assert(
         text.includes(job.marker) &&
-          jobs.every((x) => x === job || !text.includes(x.marker)),
+          jobs.every((other) => other === job || !text.includes(other.marker)),
       );
     }
     return {
@@ -227,24 +294,28 @@ async function isolation(binary, backend, targets) {
       phase: "concurrent-tab-isolation",
       tabs: targets.length,
       passed: true,
+      overlap_evidence: evidence,
     };
-  } catch (e) {
+  } catch (error) {
     return {
       backend,
       phase: "concurrent-tab-isolation",
       tabs: targets.length,
       passed: false,
       failed_step: phase,
-      error_type: e.name,
+      error_type: error.name,
+      overlap_evidence: evidence,
+      automatic_retry: false,
     };
   } finally {
-    for (const sid of opened)
+    for (const session_id of opened)
       try {
-        await client.tool("connector_close", { session_id: sid });
+        await client.tool("connector_close", { session_id });
       } catch {}
     await client.close();
   }
 }
+
 async function run(a) {
   const start = Date.now(),
     binary = path.resolve(a._[0]),
