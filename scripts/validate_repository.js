@@ -19,7 +19,9 @@ const bilingualGuides = [
   ["docs/clients/codex.md", "docs/clients/codex.en.md"],
   ["docs/clients/claude.md", "docs/clients/claude.en.md"],
 ];
-const read = (name) => fs.readFileSync(path.join(root, name), "utf8");
+const normalizeNewlines = (text) => text.replace(/\r\n?/g, "\n");
+const readFile = (file) => normalizeNewlines(fs.readFileSync(file, "utf8"));
+const read = (name) => readFile(path.join(root, name));
 function codeExamples(content) {
   return [...content.matchAll(/^```([^\n]*)\n([\s\S]*?)^```\s*$/gm)].map(
     ([, language, body]) => [
@@ -78,7 +80,7 @@ function run() {
       name,
     );
   for (const name of ["README.md", "README.en.md", "README.zh-CN.md"]) {
-    const content = fs.readFileSync(path.join(root, name), "utf8");
+    const content = readFile(path.join(root, name));
     const english = name === "README.en.md";
     assert(
       content.split("\n")[2].startsWith(
@@ -256,7 +258,7 @@ function run() {
     ];
   }
   for (const [name, targets] of Object.entries(navigation)) {
-    const content = fs.readFileSync(path.join(root, name), "utf8");
+    const content = readFile(path.join(root, name));
     for (const target of targets)
       assert(
         content.includes("](" + target + ")"),
@@ -275,7 +277,7 @@ function run() {
       .map((n) => path.join(root, n)),
     ...walk(path.join(root, "docs")).filter((n) => n.endsWith(".md")),
   ]) {
-    const content = fs.readFileSync(file, "utf8");
+    const content = readFile(file);
     // Include the destination of linked badges, whose labels contain an image.
     const links = [
       ...content.matchAll(/(?<!!)\[[^\]]*\]\(([^)]+)\)/g),
@@ -310,4 +312,4 @@ if (require.main === module)
     console.error(e.message);
     process.exitCode = 1;
   }
-module.exports = { run };
+module.exports = { anchors, codeExamples, normalizeNewlines, run };
