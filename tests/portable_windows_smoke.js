@@ -15,6 +15,34 @@ const fs = require("node:fs"),
     readJSON,
   } = require("./node_harness"),
   { windowsScripts } = require("../scripts/portable_scripts");
+function buildStressDriver(source, stop, manifest) {
+  return (
+    source +
+    "\nmcpNotifyStarted=function(){};\nvar stopPath=" +
+    JSON.stringify(stop) +
+    ';\nvar host={GetTabCount:function(){return 0;},Sleep:function(ms){if(new ActiveXObject("Scripting.FileSystemObject").FileExists(stopPath)) throw "script cancelled";WScript.Sleep(ms);}};\ntry{mcpServeWindows(host,"securecrt",' +
+    JSON.stringify(manifest) +
+    "," +
+    JSON.stringify(source) +
+    ');}catch(e){if(String(e).indexOf("cancelled")<0){WScript.Echo(mcpError(e));WScript.Quit(9);}}'
+  );
+}
+function writeJScript(file, source) {
+  // Classic WSH reads this as ASCII. Escape UTF-16 code units before encoding,
+  // preserving Chinese paths and surrogate pairs inside JScript/JSON strings.
+  const ascii = source.replace(
+    /[\u0080-\uffff]/g,
+    (value) => "\\u" + value.charCodeAt(0).toString(16).padStart(4, "0"),
+  );
+  fs.writeFileSync(file, ascii, "ascii");
+}
+function preserveStressFailure(primary, cleanup, state) {
+  const failure = primary || cleanup;
+  if (!failure) return null;
+  failure.native_stress = state;
+  if (primary && cleanup) failure.cleanup_error = cleanup.message;
+  return failure;
+}
 async function stress(work, source, cscript) {
   const root = path.join(work, "concurrent-ipc");
   fs.mkdirSync(root);
@@ -28,33 +56,36 @@ async function stress(work, source, cscript) {
       runtime: {},
     };
   const driver = path.join(work, "concurrent-ipc.js");
-  fs.writeFileSync(
-    driver,
-    source +
-      "\nmcpNotifyStarted=function(){};\nvar stopPath=" +
-      JSON.stringify(stop) +
-      ';\nvar host={GetTabCount:function(){return 0;},Sleep:function(ms){if(new ActiveXObject("Scripting.FileSystemObject").FileExists(stopPath)) throw "script cancelled";WScript.Sleep(ms);}};\ntry{mcpServeWindows(host,"securecrt",' +
-      JSON.stringify(manifest) +
-      "," +
-      JSON.stringify(source) +
-      ');}catch(e){if(String(e).indexOf("cancelled")<0){WScript.Echo(mcpError(e));WScript.Quit(9);}}',
-    "ascii",
-  );
+  writeJScript(driver, buildStressDriver(source, stop, manifest));
   const proc = spawn(cscript, ["//nologo", "//E:JScript", driver], {
     stdio: ["ignore", "pipe", "pipe"],
   });
-  let diagnostic = "";
+  let diagnostic = "",
+    spawnFailure,
+    primaryFailure,
+    cleanupFailure,
+    closed = false,
+    completedRequests = 0,
+    phase = "startup";
+  proc.on("error", (error) => {
+    spawnFailure = error;
+  });
+  proc.on("close", () => {
+    closed = true;
+  });
   proc.stdout.on("data", (b) => (diagnostic += b));
   proc.stderr.on("data", (b) => (diagnostic += b));
   try {
     const until = Date.now() + 40000;
     while (!fs.existsSync(path.join(directory, "ready.json"))) {
+      if (spawnFailure) throw spawnFailure;
       assert(
         proc.exitCode === null && Date.now() < until,
         "native stress not ready",
       );
       await sleep(10);
     }
+    phase = "ipc";
     for (let batch = 0; batch < 200; batch++) {
       const pending = [];
       for (let i = 0; i < 4; i++) {
@@ -85,6 +116,7 @@ async function stress(work, source, cscript) {
             assert.deepEqual(value.result.sessions, []);
             fs.unlinkSync(pending[i]);
             pending.splice(i, 1);
+            completedRequests++;
           } catch (e) {
             if (!["ENOENT", "EPERM", "EACCES"].includes(e.code)) throw e;
           }
@@ -94,25 +126,77 @@ async function stress(work, source, cscript) {
     console.log(
       "PASS: 800 authenticated native IPC requests with concurrent deletion",
     );
+    phase = "completed";
+  } catch (error) {
+    primaryFailure = error;
   } finally {
-    fs.writeFileSync(stop, "stop");
-    await new Promise((resolve, reject) => {
-      if (proc.exitCode !== null) return resolve();
-      const timer = setTimeout(() => {
-        proc.kill();
-        reject(new Error("native stress shutdown timeout"));
-      }, 5000);
-      proc.once("close", () => {
-        clearTimeout(timer);
-        resolve();
+    try {
+      fs.writeFileSync(stop, "stop");
+      await new Promise((resolve, reject) => {
+        if (proc.exitCode !== null || closed) return resolve();
+        const timer = setTimeout(() => {
+          proc.kill();
+          const error = new Error("native stress shutdown timeout");
+          error.kill_requested = true;
+          reject(error);
+        }, 5000);
+        proc.once("close", () => {
+          clearTimeout(timer);
+          resolve();
+        });
       });
-    });
+    } catch (error) {
+      cleanupFailure = error;
+    }
   }
-  assert.equal(proc.exitCode, 0, diagnostic);
-  assert(
-    !fs.existsSync(path.join(directory, "ready.json")),
-    "cancel left registry",
-  );
+  if (!primaryFailure && !cleanupFailure) {
+    try {
+      assert.equal(proc.exitCode, 0, diagnostic);
+      assert(
+        !fs.existsSync(path.join(directory, "ready.json")),
+        "cancel left registry",
+      );
+    } catch (error) {
+      primaryFailure = error;
+    }
+  }
+  const state = {
+    scope: "isolated Windows WSH/native fixture; no SSH",
+    phase,
+    completed_requests: completedRequests,
+    exit_code: proc.exitCode,
+    signal_code: proc.signalCode,
+    closed,
+    kill_requested: !!cleanupFailure?.kill_requested,
+    diagnostic,
+    cleanup_error: cleanupFailure?.message || null,
+    primary_error: primaryFailure
+      ? { name: primaryFailure.name, message: primaryFailure.message }
+      : null,
+  };
+  const failure = preserveStressFailure(primaryFailure, cleanupFailure, state);
+  if (failure) {
+    const save = () => {
+      state.exit_code = proc.exitCode;
+      state.signal_code = proc.signalCode;
+      state.closed = closed;
+      state.diagnostic = diagnostic;
+      try {
+        const directory = path.join(ROOT, ".local-evidence");
+        fs.mkdirSync(directory, { recursive: true });
+        writeJSON(
+          path.join(directory, "windows-native-stress-diagnostic.json"),
+          state,
+        );
+      } catch (error) {
+        failure.diagnostic_write_error = error.message;
+      }
+    };
+    save();
+    if (!closed) proc.once("close", save);
+    console.error("NATIVE_STRESS_DIAGNOSTIC=" + JSON.stringify(state));
+    throw failure;
+  }
 }
 async function run(binary) {
   assert.equal(process.platform, "win32", "WSH smoke requires Windows");
@@ -125,10 +209,11 @@ async function run(binary) {
     digest = hash(binary),
     windir = process.env.WINDIR,
     work = fs.mkdtempSync(path.join(os.tmpdir(), "MCP 中文 bootstrap "));
+  let primaryFailure;
   try {
     await stress(work, source, path.join(windir, "System32/cscript.exe"));
     const core = path.join(work, "core.js");
-    fs.writeFileSync(
+    writeJScript(
       core,
       source +
         String.raw`
@@ -140,7 +225,6 @@ if(typeof fso.CreateTextFile=="undefined") throw Error("COM method unavailable")
 var caught=false;try{mcpFail("test detailed error");}catch(e){caught=mcpError(e).indexOf("test detailed error")>=0;}if(!caught)throw Error("error detail unavailable");
 WScript.Echo("PASS: classic JScript SHA/JSON and COM extraction");
 `,
-      "ascii",
     );
     for (const engine of ["System32", "SysWOW64"]) {
       const cscript = path.join(windir, engine, "cscript.exe");
@@ -172,13 +256,12 @@ WScript.Echo("PASS: classic JScript SHA/JSON and COM extraction");
             "eval(MCP_NATIVE_SOURCE);mcpNotifyStarted=function(){};mcpNotify=function(f,d,m,style){if(style==16) WScript.Quit(9);};",
           );
         const driver = path.join(work, engine + "-" + backend + ".js");
-        fs.writeFileSync(
+        writeJScript(
           driver,
           'var turns=0;function stop(ms){if(++turns>3)throw Error("script cancelled");WScript.Sleep(ms);}var xsh={Session:{Connected:false,Sleep:stop,Path:""},Screen:{}};var crt={Version:"9.0.0",GetTabCount:function(){return 0;},Sleep:stop};\n' +
             entry +
             (backend === "xshell" ? "\nMain();" : "") +
             '\nif(turns<1)throw Error("native loop did not start");',
-          "ascii",
         );
         let token, config;
         for (let iteration = 1; iteration <= 2; iteration++) {
@@ -265,8 +348,17 @@ WScript.Echo("PASS: classic JScript SHA/JSON and COM extraction");
         );
       }
     }
+  } catch (error) {
+    primaryFailure = error;
+    throw error;
   } finally {
-    fs.rmSync(work, { recursive: true, force: true });
+    try {
+      fs.rmSync(work, { recursive: true, force: true });
+    } catch (error) {
+      if (primaryFailure) {
+        primaryFailure.workspace_cleanup_error = error.message;
+      } else throw error;
+    }
   }
 }
 if (require.main === module)
@@ -274,4 +366,9 @@ if (require.main === module)
     console.error(e);
     process.exitCode = 1;
   });
-module.exports = { run };
+module.exports = {
+  run,
+  buildStressDriver,
+  writeJScript,
+  preserveStressFailure,
+};

@@ -6,6 +6,7 @@ async function run(binary) {
   binary = path.resolve(binary);
   for (const name of [
     "windows_bridge_test.js",
+    "windows_driver_contract.js",
     "client_contract.js",
     "desktop_matrix_contract.js",
     "original_prompt_observer_contract.js",
