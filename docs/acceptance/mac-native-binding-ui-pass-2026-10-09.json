@@ -2,18 +2,20 @@
   "tested_on": "2026-10-09",
   "scope": "Mac SecureCRT real native UI and authenticated SSH; dedicated first Tab disconnected/reconnected",
   "passed": true,
-  "binary_sha256": "bb02749f03acae9ff8c0f2fd57124a94359e936d8c1b057a43765f39de3f1925",
-  "adapter_sha256": "957437304f304f47d94e7cf58e33c369fe4bc4f6ca0a7cc72f88862481abd58e",
+  "binary_sha256": "1f00b283a4cd600ca557018317b7609ffcf29f10aa176ac5f4aac4811ae8ecb8",
+  "adapter_sha256": "e7f8f84e630f2326b013eb3f5d2f6b01b01db94d489a0122bc573c0eae0cb7b4",
   "code_revision": {
-    "commit": "1f46f52ae924866077d2c7980d4ded97d7929972",
-    "working_tree_modified": false
+    "commit": "c8cf8d468069bc7b204225cc45fd1dde32c3bf7a",
+    "working_tree_modified": true,
+    "equivalent_source_tree_commit": "208005fd9c62ab5c3b1d1c7a5bce67a1747c25e0",
+    "identity_note": "Original test-time revision is retained; unpublished Git author/committer metadata was normalized to the repository public noreply identity before publication. Source tree content was unchanged."
   },
   "runtime": {
     "python": "3.11.17",
     "platform": "Darwin",
     "architecture": "arm64",
     "os_version": "27.0.1",
-    "adapter_sha256": "957437304f304f47d94e7cf58e33c369fe4bc4f6ca0a7cc72f88862481abd58e",
+    "adapter_sha256": "e7f8f84e630f2326b013eb3f5d2f6b01b01db94d489a0122bc573c0eae0cb7b4",
     "securecrt_version": "9.5.2 (ARM64 build 3325)"
   },
   "connected_test_tabs": 2,
@@ -55,13 +57,12 @@
         "fresh generation executes exactly one unique marker"
       ],
       "passed": true,
-      "wall_seconds": 137.573
+      "wall_seconds": 80.017
     }
   ],
   "not_exercised": [
     "Closing and recreating a Tab GUI path",
     "Codex client approval rejection UI",
     "Windows native UI on this Mac"
-  ],
-  "verification_note": "U01/U02 rechecked on the final paired binary and adapter before the final full matrix. U03/U04 were checked with this identical native source and binary before the read-only observation-controller change; original test revision 3e796bc7f36a786cbd0e27ddc7a2170e13af8e22 had uncommitted native changes, subsequently committed as 3168ec6. No native source or binary changed afterwards."
+  ]
 }

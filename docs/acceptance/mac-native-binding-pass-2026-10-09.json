@@ -1,14 +1,16 @@
 {
   "scope": "real desktop / native SDK / SSH; UI startup separately checked",
   "tested_on": "2026-10-09",
-  "binary_sha256": "bb02749f03acae9ff8c0f2fd57124a94359e936d8c1b057a43765f39de3f1925",
+  "binary_sha256": "1f00b283a4cd600ca557018317b7609ffcf29f10aa176ac5f4aac4811ae8ecb8",
   "code_revision": {
-    "commit": "1f46f52ae924866077d2c7980d4ded97d7929972",
-    "working_tree_modified": false
+    "commit": "c8cf8d468069bc7b204225cc45fd1dde32c3bf7a",
+    "working_tree_modified": true,
+    "equivalent_source_tree_commit": "208005fd9c62ab5c3b1d1c7a5bce67a1747c25e0",
+    "identity_note": "Original test-time revision is retained; unpublished Git author/committer metadata was normalized to the repository public noreply identity before publication. Source tree content was unchanged."
   },
   "source_sha256": {
     "bridge/windows_bridge.js": "a62951fe14e50db48f2d6f7614a8a6ab71e5dcba60047c1325f5cb39dbada92a",
-    "bridge/securecrt_bridge.py": "957437304f304f47d94e7cf58e33c369fe4bc4f6ca0a7cc72f88862481abd58e"
+    "bridge/securecrt_bridge.py": "e7f8f84e630f2326b013eb3f5d2f6b01b01db94d489a0122bc573c0eae0cb7b4"
   },
   "tabs": {
     "securecrt": 2
@@ -20,12 +22,12 @@
         "platform": "Darwin",
         "architecture": "arm64",
         "os_version": "27.0.1",
-        "adapter_sha256": "957437304f304f47d94e7cf58e33c369fe4bc4f6ca0a7cc72f88862481abd58e",
+        "adapter_sha256": "e7f8f84e630f2326b013eb3f5d2f6b01b01db94d489a0122bc573c0eae0cb7b4",
         "securecrt_version": "9.5.2 (ARM64 build 3325)"
       }
     ]
   },
-  "wall_seconds": 21.593,
+  "wall_seconds": 25.01,
   "explicit_recovery_probes": true,
   "passed": true,
   "results": [
@@ -34,12 +36,12 @@
       "backend": "securecrt",
       "phase": "full-legacy",
       "passed": true,
-      "wall_ms": 15153,
+      "wall_ms": 15539,
       "result": {
         "scope": "real MCP / native desktop / SSH",
         "backend": "securecrt",
         "protocol": "legacy",
-        "binary_sha256": "bb02749f03acae9ff8c0f2fd57124a94359e936d8c1b057a43765f39de3f1925",
+        "binary_sha256": "1f00b283a4cd600ca557018317b7609ffcf29f10aa176ac5f4aac4811ae8ecb8",
         "checks": [
           "unified connector tool discovery",
           "explicit connected target",
@@ -92,29 +94,29 @@
           ]
         },
         "short_command_wall_ms": {
-          "median": 304,
-          "p95": 352,
+          "median": 278,
+          "p95": 786,
           "samples": [
-            294,
-            304,
-            287,
-            290,
-            334,
-            352,
-            345,
-            341,
-            338,
-            340,
-            329,
-            113,
             282,
-            285,
-            290,
-            363,
-            117,
-            297,
-            313,
-            270
+            280,
+            273,
+            259,
+            273,
+            273,
+            252,
+            299,
+            258,
+            274,
+            250,
+            278,
+            278,
+            280,
+            253,
+            278,
+            1170,
+            786,
+            282,
+            290
           ]
         },
         "large_output_capture": {
@@ -123,7 +125,7 @@
           "sent": true,
           "error_code": null,
           "requires_idle_ack": false,
-          "wall_ms": 2306
+          "wall_ms": 2347
         },
         "large_output_integrity": {
           "rows": 2500,
@@ -134,7 +136,7 @@
           "pages": 71,
           "bytes": 72501,
           "capture_budget_ms": 10000,
-          "wall_ms_to_first_page": 2306
+          "wall_ms_to_first_page": 2347
         },
         "timeout_probe": {
           "state": "timed_out",
@@ -142,20 +144,6 @@
           "sent": true,
           "error_code": "capture_timeout",
           "requires_idle_ack": true
-        },
-        "finite_sleep_prompt_observation": {
-          "matched": true,
-          "reads": 1,
-          "wall_ms": 9,
-          "budget_ms": 3000,
-          "read_only": true
-        },
-        "interrupt_prompt_observation": {
-          "matched": true,
-          "reads": 1,
-          "wall_ms": 18,
-          "budget_ms": 3000,
-          "read_only": true
         },
         "passed": true
       }
@@ -165,12 +153,12 @@
       "backend": "securecrt",
       "phase": "full-legacy",
       "passed": true,
-      "wall_ms": 16012,
+      "wall_ms": 16292,
       "result": {
         "scope": "real MCP / native desktop / SSH",
         "backend": "securecrt",
         "protocol": "legacy",
-        "binary_sha256": "bb02749f03acae9ff8c0f2fd57124a94359e936d8c1b057a43765f39de3f1925",
+        "binary_sha256": "1f00b283a4cd600ca557018317b7609ffcf29f10aa176ac5f4aac4811ae8ecb8",
         "checks": [
           "unified connector tool discovery",
           "explicit connected target",
@@ -223,29 +211,29 @@
           ]
         },
         "short_command_wall_ms": {
-          "median": 338,
-          "p95": 397,
+          "median": 275,
+          "p95": 296,
           "samples": [
-            288,
-            303,
-            303,
-            361,
-            343,
-            340,
-            336,
-            338,
-            340,
-            335,
-            379,
+            256,
+            280,
+            250,
+            276,
+            269,
             275,
-            305,
-            357,
-            397,
-            295,
-            292,
-            289,
-            358,
-            397
+            244,
+            296,
+            274,
+            267,
+            239,
+            279,
+            273,
+            280,
+            272,
+            273,
+            1900,
+            287,
+            287,
+            289
           ]
         },
         "large_output_capture": {
@@ -254,7 +242,7 @@
           "sent": true,
           "error_code": null,
           "requires_idle_ack": false,
-          "wall_ms": 2978
+          "wall_ms": 2144
         },
         "large_output_integrity": {
           "rows": 2500,
@@ -265,7 +253,7 @@
           "pages": 71,
           "bytes": 72501,
           "capture_budget_ms": 10000,
-          "wall_ms_to_first_page": 2978
+          "wall_ms_to_first_page": 2144
         },
         "timeout_probe": {
           "state": "timed_out",
@@ -274,44 +262,7 @@
           "error_code": "capture_timeout",
           "requires_idle_ack": true
         },
-        "finite_sleep_prompt_observation": {
-          "matched": true,
-          "reads": 1,
-          "wall_ms": 9,
-          "budget_ms": 3000,
-          "read_only": true
-        },
-        "interrupt_prompt_observation": {
-          "matched": true,
-          "reads": 4,
-          "wall_ms": 202,
-          "budget_ms": 3000,
-          "read_only": true
-        },
         "passed": true
-      }
-    },
-    {
-      "label": "securecrt-tab-2",
-      "backend": "securecrt",
-      "phase": "minimal-modern",
-      "passed": true,
-      "wall_ms": 1676,
-      "result": {
-        "scope": "live_connector",
-        "backend": "securecrt",
-        "protocol": "modern",
-        "status": "PASS",
-        "checks": [
-          "attach",
-          "exec",
-          "batch",
-          "pagination",
-          "rejection"
-        ],
-        "pages": 12,
-        "source_commit": "1f46f52ae924866077d2c7980d4ded97d7929972",
-        "tested_on": "2026-10-09"
       }
     },
     {
@@ -319,7 +270,7 @@
       "backend": "securecrt",
       "phase": "minimal-modern",
       "passed": true,
-      "wall_ms": 1676,
+      "wall_ms": 1333,
       "result": {
         "scope": "live_connector",
         "backend": "securecrt",
@@ -333,7 +284,30 @@
           "rejection"
         ],
         "pages": 12,
-        "source_commit": "1f46f52ae924866077d2c7980d4ded97d7929972",
+        "source_commit": "c8cf8d468069bc7b204225cc45fd1dde32c3bf7a; working-tree modified; see hashes",
+        "tested_on": "2026-10-09"
+      }
+    },
+    {
+      "label": "securecrt-tab-2",
+      "backend": "securecrt",
+      "phase": "minimal-modern",
+      "passed": true,
+      "wall_ms": 3754,
+      "result": {
+        "scope": "live_connector",
+        "backend": "securecrt",
+        "protocol": "modern",
+        "status": "PASS",
+        "checks": [
+          "attach",
+          "exec",
+          "batch",
+          "pagination",
+          "rejection"
+        ],
+        "pages": 12,
+        "source_commit": "c8cf8d468069bc7b204225cc45fd1dde32c3bf7a; working-tree modified; see hashes",
         "tested_on": "2026-10-09"
       }
     },
@@ -353,13 +327,13 @@
           "running",
           "running"
         ],
-        "submit_wall_ms": 1018,
+        "submit_wall_ms": 1093,
         "submission_states": [
           "running",
           "running"
         ],
-        "overlap_sample_wall_ms": 0,
-        "overlap_observed_after_dispatch_ms": 1018,
+        "overlap_sample_wall_ms": 2,
+        "overlap_observed_after_dispatch_ms": 1095,
         "overlap_confirmed": true
       }
     },
