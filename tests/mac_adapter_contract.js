@@ -1037,6 +1037,73 @@ class NativeDispatchActivationTests(unittest.TestCase):
         self.assertTrue(all(not tab.Screen.sent for tab in app.tabs))
         self.assertFalse(adapter.captures)
 
+class VerifiedDispatchContextTests(unittest.TestCase):
+    def wire(self,adapter,method,params):
+        request=dict(protocol_version=2,id='verified-context',token='a'*64,deadline_ms=adapter.now()+3000,method=method,params=params)
+        return namespace['handle_request'](adapter,request,'a'*64)
+    def test_guarded_old_prompt_is_not_replaced_by_stable_half_input_baseline(self):
+        app=Crt();adapter=namespace['NativeAdapter'](app)
+        sid=adapter.list_sessions()['sessions'][0]['id']
+        target=app.tabs[0];binding=adapter.attach(sid,expected_prompt='user$')
+        original_input=adapter._input;original_guard=adapter._guard
+        phase={'validated':False};samples=[]
+        def input_sample(entry):
+            if phase['validated']:
+                target.Screen.text='ready\nuser$ half-input'
+            value=original_input(entry)
+            samples.append((phase['validated'],value['current_line']))
+            return value
+        def guarded(*args):
+            value=original_guard(*args)
+            phase['validated']=True
+            return value
+        adapter._input=input_sample;adapter._guard=guarded
+        result=self.wire(adapter,'prepare_and_begin',dict(attachment_id=binding['attachment_id'],text='printf forbidden',capture_id='half-input',runtime_ms=10000))
+        self.assertFalse(result['ok']);self.assertIs(result['sent'],False)
+        self.assertEqual(result['error_code'],'context_changed')
+        self.assertTrue(any(not after and prompt=='user$' for after,prompt in samples),'guard never validated the old prompt')
+        self.assertEqual([prompt for after,prompt in samples if after][0],'user$ half-input')
+        self.assertEqual(original_input(adapter._session(sid))['current_line'],'user$ half-input','changed half-input must remain stable, not be a one-frame artifact')
+        self.assertTrue(all(not tab.Screen.sent for tab in app.tabs))
+        self.assertFalse(adapter.captures)
+    def test_selected_retained_target_disconnect_or_metadata_change_is_unsent(self):
+        for change in ('disconnect','metadata'):
+            with self.subTest(change=change):
+                app=Crt();adapter=namespace['NativeAdapter'](app)
+                sid=adapter.list_sessions()['sessions'][0]['id']
+                target=app.tabs[0];binding=adapter.attach(sid,expected_prompt='user$')
+                def activate():
+                    app.focus=target
+                    if change=='disconnect':target.Session.Connected=False
+                    else:target.Session.Config.hostname='changed.invalid'
+                target.Activate=activate
+                result=self.wire(adapter,'prepare_and_begin',dict(attachment_id=binding['attachment_id'],text='printf forbidden',capture_id='stale-selection',runtime_ms=10000))
+                self.assertFalse(result['ok']);self.assertIs(result['sent'],False)
+                self.assertEqual(result['error_code'],'stale_session')
+                self.assertTrue(all(not tab.Screen.sent for tab in app.tabs))
+                self.assertFalse(adapter.captures)
+    def test_legacy_token_keeps_verified_full_screen_digest_during_selection(self):
+        app=Crt();adapter=namespace['NativeAdapter'](app)
+        sid=adapter.list_sessions()['sessions'][0]['id'];target=app.tabs[0]
+        view=adapter.read_screen(sid);token=view['screen_token']
+        original_input=adapter._input(adapter._session(sid));selected=[]
+        def activate():
+            selected.append(target);app.focus=target
+            target.Screen.text='different older output\nuser$ '
+        target.Activate=activate
+        params=dict(session=sid,screen_token=token,expected_prompt='user$',text='printf forbidden',capture_id='legacy-stale',runtime_ms=10000)
+        result=self.wire(adapter,'begin',params)
+        self.assertFalse(result['ok']);self.assertIs(result['sent'],False)
+        self.assertEqual(result['error_code'],'stale_screen')
+        self.assertEqual(adapter._input(adapter._session(sid)),original_input,'input boundary intentionally stayed identical')
+        self.assertNotIn(token,adapter.tokens,'failed legacy dispatch reused a consumed screen token')
+        second=self.wire(adapter,'begin',params)
+        self.assertFalse(second['ok']);self.assertIs(second['sent'],False)
+        self.assertEqual(second['error_code'],'stale_screen')
+        self.assertEqual(selected,[target],'consumed token caused a second native selection')
+        self.assertTrue(all(not tab.Screen.sent for tab in app.tabs))
+        self.assertFalse(adapter.captures)
+
 class InitialPromptStabilityTests(unittest.TestCase):
     def test_attachment_waits_for_trailing_prompt_space_before_binding(self):
         app=Crt();a=namespace['NativeAdapter'](app)
