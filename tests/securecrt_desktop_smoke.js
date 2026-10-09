@@ -1,6 +1,43 @@
 #!/usr/bin/env node
 "use strict";
 const { MCP, sleep, args, writeJSON, assert, hash } = require("./node_harness");
+const { performance } = require("node:perf_hooks");
+// Recovery observation only: never dispatches, acknowledges, interrupts or
+// retries a failed exchange. The capture deadlines belong to their original jobs.
+async function observeOriginalPrompt(client, session_id, prompt, timing = {}) {
+  const now = timing.now || (() => performance.now()),
+    wait = timing.wait || sleep;
+  const started = now(),
+    deadline = started + 3000;
+  let view,
+    reads = 0;
+  while (now() < deadline) {
+    const remaining = deadline - now();
+    let timer;
+    const observed = await Promise.race([
+      client
+        .tool("connector_read_screen", { session_id })
+        .then((value) => ({ view: value })),
+      new Promise((resolve) => {
+        timer = setTimeout(() => resolve({ expired: true }), remaining);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    reads++;
+    if (observed.expired) break;
+    view = observed.view;
+    if (now() <= deadline && view.current_line === prompt)
+      return {
+        matched: true,
+        view,
+        reads,
+        wall_ms: Math.round(now() - started),
+      };
+    if (now() >= deadline) break;
+    await wait(Math.min(50, deadline - now()));
+  }
+  return { matched: false, view, reads, wall_ms: Math.round(now() - started) };
+}
+
 async function run(a) {
   const backend = Array.isArray(a.backend)
       ? a.backend[0]
@@ -261,10 +298,18 @@ async function run(a) {
         ["timed_out", "unknown"].includes(v.state) && v.requires_idle_ack,
       );
       await sleep(2000);
-      let view = await mcp.tool("connector_read_screen", { session_id: sid });
+      const finitePrompt = await observeOriginalPrompt(mcp, sid, prompt);
+      let view = finitePrompt.view;
+      report.finite_sleep_prompt_observation = {
+        matched: finitePrompt.matched,
+        reads: finitePrompt.reads,
+        wall_ms: finitePrompt.wall_ms,
+        budget_ms: 3000,
+        read_only: true,
+      };
       check(
         "original prompt restored after finite sleep",
-        view.current_line === prompt,
+        finitePrompt.matched,
       );
       v = await execute(sid, "printf 'BUSY_SHOULD_NOT_SEND'");
       check(
@@ -319,16 +364,16 @@ async function run(a) {
         "interrupt outcome retained",
         (await mcp.done(v.command_id)).state === "cancelled",
       );
-      const until = Date.now() + 3000;
-      do {
-        view = await mcp.tool("connector_read_screen", { session_id: sid });
-        if (view.current_line === prompt || Date.now() >= until) break;
-        await sleep(50);
-      } while (true);
-      check(
-        "idle prompt after explicit interrupt",
-        view.current_line === prompt,
-      );
+      const interruptPrompt = await observeOriginalPrompt(mcp, sid, prompt);
+      view = interruptPrompt.view;
+      report.interrupt_prompt_observation = {
+        matched: interruptPrompt.matched,
+        reads: interruptPrompt.reads,
+        wall_ms: interruptPrompt.wall_ms,
+        budget_ms: 3000,
+        read_only: true,
+      };
+      check("idle prompt after explicit interrupt", interruptPrompt.matched);
       ack = await mcp.tool("connector_acknowledge", {
         session_id: sid,
         confirmed_idle: true,
@@ -362,4 +407,4 @@ if (require.main === module) {
       process.exitCode = 1;
     });
 }
-module.exports = { run };
+module.exports = { run, observeOriginalPrompt };

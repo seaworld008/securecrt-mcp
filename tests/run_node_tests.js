@@ -8,6 +8,7 @@ async function run(binary) {
     "windows_bridge_test.js",
     "client_contract.js",
     "desktop_matrix_contract.js",
+    "original_prompt_observer_contract.js",
     "protocol_harness.js",
     "mcp_smoke.js",
     "ux_smoke.js",
