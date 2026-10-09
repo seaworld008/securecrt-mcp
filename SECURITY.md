@@ -1,31 +1,15 @@
-> 当前安装与平台入口见[一键安装](docs/installation.md)。Windows 仅使用 `.js`；Mac 仅保留 `securecrt_bridge.py` 原生层，工具均为 JS/Rust。
-
 # Security policy
+
+[中文入口](README.md) · [English overview](README.en.md) · [中文文档地图](docs/README.md) · [English documentation map](docs/README.en.md)
+
+Read the [security model](docs/security-model.md) for policy, authentication, audit and execution boundaries. This project is not a sandbox for remote systems: AI client approvals and SSH account permissions remain essential. Desktop backends reuse existing sessions; optional OpenSSH opens a separate connection.
 
 ## Supported versions
 
-During the early v0.x phase, security fixes are applied to the latest release and `main`.
+During v0.x, fixes target current main and the latest release line. A main fix is not present in a published asset until a new release is explicitly published. Check the exact source/binary identity and [installation source boundary](docs/installation.en.md); do not infer coverage from a shared version string.
 
-## Reporting a vulnerability
+## Report a vulnerability
 
-Please do not open a public GitHub issue for vulnerabilities that could:
+For policy bypass, token exposure, non-loopback bridge access, execution in the wrong tab or unexpected terminal data disclosure, avoid public issue details. Use the repository's [Security page](https://github.com/seaworld008/securecrt-mcp/security) and **Report a vulnerability** if private reporting is enabled. This guide does not assume that feature is enabled or invent a private contact address. If it is unavailable, ask for a private reporting route without posting exploit details or secrets.
 
-- bypass command policy
-- expose bridge authentication tokens
-- permit non-loopback bridge access
-- execute commands in a different SecureCRT tab than requested
-- disclose terminal/session data unexpectedly
-
-Use GitHub's private vulnerability reporting feature for the repository when available, or contact the maintainer privately through the repository owner's published GitHub contact channel.
-
-Include:
-
-- affected version/commit
-- operating system and SecureCRT version
-- proof of concept
-- expected vs actual behavior
-- impact assessment
-
-## Security assumptions
-
-`securecrt-mcp` does not provide a sandbox around the remote systems. It adds local policy and auditing before typing into already authenticated SecureCRT sessions. Remote authorization must still be enforced by SSH accounts, sudo, Kubernetes RBAC, database permissions, and other infrastructure controls.
+Include the affected version and commit, OS/architecture, terminal/client versions, a sanitized reproduction, expected/actual behavior and impact. Do not attach tokens, credentials, endpoints, usernames, session handles or existing terminal history. Ordinary sanitized bugs can use [GitHub issues](https://github.com/seaworld008/securecrt-mcp/issues).

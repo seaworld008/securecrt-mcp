@@ -1,21 +1,44 @@
 # Codex 接入与审批
 
-[一键安装](../installation.md)自动写入`mcp_servers.securecrt`的私有二进制绝对路径、`args=["serve"]`和所选目录的`env.SECURECRT_MCP_HOME`，保留其他配置、注释、现有审批和工具范围。安装后重新加载Codex，在空闲原生终端重载当前入口。
+[简体中文](codex.md) · [English](codex.en.md) · [安装说明](../installation.md) · [文档地图](../README.md)
 
-需要自行选择工具范围/审批时，运行：
+## 自动安装或手工注册
+
+当前 main 的 `install` 增量写入 Codex 的 `securecrt` MCP 二进制、参数和应用目录，保留其他配置、注释及既有审批/工具范围。若设置了绝对路径 `CODEX_HOME`，写入其 `config.toml`，否则使用用户的 `.codex/config.toml`。仅在缺失时添加启动/工具超时。公开 v0.5.2 没有此安装入口，先核对[来源](../installation.md#1-select-and-verify-the-source)。
+
+手工接入时，将已校验二进制保留在稳定绝对路径，用所选应用目录执行其 `init`。先检查已有 MCP；若已有 `securecrt`，仅合并 command、args、home，不覆盖其他 env、审批或工具限制。
+
+先看已安装客户端的 `codex mcp add --help`，替换所有示例路径：
 
 ```sh
-securecrt-mcp codex-config --toolset terminal --approval-mode prompt
+codex mcp add securecrt --env SECURECRT_MCP_HOME=/absolute/path/to/app-home -- /absolute/path/to/securecrt-mcp serve
 ```
 
-该命令只打印增量配置，不替代用户文件。生产权限由操作者/组织设置，安装器不修改既有审批。以实际客户端支持的配置键为准。官方[MCP配置](https://developers.openai.com/codex/mcp/)不等于真实审批拒绝已验收。
+```powershell
+codex mcp add securecrt --env "SECURECRT_MCP_HOME=C:\Tools\securecrt-mcp-home" -- "C:\Tools\securecrt-mcp.exe" serve
+```
 
-工具流程：`connector_list`核对目标 → `connector_open` → 同一`session_id`连续`connector_exec/connector_exec_batch` → 状态/分页 → close。Mac绑定执行附件会原生选择对应Tab，不发送探测输入。`backend`和目标必须明确，桌面会话只在确认POSIX提示符后使用posix模式。
+对应 Windows TOML（合并到当前生效配置，不另建无关文件）：
 
-## 拒绝后零发送
+```toml
+[mcp_servers.securecrt]
+command = "C:\\Tools\\securecrt-mcp.exe"
+args = ["serve"]
 
-在专用空闲测试Tab发起新的无害`printf`操作，在客户端弹出的执行审批中拒绝。应没有终端回显、远端执行和该操作的dispatch_attempt。不要自动重试。再发起新的operation ID并批准，核对一次输入、一个command_id和最终结果。
+[mcp_servers.securecrt.env]
+SECURECRT_MCP_HOME = "C:\\Tools\\securecrt-mcp-home"
+```
 
-没有弹窗或拒绝后仍发送时，停止执行并记录客户端版本与脱敏配置，不把MCP annotations或CLI权限当作审批证明。这项客户端UI验收独立于SecureCRT双Tab矩阵，不能由CI模拟替代。
+macOS/Linux 将两处值换成 Unix 绝对路径，不用 `~` 代替二进制绝对路径。TOML 基本字符串和 JSON 中 Windows 反斜杠写成 `\\`，CLI 参数用普通 `\`。二进制、桥接和客户端使用同一应用目录，保证 GUI 冷启动也能找到它。
 
-屏幕/输出可能含秘密；不要公开Token、地址、用户名、会话句柄或已有历史。超时与未知先检查原Tab，显式中断/恢复只针对已跟踪任务。
+Windows 自定义目录时，终端进程也必须继承同一变量；Codex env 不会设置 SecureCRT/Xshell env。按[应用目录说明](../installation.md#2-choose-the-application-directory-and-client)处理，保留已有 SSH 登录。
+
+二进制的 `codex-config --toolset terminal --approval-mode prompt` 只打印可选增量配置，不写用户文件。合并前检查输出和客户端支持；遵守操作者/组织设置，不用生成默认值覆盖已有审批。见[官方 MCP 配置](https://developers.openai.com/codex/mcp/)。
+
+## 验证加载与真实调用
+
+用同一二进制/应用目录执行离线 doctor，获准且终端空闲时通过 UI 加载桥接，再重新加载 Codex。检查 MCP 服务/工具状态并执行对应后端在线 doctor。`connector_list` 核对获准目标后以 `connector_open` 绑定，再用 `connector_read_screen` 检查屏幕，后续 exec/batch/status/分页使用返回的 `session_id`，结束后 close。详见 [Agent 工作流](../agent-usage.md)；密码框、pager、REPL 不是空闲 POSIX shell。
+
+在明确授权的专用空闲测试 Tab 请求新的无害 `printf`，在客户端审批 UI 拒绝，确认没有终端输入、远端执行和对应审计 `dispatch_attempt`。不要自动重试。另行获准后用新的 operation ID 批准，核对一次发送、一个 command ID 与真实最终结果。
+
+没有审批 UI 或拒绝仍发送时停止，记录客户端版本及脱敏配置。CI、MCP annotations 与 doctor 不能证明这条拒绝路径。安装不放宽已有审批。不公开令牌、端点、用户名、句柄或已有历史；未知结果先检查原 Tab，再显式恢复。
