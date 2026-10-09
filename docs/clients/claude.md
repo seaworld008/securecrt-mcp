@@ -1,3 +1,5 @@
+> 当前安装与平台入口见[一键安装](../installation.md)。Windows 仅使用 `.js`；Mac 仅保留 `securecrt_bridge.py` 原生层，工具均为 JS/Rust。
+
 # Claude Code / Claude Desktop
 
 Use the native persistent stdio server rather than spawning `run` for every command. Initialize/upgrade and start the installed bridge inside SecureCRT first.
@@ -23,6 +25,6 @@ A stdio client JSON example:
 
 Merge with existing configuration; do not overwrite unrelated servers. Claude Code scopes/configuration and Claude Desktop configuration locations are separate. See [official Claude Code MCP instructions](https://code.claude.com/docs/en/mcp) for installed-client behavior. A compatible Claude Code server entry can set `timeout` in milliseconds; choose at least75000 for a60-second incremental read plus local overhead, or prefer short wait_ms values. Do not assume progress messages extend hard call limits.
 
-Recommended tool flow: `connector_list`, inspect target, `connector_open`, then `connector_exec` / `connector_exec_batch`. For continuous logs use the OpenSSH-only `connector_stream_open/read`; `connector_stream_close` stops capture, not remote work. All execution/write/batch tools are non-read-only and potentially destructive. Opening a session does not authorize later commands. Client permissions are configured by the operator and should be tested, including a rejected tool call causing no terminal input.
+Recommended tool flow: `connector_list`, inspect target, `connector_open`, then `connector_exec` / `connector_exec_batch`. For continuous logs use the OpenSSH-only `connector_stream_open/read`; `connector_close` stops capture, not remote work. All execution/write/batch tools are non-read-only and potentially destructive. Opening a session does not authorize later commands. Client permissions are configured by the operator and should be tested, including a rejected tool call causing no terminal input.
 
 Do not add a blanket approval rule merely to improve latency. The connector's `client` policy is not an attestation that Claude has approved the operation. SSH account permissions remain authoritative. Raw interactive input is a separate local opt-in.

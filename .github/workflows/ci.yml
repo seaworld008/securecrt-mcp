@@ -9,7 +9,7 @@ permissions:
   contents: read
 jobs:
   rust:
-    name: Rust (${{ matrix.os }})
+    name: Rust / Node (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -22,51 +22,23 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-      - run: python -m pip install 'pytest>=8,<9'
+          node-version: "22"
       - run: cargo fmt --all -- --check
       - run: cargo check --locked --all-targets --all-features
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - run: cargo test --locked --all-targets --all-features
       - run: cargo build --locked
-      - name: Shared Windows native adapter contract
-        run: node tests/windows_bridge_test.js
-      - name: Windows self-contained bootstrap without Python on child PATH
-        if: runner.os == 'Windows'
-        run: python tests/portable_windows_smoke.py target/debug/securecrt-mcp.exe
-      - name: MCP compatibility and recovery
+      - name: Node compiled MCP, safety, uncertainty, IPC, daemon, package and native Windows contracts
         shell: bash
         run: |
           binary=target/debug/securecrt-mcp
           if [ "${{ runner.os }}" = Windows ]; then binary="$binary.exe"; fi
-          python tests/mcp_smoke.py "$binary"
-          python tests/ux_smoke.py "$binary"
-          python tests/review_smoke.py "$binary"
-      - name: Persistent transport, streaming, multi-tab and daemon clients
-        shell: bash
-        run: |
-          binary=target/debug/securecrt-mcp
-          if [ "${{ runner.os }}" = Windows ]; then binary="$binary.exe"; fi
-          python tests/performance_smoke.py "$binary" --output performance-ci.json
-          python tests/persistent_fault_smoke.py "$binary"
-          python tests/file_transport_fault_smoke.py "$binary"
-          python tests/daemon_smoke.py "$binary"
-          python tests/package_smoke.py "$binary" "ci-${{ runner.os }}-${{ runner.arch }}"
-      - name: Confirmed completion redraw, batch boundaries and no replay
-        shell: bash
-        run: |
-          binary=target/debug/securecrt-mcp
-          if [ "${{ runner.os }}" = Windows ]; then binary="$binary.exe"; fi
-          python tests/prompt_readiness_smoke.py "$binary"
-      - run: python -m pytest -q tests
-      - run: python -m unittest discover -s tests -v
-      - run: python scripts/validate_repository.py
-      - name: Preserve the tested native bundle for desktop acceptance
+          node tests/run_node_tests.js "$binary"
+          node tests/performance_smoke.js "$binary" --output performance-ci.json
+      - run: node scripts/validate_repository.js
+      - name: Preserve tested native bundle for desktop acceptance
         uses: actions/upload-artifact@v7
         with:
           name: native-test-bundle-${{ runner.os }}-${{ runner.arch }}
@@ -80,19 +52,20 @@ jobs:
           name: connector-performance-${{ runner.os }}-${{ runner.arch }}
           path: performance-ci.json
           if-no-files-found: ignore
-  adapter:
-    name: Adapter syntax / Python ${{ matrix.python }}
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ['3.8', '3.12']
-    runs-on: ubuntu-latest
+  mac-adapter:
+    name: Mac native SDK contract
+    runs-on: macos-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python }}
-      - run: python -m pip install 'tomli<3; python_version < "3.11"'
-      - run: python -m py_compile bridge/securecrt_bridge.py
-      - run: python -m unittest discover -s tests -v
+          python-version: "3.12"
+      - run: cargo build --locked
+      - name: Node controller of actual Mac-only Python SDK adapter and native redraw contracts
+        run: node tests/mac_adapter_contract.js target/debug/securecrt-mcp

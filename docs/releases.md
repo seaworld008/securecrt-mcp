@@ -1,3 +1,5 @@
+> 当前安装与平台入口见[一键安装](installation.md)。Windows 仅使用 `.js`；Mac 仅保留 `securecrt_bridge.py` 原生层，工具均为 JS/Rust。
+
 # Release process
 
 The tag workflow builds Windows x86_64, Linux x86_64, macOS ARM64 and macOS Intel archives. Intel macOS is cross-built on the selected macOS runner; compilation is not a native Intel desktop test. Other architectures/packagers are not claimed.

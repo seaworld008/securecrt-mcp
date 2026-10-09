@@ -193,16 +193,39 @@ class NativeAdapter:
 
     def _input(self, entry):
         s = entry['tab'].Screen
-        row, column, columns = int(s.CurrentRow), int(s.CurrentColumn), int(s.Columns)
-        return dict(current_line=s.Get2(row, 1, row, columns).rstrip(),
-                    cursor_row=row, cursor_column=column, columns=columns)
+        # Get2 can pump native rendering on macOS. Never combine the pre-read
+        # cursor with the post-read line (a prompt's trailing space can arrive
+        # during Get2 and otherwise look like operator input on the next call).
+        for _ in range(4):
+            row, columns = int(s.CurrentRow), int(s.Columns)
+            line = s.Get2(row, 1, row, columns).rstrip()
+            column = int(s.CurrentColumn)
+            if row == int(s.CurrentRow) and columns == int(s.Columns):
+                # Get2 appends a row newline on macOS even for a partial row;
+                # the remote prompt has no such newline. Keep its spaces only.
+                prefix = s.Get2(row, 1, row, column - 1).rstrip('\r\n') if column > 1 else ''
+                if column != int(s.CurrentColumn) or row != int(s.CurrentRow):
+                    continue
+                return dict(current_line=line, cursor_row=row,
+                            cursor_column=column, columns=columns, input_prefix=prefix)
+        fail('unstable_screen: native rendering changed during input snapshot; nothing sent')
 
     def _screen(self, entry):
         s = entry['tab'].Screen
         rows, columns = int(s.Rows), int(s.Columns)
-        text = s.Get2(1, 1, rows, columns)
-        if len(text.encode('utf-8')) > MAX_CHUNK: fail('screen_too_large: resize the terminal')
-        result = self._input(entry)
+        previous = None
+        for _ in range(6):
+            text = s.Get2(1, 1, rows, columns)
+            if len(text.encode('utf-8')) > MAX_CHUNK: fail('screen_too_large: resize the terminal')
+            result = self._input(entry)
+            frame = (text, result)
+            if frame == previous:
+                break
+            if previous is not None:
+                sleep(self.app, PROMPT_SAMPLE_MS)
+            previous = frame
+        else:
+            fail('unstable_screen: wait for a stable native frame before requesting a token')
         digest = hashlib.sha256((text + '\0' + str(result['cursor_row']) + ':' + str(result['cursor_column'])).encode('utf-8')).hexdigest()
         result.update(text=text, rows=rows, digest=digest)
         return result
@@ -220,12 +243,12 @@ class NativeAdapter:
                       context_warning='Configured endpoint is not proof of the current nested SSH target.')
         return result
 
-    def _guard(self, session, screen_token, expected_prompt):
+    def _guard(self, session, screen_token, expected_prompt, return_context=False):
         if isinstance(screen_token, str) and screen_token.startswith('attachment:'):
             a = self._attachment(screen_token[len('attachment:'):], write=True)
             if a['session'] != session: fail('attachment_mismatch')
             self._attachment_context(a)
-            return a['entry']
+            return (a['entry'], dict(a['context'])) if return_context else a['entry']
         e = self._session(session)
         prompt = string(expected_prompt, 'expected_prompt', 512).rstrip()
         if not prompt or any(ord(c) < 32 for c in prompt): fail('invalid expected_prompt')
@@ -238,7 +261,7 @@ class NativeAdapter:
         if current['current_line'] != prompt:
             self.metrics['context_rejections'] += 1
             fail('prompt_mismatch: target is not at the expected input context')
-        return e
+        return (e, dict(current)) if return_context else e
 
     def _before_send(self):
         if self.request_deadline is not None and self.now() >= self.request_deadline:
@@ -263,7 +286,18 @@ class NativeAdapter:
         integer(runtime_ms, 'runtime_ms', 1000, 3600000)
         if completion_marker is not None: string(completion_marker, 'completion_marker', 128)
         if any(ord(c) < 32 or ord(c) == 127 for c in text): fail('control characters are not accepted in commands')
-        e = self._guard(session, screen_token, expected_prompt)
+        e, guarded = self._guard(session, screen_token, expected_prompt, True)
+        # Another verified Tab can have been selected after this attachment was
+        # created. Select the retained target again for this actual dispatch;
+        # macOS native Send can otherwise leave the inactive input lane queued.
+        e['tab'].Activate()
+        if not self._alive(e):
+            fail('stale_session: retained target changed during native selection; nothing sent')
+        if 'digest' in guarded:
+            if self._screen(e)['digest'] != guarded['digest']:
+                fail('stale_screen: verified frame changed during native selection; nothing sent')
+        elif self._input(e) != guarded:
+            fail('context_changed: verified input changed during native selection; nothing sent')
         s = e['tab'].Screen
         self._before_send()
         self.captures[capture_id] = dict(id=capture_id, session=session, entry=e, owner=self.owner,
@@ -361,11 +395,27 @@ class NativeAdapter:
         c['entry']['expires'] = self.now() + LEASE_MS
         if not confirmed_complete: self.unresolved_sessions[sid] = dict(session=sid, capture_id=c['id'])
         errors = []
+        attachment = self.attachments.get(c.get('attachment_id'))
+        if confirmed_complete and c.get('completion_marker') and attachment:
+            # ReadString leaves the following prompt in SecureCRT's pre-display
+            # buffer. Synchronous=False does not reliably drain that buffer on
+            # macOS. Consume only the original prompt, without sending input;
+            # the next request still validates the exact line/cursor boundary.
+            try:
+                expected = attachment['context']['current_line']
+                current, context = self._input(c['entry']), attachment['context']
+                if any(current[key] != context[key] for key in
+                       ('current_line', 'cursor_column', 'columns', 'input_prefix')):
+                    # Match the full native prefix, including prompt whitespace.
+                    # Matching only rstrip() text leaves the final space queued
+                    # and the cursor permanently short of its original boundary.
+                    c['entry']['tab'].Screen.ReadString([context['input_prefix'] or expected], 1)
+            except Exception as exc:
+                errors.append(type(exc).__name__)
         for prop, value in (('Synchronous', c['old_sync']), ('IgnoreEscape', c['old_ignore'])):
             try: setattr(c['entry']['tab'].Screen, prop, value)
             except Exception as exc: errors.append(type(exc).__name__)
         if errors: self.unresolved_sessions[sid] = dict(session=sid, capture_id=c['id'])
-        attachment = self.attachments.get(c.get('attachment_id'))
         if attachment:
             # The owner confirms completion only after Rust parsed this capture's POSIX
             # marker. A prompt/snapshot/unknown result grants NO redraw/rebase credit.
@@ -427,7 +477,31 @@ class NativeAdapter:
         self._ownership(session)
         if mode == 'exclusive' and any(a['session'] == session and a['owner'] != self.owner for a in self.attachments.values()):
             fail('ownership_conflict')
-        context = self._input(e)
+        if mode != 'observe':
+            if any(c['session'] == session for c in self.captures.values()):
+                fail('busy: bind an execution attachment only after the current capture ends')
+            # macOS may leave an inactive Tab's native input/capture lane lazy
+            # after a script restart. Select the retained, verified Tab before
+            # sampling its execution context; never replace it by an index.
+            e['tab'].Activate()
+            sleep(self.app, PROMPT_SAMPLE_MS)
+        context = self._screen(e)
+        context = {key: context[key] for key in
+                   ('current_line', 'cursor_row', 'cursor_column', 'columns', 'input_prefix')}
+        if mode != 'observe':
+            # Initial prompt rendering has no owned completion marker yet.
+            # Bind only after its line/cursor boundary is quiet across native
+            # event-loop yields, including a delayed trailing prompt space.
+            stable = 0
+            for _ in range(PROMPT_READINESS_MS // PROMPT_SAMPLE_MS):
+                sleep(self.app, PROMPT_SAMPLE_MS)
+                current = self._input(e)
+                stable = stable + 1 if current == context else 0
+                context = current
+                if stable >= 2:
+                    break
+            else:
+                fail('unstable_screen: initial input boundary did not settle; nothing sent')
         if expected_prompt is not None and context['current_line'] != expected_prompt.rstrip(): fail('prompt_mismatch')
         if expected_prompt is None and mode != 'observe':
             line = context['current_line']
@@ -652,9 +726,15 @@ def serve(app, config, stop_event=None):
         try: conn.close()
         except OSError: pass
     try:
+        try:
+            connected = sum(1 for index in range(1, app.GetTabCount() + 1)
+                            if app.GetTab(index).Session.Connected)
+        except Exception:
+            connected = '待发现'
         notify(app,
             'SecureCRT MCP 已启动\n'
             '版本：' + BRIDGE_VERSION + '\n'
+            '已连接 Tab：' + str(connected) + '\n'
             '本地连接服务已就绪；当前没有登录会话时，会话列表为空，登录后会自动发现。\n'
             '请点击“确定”继续。',
             'SecureCRT MCP 已就绪')

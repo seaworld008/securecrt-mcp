@@ -1,4 +1,16 @@
+> 当前安装与平台入口见[一键安装](docs/installation.md)。Windows 仅使用 `.js`；Mac 仅保留 `securecrt_bridge.py` 原生层，工具均为 JS/Rust。
+
 # Changelog
+
+## Unreleased — 2026-10-09
+
+- Keep only the minimum macOS SecureCRT Python native layer; remove Windows Python/Xshell adapters and migrate build, package, client, desktop acceptance and regression controllers to JS/Rust. Windows installed users need no Python, Node, pywin32 or Rust.
+- Add one-click `install.cmd` / `install.command` and Rust `install`: user-scoped binary, platform entries and additive Codex settings; preserve tokens, policy, existing approvals, comments and SSH logins.
+- Repair Mac native initial Tab binding, Get2 consistent input/screen snapshots and complete prompt-prefix draining, retaining prompt spaces but excluding Get2's synthetic row newline. No probe sends or weakened input guards.
+- Prevent a late capture runner from restoring uncertainty after an explicitly acknowledged cancelled command.
+- Record complete Mac native acceptance on two Tabs: legacy/modern, twenty-command reuse, 2,500 ordered UTF-8 rows within the original 10-second budget, demonstrably overlapping Tab isolation, cancellation/reload and dedicated disconnect/reconnect. Keep sanitized prior FAIL stages.
+- Remove additional Python version ceilings/floors from loaded-engine diagnostics; the terminal's actual loader/API requirements still apply. Refresh all current setup, client, test and support guidance; historical receipts remain immutable.
+
 
 ## Unreleased
 
@@ -99,7 +111,7 @@
 - Persistent bounded Bridge connection pool, atomic prepare-and-begin, batched buffered native reads and notification-driven waits.
 - Per-session capture/interlocks, attach/exec/batch, cooperative ownership and incremental streams with explicit gaps.
 - Incremental long-line parser, native overflow draining and delivery evidence; no unknown replay or implicit interrupt.
-- Optional authenticated foreground daemon, CLI/Python/PowerShell state reuse and explicit shutdown/stale-endpoint cleanup.
+- Optional authenticated foreground daemon, CLI/JS/PowerShell state reuse and explicit shutdown/stale-endpoint cleanup.
 - Narrow catastrophic guard with quoted-search/ordinary CRUD regression tests; client permissions and custom deny rules preserved.
 - Stream-specific timeout budget; terminal tool preset; doctor --latency; comparative benchmark with explicit synthetic scope.
 - Native transport fragmentation/lost-send, three-tab, long-output, stream and daemon regression tests.
@@ -112,7 +124,7 @@
 - Renew actively used native leases, return a fresh screen after explicit acknowledgement and reflect acknowledgement in job status.
 - Evict old completed output while retaining replay-prevention tombstones; preserve partial output on timeout.
 - Drain already-sent work for up to two seconds on graceful MCP EOF, without new input or implicit recovery. Hard-kill/restart recovery is still manual.
-- Add Rust JSON CLI plus Python/PowerShell wrappers and configurable additive Codex tool presets.
+- Add Rust JSON CLI plus JS/PowerShell wrappers and configurable additive Codex tool presets.
 - Preserve historical preview.1 Windows acceptance; new desktop behavior still requires local verification. No release tag created by this change.
 
 

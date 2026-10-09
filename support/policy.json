@@ -1,11 +1,7 @@
 {
   "schema_version": 1,
-  "policy_version": "2026-10-07",
-  "review_date": "2026-11-07",
-  "python_floor": [
-    3,
-    8
-  ],
+  "policy_version": "2026-10-09",
+  "review_date": "2026-11-09",
   "securecrt_floor": [
     9,
     0
@@ -32,7 +28,8 @@
       "tab.Screen.MatchIndex",
       "tab.Screen.Synchronous",
       "tab.Screen.IgnoreEscape",
-      "tab.Screen.Send"
+      "tab.Screen.Send",
+      "tab.Activate"
     ],
     "xshell": [
       "xsh.Session.Connected",
@@ -52,7 +49,7 @@
   },
   "retirement_notice_days": 90,
   "certificate_max_age_days": 90,
-  "notes": "No untested tuple is promoted to Tier 1. Current Mac 27 / SecureCRT 9.5.2 is a passing Tier 2 exception; Windows cells await real runtime receipts.",
+  "notes": "Windows native JScript only. Mac uses the interpreter actually loaded by SecureCRT with API/source validation and no additional Python version cap. Exact desktop receipts are separate from CI.",
   "native_windows_required_apis": {
     "securecrt": [
       "crt.GetTabCount",

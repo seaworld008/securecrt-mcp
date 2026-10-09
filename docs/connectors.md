@@ -1,3 +1,5 @@
+> 当前安装与平台入口见[一键安装](installation.md)。Windows 仅使用 `.js`；Mac 仅保留 `securecrt_bridge.py` 原生层，工具均为 JS/Rust。
+
 # Unified Connectors
 
 The only public MCP namespace is `connector_*`. SecureCRT, Xshell and system

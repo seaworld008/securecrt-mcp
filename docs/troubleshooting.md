@@ -1,23 +1,25 @@
-> **0.3.0 update:** Continuous diagnostics should use the persistent terminal workflow: [attach / exec / batch / daemon](persistent-terminal.md). Client permissions remain operator-owned; client mode now includes the narrow catastrophic guard. The earlier one-call API remains compatible. New installs generate the terminal tool preset; existing configuration is never silently replaced.
+# 故障排查
 
-> **0.3.0 update:** New installs use `client` policy (client-owned command authorization); upgrades preserve old settings. `run_command` is the preferred orchestration tool; low-level protocol-2 tools remain. See [Agent usage](agent-usage.md). Earlier preview approval/default-policy examples below are historical, not a change to existing settings. Actual desktop approval behavior still requires local acceptance.
+安装和更新见[一键安装](installation.md)。Windows只有`.js`入口；Mac只有单个`securecrt_bridge.py`原生层。不要向Windows安装Python/pywin32来修复当前桥接。
 
-# Troubleshooting
+**版本或摘要不匹配**：新包执行`install`或当前二进制执行`upgrade`，空闲时取消原脚本并选择固定入口，重启MCP并重新发现目标。文件更新不替换内存实例；普通升级不使用`init --force`。
 
-**Protocol/version mismatch:** run `upgrade`, cancel the old script in SecureCRT, then run the installed script again. A file updated on disk does not replace an already running Python script. `doctor --offline` checks files; `doctor` checks the real runtime. Do not use force reset for ordinary mismatch repair.
+**Mac无法加载引擎**：先按当前SecureCRT自己的错误提示和系统要求确认支持版本/架构，再安装官方运行时并完全重启SecureCRT。已有能加载的引擎直接复用，不安装pip包、不改全局PATH、不叠加多套Python。在线doctor中的实际Python才是证据，项目不设置额外版本上限。[厂商加载说明](https://www.vandyke.com/support/tips/how-to-use-python-scripting-securecrt-on-macos.html)
 
-**Python engine fails to load:** consult VanDyke's compatibility documentation for your SecureCRT version and architecture. The external `python --version` may not match SecureCRT's embedded runtime. Version 9.0 Windows historically required a compatible Python 3.8 installation; that is not a recommendation to deploy an unsupported runtime indefinitely. Do not add Python packages to solve protocol errors; the adapter uses the standard library.
+**安装器报Codex配置错误**：现有TOML必须有效，`mcp_servers`和`securecrt`必须为表。修复该文件语法后重新执行安装，安装器不会绕过格式错误覆盖用户设置。用户私有目录内的符号链接文件被拒绝，使用明确实际目录。
 
-**stale_session:** the lease expired, a disconnect/config change was observed, or its retained native Tab no longer exists. Re-list and inspect; never substitute the current occupant of an old index. Tab captions and configured hosts do not prove nested SSH targets.
+**重复脚本**：SecureCRT同进程一次启动即可。其他Tab重复启动应提示已运行，原实例继续响应；原脚本没有响应时回到启动Tab空闲取消，再重载，不仅根据心跳抢占锁。Mac的不同应用进程若使用相同TCP端口会冲突，需要分别明确目录/端口；Windows原生实例登记按进程区分。
 
-**stale_screen / prompt_mismatch:** read the screen again, inspect current input context and use its new Token. Do not automatically acknowledge prompts or fill credentials. Concurrent human typing and asynchronous terminal output can deliberately invalidate freshness.
+**stale_session / stale_attachment**：断开、重连、配置变化、原对象关闭或租约过期使句柄失效。重新枚举并检查目标，不能用旧索引、同名会话或其他进程替代。
 
-**busy / unresolved:** a native capture is active or its remote outcome is uncertain. Inspect the tracked command, explicitly interrupt only if appropriate, then inspect and acknowledge idle. No automatic Ctrl+C/retry is performed. If the original Tab is gone, inspect remote state manually before restarting the adapter.
+**stale_screen / unstable_screen / prompt_mismatch / context_changed**：文本、行列位置、尺寸或输入边界变化。先检查原Tab，只读获取新屏幕；不能自动重发原命令或把半条输入/密码框当成空闲。Mac稳定快照与提示符排空修复不取消这些拒绝边界。
 
-**capture_may_be_incomplete / truncated:** pagination only retrieves retained captured text, not unlimited history. Native timeout slices, TUI rendering and binary output are not guaranteed lossless. Reduce command output, avoid follow/TUI modes, or use an independently approved log-file workflow. Never pretend the visible screen is full command output.
+**busy / unresolved / capture_timeout**：原任务仍活跃或结果不确定。停止新输入，检查command_id和原终端；只对本次明确跟踪的命令显式中断。原命令结束、空闲确认后以新鲜令牌显式ack，保留历史超时/取消结果。没有自动重放或自动Ctrl+C。
 
-**Audit unavailable:** check the configured parent directory, file permissions and disk space. Enabled auditing fails closed before sends. A post-send warning is not proof the command failed to run.
+**输出不完整**：分页只读取保留的捕获数据，不能恢复已丢历史。truncated/gap必须报告；TUI、二进制、无限follow输出用明确授权的专用PTY流程。2,500行中文验收必须在原定10秒预算逐行一致，超时后增加预算不是通过。
 
-**Windows build says executable in use:** exit the MCP client holding the old binary before building/replacing it. Leave authenticated SSH tabs intact.
+**审计不可用**：检查路径、权限和空间。启用审计时，发送前记录失败会拒绝；发送后的警告不能当作远端未执行。
 
-**Multiple SecureCRT windows:** automatic discovery is not implemented. Use separate absolute `SECURECRT_MCP_HOME` directories, distinct localhost ports and separately installed scripts; keep each MCP client entry explicitly associated with its instance. Do not launch identical fixed-port adapters and assume they aggregate sessions.
+**Windows二进制被占用**：停止持有旧二进制的MCP客户端后从新包运行安装，不断开SSH登录。解压包不可误用Mac入口。
+
+问题报告只提供版本、脱敏状态、摘要和用例阶段，不上传Token、私钥、地址、会话ID或已有终端历史。

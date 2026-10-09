@@ -5,3 +5,5 @@ Be respectful, technically constructive, and security-conscious.
 Harassment, personal attacks, discrimination, credential exposure, or intentionally unsafe operational advice are not acceptable in this project.
 
 Maintainers may edit, hide, or remove contributions that create security risk, expose private infrastructure information, or undermine a productive technical community.
+
+For technical installation and support reports, follow the [current installation guide](docs/installation.md) and [troubleshooting guide](docs/troubleshooting.md). Submit sanitized reproduction details; never publish existing terminal history or credentials.

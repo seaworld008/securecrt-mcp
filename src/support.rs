@@ -53,12 +53,12 @@ pub fn report(backend: &str, runtime: Option<&Value>) -> Value {
         reasons.push("required_native_api_missing");
     }
     if let Some(runtime) = runtime {
-        let expected_script = if runtime["script_engine"] == "JScript" {
+        let expected_script = if runtime["script_engine"] == "JScript" || backend == "xshell" {
             crate::WINDOWS_BRIDGE_SCRIPT
         } else if backend == "securecrt" {
             crate::BRIDGE_SCRIPT
         } else {
-            crate::XSHELL_BRIDGE_SCRIPT
+            crate::WINDOWS_BRIDGE_SCRIPT
         };
         if runtime["adapter_sha256"]
             .as_str()
@@ -67,27 +67,15 @@ pub fn report(backend: &str, runtime: Option<&Value>) -> Value {
             unsupported = true;
             reasons.push("running_adapter_differs_from_binary");
         }
-        if runtime["script_engine"] == "JScript" {
-            // Native COM calls do not use either terminal's Python binding.
-        } else if let Some(python) = runtime["python"].as_str().and_then(version) {
-            if python < floor(&policy, "python_floor") {
-                unsupported = true;
-                reasons.push("bridge_python_below_policy_floor");
-            }
-            if backend == "securecrt"
-                && runtime["securecrt_version"]
-                    .as_str()
-                    .and_then(version)
-                    .is_some_and(|v| v >= (9, 6))
-                && python == (3, 8)
-            {
-                unsupported = true;
-                reasons.push("securecrt_9_6_removed_python_3_8");
-            }
-        } else {
+        if backend == "xshell" && runtime["script_engine"] != "JScript" {
+            unsupported = true;
+            reasons.push("xshell_requires_native_jscript");
+        } else if runtime["script_engine"] != "JScript" && runtime["python"].as_str().is_none() {
             version_unknown = true;
             reasons.push("python_version_unavailable");
         }
+        // The native terminal has already loaded this interpreter. Do not
+        // invent a Python maximum/minimum independent of its actual APIs.
         let product = if backend == "securecrt" {
             "securecrt_version"
         } else {
@@ -225,12 +213,16 @@ async fn openssh_report_using(program: &str) -> Result<Value> {
 
 pub fn validate_runtime(backend: &str, runtime: &Value) -> Result<()> {
     let native = runtime["script_engine"] == "JScript";
+    ensure!(
+        backend != "xshell" || native,
+        "Xshell requires the self-contained JScript entry; Python bridge support was removed"
+    );
     let script = if native {
         crate::WINDOWS_BRIDGE_SCRIPT
     } else if backend == "securecrt" {
         crate::BRIDGE_SCRIPT
     } else {
-        crate::XSHELL_BRIDGE_SCRIPT
+        crate::WINDOWS_BRIDGE_SCRIPT
     };
     let expected_hash = crate::digest::sha256_hex(script);
     ensure!(
@@ -287,12 +279,19 @@ mod tests {
         );
     }
     #[test]
-    fn securecrt_python_3_8_removal_is_platform_independent() {
-        let runtime = json!({"python":"3.8.10","securecrt_version":"9.6.0"});
-        assert_eq!(
-            report("securecrt", Some(&runtime))["tier"],
-            json!("unsupported")
-        );
+    fn loaded_python_has_no_artificial_version_cap() {
+        let policy: Value = serde_json::from_str(POLICY).unwrap();
+        let apis: serde_json::Map<String, Value> = policy["required_apis"]["securecrt"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|key| (key.as_str().unwrap().to_owned(), json!(true)))
+            .collect();
+        for python in ["3.8.10", "3.11.17", "3.14.0", "3.99.0"] {
+            let runtime =
+                json!({"python":python,"securecrt_version":"9.7.0","api_capabilities":apis});
+            assert_eq!(report("securecrt", Some(&runtime))["tier"], "tier_2");
+        }
     }
     #[tokio::test]
     async fn absent_ssh_returns_a_support_report() {
@@ -316,7 +315,7 @@ mod tests {
             validate_runtime(
                 "xshell",
                 &json!({"bridge_version":env!("CARGO_PKG_VERSION"),
-            "adapter_sha256":crate::digest::sha256_hex(crate::XSHELL_BRIDGE_SCRIPT)})
+            "script_engine":"JScript", "adapter_sha256":crate::digest::sha256_hex(crate::WINDOWS_BRIDGE_SCRIPT)})
             )
             .is_ok()
         );

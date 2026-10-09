@@ -1,3 +1,5 @@
+> 历史版本/设计记录。当前入口与工具已迁移为 Windows JScript、JS/Rust 工具及单个 Mac Python 原生适配层；安装按[当前说明](installation.md)执行。下文历史实测不代表新提交认证。
+
 # Preview.2 Agent UX upgrade
 
 Build `main`, run `upgrade`, restart the native script, run `doctor`, then reload the MCP client. Existing policy/token remain unchanged. New installations use `mode = "client"`; existing users explicitly edit that one setting only if they want command approvals delegated to the client. Custom deny patterns are not automatically deleted.

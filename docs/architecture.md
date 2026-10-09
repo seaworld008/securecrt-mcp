@@ -1,8 +1,10 @@
+> 当前安装与平台入口见[一键安装](installation.md)。Windows 仅使用 `.js`；Mac 仅保留 `securecrt_bridge.py` 原生层，工具均为 JS/Rust。
+
 # Architecture: unified persistent terminal connector
 
 ## Ownership boundaries
 
-MCP clients own approval. Rust owns local session/operation state, command boundaries, incremental parsing, output retention and auditing. The current backends are `SecureCrtBackend` and the explicit opt-in `OpenSshBackend`. The standard-library Python adapter owns only native SecureCRT calls and buffering/connection bookkeeping; all crt calls stay on its script thread. OpenSSH runs through the system client and does not require access to the injected crt object.
+MCP clients own approval. Rust owns local session/operation state, command boundaries, incremental parsing, output retention and auditing. The current backends are SecureCRT, Windows Xshell and explicit opt-in OpenSSH. The standard-library Mac Python adapter and Windows JScript adapter own only native terminal calls and buffering/connection bookkeeping; all crt calls stay on its script thread. OpenSSH runs through the system client and does not require access to the injected crt object.
 
 ## Runtime paths
 
@@ -12,7 +14,7 @@ SecureCRT path: Engine -> four persistent bounded bridge lanes -> adapter -> exi
 
 OpenSSH path: Engine -> persistent `ssh -T` or `ssh -tt` process -> remote host. The OpenSSH backend is explicit opt-in and does not silently replace SecureCRT.
 
-Repeated CLI: CLI or Python/PowerShell helper -> explicitly started authenticated localhost daemon -> one retained Engine -> same bridge protocol. No automatic daemon spawning, no fallback/replay after a failed call. These are separate Engine instances; do not mix their command/attachment IDs.
+Repeated CLI: CLI or JS/PowerShell helper -> explicitly started authenticated localhost daemon -> one retained Engine -> same bridge protocol. No automatic daemon spawning, no fallback/replay after a failed call. These are separate Engine instances; do not mix their command/attachment IDs.
 
 ```mermaid
 flowchart LR
@@ -24,7 +26,7 @@ flowchart LR
     F --> G["Persistent ssh/PTY"]
     G --> H["Remote host"]
     E --> H
-    I["CLI / Python / PowerShell"] --> J["Loopback daemon"]
+    I["CLI / JS / PowerShell"] --> J["Loopback daemon"]
     J --> B
 ```
 

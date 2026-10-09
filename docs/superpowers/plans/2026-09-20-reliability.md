@@ -1,3 +1,5 @@
+> 历史版本/设计记录。当前入口与工具已迁移为 Windows JScript、JS/Rust 工具及单个 Mac Python 原生适配层；安装按[当前说明](../../installation.md)执行。下文历史实测不代表新提交认证。
+
 # Terminal Reliability Implementation Plan
 
 > For agentic workers: execute inline with test-driven-development and verification-before-completion.
@@ -30,12 +32,12 @@
 
 ## Commands
 ```sh
-python -m unittest discover -s tests -v
+node tests/mac_adapter_contract.js
 cargo fmt --all -- --check
 cargo check --locked --all-targets --all-features
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-targets --all-features
-python tests/mcp_smoke.py target/debug/securecrt-mcp
+node tests/mcp_smoke.js target/debug/securecrt-mcp
 ```
 
 Rust tooling/network are unavailable in the local authoring container: Rust gates run on GitHub Actions, not fabricated locally. No fresh-context reviewer tool is available; use explicit self-review with test evidence.

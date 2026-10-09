@@ -1,7 +1,9 @@
+> 当前安装与平台入口见[一键安装](installation.md)。Windows 仅使用 `.js`；Mac 仅保留 `securecrt_bridge.py` 原生层，工具均为 JS/Rust。
+
 # 桌面客户端测试与验收规范
 
-本次交付范围：Windows Xshell、Windows SecureCRT。macOS SecureCRT 使用同一
-Rust 核心与原生 Python 桥接，必须在 Mac 上另外验收；Linux 本轮暂缓。
+当前平台入口为 Windows Xshell/SecureCRT JScript 与 Mac SecureCRT 最小 Python 原生层。
+Mac 2026-10-09 两 Tab 完整矩阵及原生 UI 已通过，见[脱敏 Mac 回执](acceptance/mac-native-matrix-2026-10-09.md)。Windows历史回执只认证其中的确切源码；Linux桌面未进行本轮真机验收。
 模拟测试、编译和 Windows 通过均不能替代 Mac 真机证据。
 
 ## 入口与统一接口
@@ -58,11 +60,11 @@ Xshell 为 9.90 / 3.03 秒。Xshell 后台 Tab 接近预算上限，慢机器仍
 [原生 UI 回执](acceptance/windows-native-ui-2026-10-08.json)另行记录：固定入口启动
 及友好重复提示、同进程 Cancel 后重新启动且保留两个登录连接，以及两种客户端
 断开/重连后旧附件拒绝发送、新附件执行成功。取消原生脚本时，SecureCRT 自身
-会显示 `Script Cancelled`，这是客户端取消通知。请在运行脚本的 Tab 打开
+会显示 `Script Cancelled`，这是客户端取消通知。请在最初启动脚本的 Tab 打开
 Script → Cancel；其他 Tab 的 Cancel 可能处于禁用状态。
 
 [验收状态](acceptance/windows-validation-2026-10-08.json)只证明所记录二进制与
-工作区源码的 Windows 验收。Mac 真机待测，Linux 桌面暂缓。早期
+工作区源码的历史 Windows 验收。Mac 独立回执见上面的2026-10-09记录，Linux桌面未测。早期
 [Xshell 单独回执](acceptance/windows-xshell-native-2026-10-08.json)保留为历史记录；
 其摘要和时长不代表最终四 Tab 矩阵。真实 UI 回执只覆盖断开并重连同一 Tab，
 关闭后重建 Tab 的 GUI 路径未单独测试；断线必须被原生轮询实际观察到。
@@ -83,14 +85,14 @@ cargo fmt --all -- --check
 cargo check --locked --all-targets --all-features
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-targets --all-features
-python -m pytest -q tests
+node tests/mac_adapter_contract.js
 node tests/windows_bridge_test.js
-python tests/portable_windows_smoke.py target/release/securecrt-mcp.exe
-python tests/package_smoke.py target/release/securecrt-mcp.exe x86_64-pc-windows-msvc
-python scripts/validate_repository.py
+node tests/portable_windows_smoke.js target/release/securecrt-mcp.exe
+node tests/package_smoke.js target/release/securecrt-mcp.exe x86_64-pc-windows-msvc
+node scripts/validate_repository.js
 ```
 
-这里的 Python、Node 是开发测试依赖，不是 Windows 发布脚本的运行依赖。
+这里的 Node 是开发控制器依赖；Mac 原生契约开发测试才调用 Python。Windows 发布入口无这些运行依赖。
 Windows 隔离测试会从子进程 PATH 排除它们，并覆盖中文路径、32/64 位
 Windows 脚本引擎、首次释放、再次启动、摘要、取消清理和配置保留。
 
@@ -124,13 +126,13 @@ Windows 脚本引擎、首次释放、再次启动、摘要、取消清理和配
 两种 MCP 协议模式分别运行最小验收：
 
 ```text
-python tests/connector_acceptance.py <binary> --backend <securecrt或xshell> --target <已确认的会话ID> --protocol <legacy或modern> --source-commit <commit> --tested-on <日期> --output <回执.json>
+node tests/connector_acceptance.js <binary> --backend <securecrt或xshell> --target <已确认的会话ID> --protocol <legacy或modern> --source-commit <commit> --tested-on <日期> --output <回执.json>
 ```
 
 全面验收使用同一个跨客户端脚本：
 
 ```text
-python tests/securecrt_desktop_smoke.py <binary> --backend <securecrt或xshell> --session <已确认的会话ID> --peer <第二会话ID> --protocol legacy --output <回执.json>
+node tests/securecrt_desktop_smoke.js <binary> --backend <securecrt或xshell> --session <已确认的会话ID> --peer <第二会话ID> --protocol legacy --output <回执.json>
 ```
 
 `--peer` 可省略；省略时多会话项为未测。`--exercise-recovery` 才执行有限
@@ -159,7 +161,7 @@ cargo build --release --locked
 重启 MCP 服务，列出会话并人工确认空闲目标。执行上面的两种协议最小
 验收，以及全面验收（`<binary>` 使用 `target/release/securecrt-mcp`、
 `--backend securecrt`）。按相同标准检查中文、连续复用、批量、多 Tab、
-长输出和恢复，提交脱敏 JSON 回执。未完成之前状态为待 Mac 真机验收。
+长输出和恢复，提交脱敏 JSON 回执。其他源码/设备仍需独立真机回执，本次精确Mac运行见上面的记录。
 
 ## 厂商依据与扩展原则
 

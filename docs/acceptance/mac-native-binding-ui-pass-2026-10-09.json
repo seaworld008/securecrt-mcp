@@ -1,0 +1,68 @@
+{
+  "tested_on": "2026-10-09",
+  "scope": "Mac SecureCRT real native UI and authenticated SSH; dedicated first Tab disconnected/reconnected",
+  "passed": true,
+  "binary_sha256": "1f00b283a4cd600ca557018317b7609ffcf29f10aa176ac5f4aac4811ae8ecb8",
+  "adapter_sha256": "e7f8f84e630f2326b013eb3f5d2f6b01b01db94d489a0122bc573c0eae0cb7b4",
+  "code_revision": {
+    "commit": "c8cf8d468069bc7b204225cc45fd1dde32c3bf7a",
+    "working_tree_modified": true,
+    "equivalent_source_tree_commit": "208005fd9c62ab5c3b1d1c7a5bce67a1747c25e0",
+    "identity_note": "Original test-time revision is retained; unpublished Git author/committer metadata was normalized to the repository public noreply identity before publication. Source tree content was unchanged."
+  },
+  "runtime": {
+    "python": "3.11.17",
+    "platform": "Darwin",
+    "architecture": "arm64",
+    "os_version": "27.0.1",
+    "adapter_sha256": "e7f8f84e630f2326b013eb3f5d2f6b01b01db94d489a0122bc573c0eae0cb7b4",
+    "securecrt_version": "9.5.2 (ARM64 build 3325)"
+  },
+  "connected_test_tabs": 2,
+  "checks": [
+    {
+      "case": "U01",
+      "status": "PASS",
+      "startup_dialog_connected_count": 2,
+      "online_connected_count": 2
+    },
+    {
+      "case": "U02",
+      "status": "PASS",
+      "friendly_already_running_dialog": true,
+      "original_native_instance_continued_responding": true,
+      "original_instance_replaced": false,
+      "session_leases_rediscovered_after_ui_check": true
+    },
+    {
+      "case": "U03",
+      "status": "PASS",
+      "native_cancel_observed": true,
+      "listener_connection_refused": true,
+      "ssh_logins_preserved": 2,
+      "reload_connected_tabs": 2,
+      "new_native_handle_generation": true
+    },
+    {
+      "case": "U04",
+      "status": "PASS",
+      "native_disconnect_confirmed": true,
+      "native_reconnect_and_idle_prompt_confirmed": true,
+      "scope": "real MCP / native UI disconnect and reconnect / SSH",
+      "backend": "securecrt",
+      "checks": [
+        "original idle connected attachment",
+        "disconnected old attachment rejected with sent=false",
+        "reconnected generation rejects old attachment with sent=false",
+        "fresh generation executes exactly one unique marker"
+      ],
+      "passed": true,
+      "wall_seconds": 80.017
+    }
+  ],
+  "not_exercised": [
+    "Closing and recreating a Tab GUI path",
+    "Codex client approval rejection UI",
+    "Windows native UI on this Mac"
+  ]
+}

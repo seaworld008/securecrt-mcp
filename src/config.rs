@@ -7,9 +7,11 @@ use std::{
 
 pub const PROTOCOL: u32 = 2;
 pub const MAX_FRAME: usize = 262_144;
+#[cfg(not(windows))]
 pub const BRIDGE_SCRIPT_FILE: &str = "securecrt_bridge.py";
-pub const XSHELL_BRIDGE_SCRIPT_FILE: &str = "xshell_bridge.py";
-pub const XSHELL_INSTALLED_SCRIPT_FILE: &str = "securecrt-mcp-xshell.py";
+#[cfg(windows)]
+pub const BRIDGE_SCRIPT_FILE: &str = "securecrt-mcp-securecrt.js";
+pub const XSHELL_INSTALLED_SCRIPT_FILE: &str = "securecrt-mcp-xshell.js";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -132,7 +134,7 @@ pub fn xshell_ipc_dir_path() -> Result<PathBuf> {
     Ok(app_dir()?.join("xshell-ipc"))
 }
 pub fn xshell_bridge_script_path() -> Result<PathBuf> {
-    Ok(app_dir()?.join(XSHELL_BRIDGE_SCRIPT_FILE))
+    xshell_installed_script_path()
 }
 pub fn xshell_script_dir_path() -> Result<PathBuf> {
     if env::var_os("SECURECRT_MCP_HOME").is_some() {

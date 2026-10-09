@@ -1,22 +1,11 @@
 # Contributing
 
-## Rust MSRV policy
+Use Rust 1.88+ and Node for build/test/package/client controllers. Only the Mac native adapter contract developer job requires Python; Windows terminal entries use system JScript exclusively. Do not reintroduce Windows Python bindings or separate Python clients.
 
-The current MSRV is **Rust 1.88**, recorded in `Cargo.toml` and
-`rust-toolchain.toml`. It constrains contributors and `cargo install` builds.
-Precompiled release users do not need Rust. Compiler requirements do not change
-SecureCRT, Xshell, Python or OS runtime requirements.
+Follow [testing](docs/testing.md), [desktop cases](docs/desktop-test-cases.md) and [installation](docs/installation.md). Rust owns command state, parsing, bounded output and audit. Native adapters remain on the terminal script thread and never resend uncertain commands, guess idle state or switch targets automatically.
 
-Raise MSRV only in a **minor release** (for example 0.5.x to 0.6.0), never in a
-patch release. Document the old/new MSRV and reason in CHANGELOG, update both
-manifests and CI together, and validate on the declared minimum. Dependencies
-requiring a newer compiler must wait for that minor release or stay compatible.
-This change does not raise MSRV.
+Run strict locked format/check/Clippy/Rust tests, Node native/compiled MCP/fault/performance/daemon/package regressions, the Mac adapter contract and `node scripts/validate_repository.js`. Use a fresh output directory for each authorized desktop run and retain FAIL evidence. An actual Windows or Mac native UI claim requires that client's observable behavior; simulated SDK objects and CI do not replace it.
 
-See [support policy](docs/support-policy.md) and [support matrix](docs/support-matrix.md).
+Keep Token, credentials, endpoints, user names, opaque session IDs and existing terminal history out of commits/PRs. Preserve user configuration, approvals and SSH logins during installation/upgrades. Update bilingual README mirrors, platform paths, manifest and version/source checks together. Existing releases and historical receipts remain immutable.
 
-Use Rust 1.88 and Python 3.12. Keep Cargo.lock updated deliberately, run `cargo fmt --all -- --check`, `cargo clippy --locked --all-targets --all-features -- -D warnings`, `cargo test --locked --all-targets --all-features`, `python -m unittest discover -s tests -v`, and the compiled-binary `tests/mcp_smoke.py`. Validate local docs with `scripts/validate_repository.py`.
-
-Write regression tests before changing behavior. Keep native crt calls in the SecureCRT script thread. Tests must never connect to production hosts or use real secrets. Do not add automatic command retries, hidden Ctrl+C, permissive fallback to tab indexes, silent audit errors, or approval=true arguments.
-
-Explain security impact, migration and desktop evidence separately from mocked CI. Native API behavior must be tested against actual supported SecureCRT versions before promising compatibility. See [testing](docs/testing.md) and [security](SECURITY.md).
+Submit a PR with the concrete problem, resulting behavior and exact validation scope. Merge only the reviewed head after all required CI checks succeed and unresolved review threads are cleared. Do not silently overwrite public release assets or publish without an explicit release request.

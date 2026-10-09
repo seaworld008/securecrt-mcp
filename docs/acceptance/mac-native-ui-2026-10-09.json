@@ -1,0 +1,67 @@
+{
+  "tested_on": "2026-10-09",
+  "scope": "Mac SecureCRT real native UI and authenticated SSH; dedicated first Tab disconnected/reconnected",
+  "passed": true,
+  "binary_sha256": "bb02749f03acae9ff8c0f2fd57124a94359e936d8c1b057a43765f39de3f1925",
+  "adapter_sha256": "957437304f304f47d94e7cf58e33c369fe4bc4f6ca0a7cc72f88862481abd58e",
+  "code_revision": {
+    "commit": "1f46f52ae924866077d2c7980d4ded97d7929972",
+    "working_tree_modified": false
+  },
+  "runtime": {
+    "python": "3.11.17",
+    "platform": "Darwin",
+    "architecture": "arm64",
+    "os_version": "27.0.1",
+    "adapter_sha256": "957437304f304f47d94e7cf58e33c369fe4bc4f6ca0a7cc72f88862481abd58e",
+    "securecrt_version": "9.5.2 (ARM64 build 3325)"
+  },
+  "connected_test_tabs": 2,
+  "checks": [
+    {
+      "case": "U01",
+      "status": "PASS",
+      "startup_dialog_connected_count": 2,
+      "online_connected_count": 2
+    },
+    {
+      "case": "U02",
+      "status": "PASS",
+      "friendly_already_running_dialog": true,
+      "original_native_instance_continued_responding": true,
+      "original_instance_replaced": false,
+      "session_leases_rediscovered_after_ui_check": true
+    },
+    {
+      "case": "U03",
+      "status": "PASS",
+      "native_cancel_observed": true,
+      "listener_connection_refused": true,
+      "ssh_logins_preserved": 2,
+      "reload_connected_tabs": 2,
+      "new_native_handle_generation": true
+    },
+    {
+      "case": "U04",
+      "status": "PASS",
+      "native_disconnect_confirmed": true,
+      "native_reconnect_and_idle_prompt_confirmed": true,
+      "scope": "real MCP / native UI disconnect and reconnect / SSH",
+      "backend": "securecrt",
+      "checks": [
+        "original idle connected attachment",
+        "disconnected old attachment rejected with sent=false",
+        "reconnected generation rejects old attachment with sent=false",
+        "fresh generation executes exactly one unique marker"
+      ],
+      "passed": true,
+      "wall_seconds": 137.573
+    }
+  ],
+  "not_exercised": [
+    "Closing and recreating a Tab GUI path",
+    "Codex client approval rejection UI",
+    "Windows native UI on this Mac"
+  ],
+  "verification_note": "U01/U02 rechecked on the final paired binary and adapter before the final full matrix. U03/U04 were checked with this identical native source and binary before the read-only observation-controller change; original test revision 3e796bc7f36a786cbd0e27ddc7a2170e13af8e22 had uncommitted native changes, subsequently committed as 3168ec6. No native source or binary changed afterwards."
+}

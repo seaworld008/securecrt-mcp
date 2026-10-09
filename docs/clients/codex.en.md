@@ -1,13 +1,11 @@
-> **0.3.0 update:** Continuous diagnostics should use the persistent terminal workflow: [attach / exec / batch / daemon](../persistent-terminal.md). Client permissions remain operator-owned; client mode now includes the narrow catastrophic guard. The earlier one-call API remains compatible. New installs generate the terminal tool preset; existing configuration is never silently replaced.
+# Codex configuration and approvals
 
-> **0.3.0 update:** New installs use `client` policy (client-owned command authorization); upgrades preserve old settings. `run_command` is the preferred orchestration tool; low-level protocol-2 tools remain. See [Agent usage](../agent-usage.md). Earlier preview approval/default-policy examples below are historical, not a change to existing settings. Actual desktop approval behavior still requires local acceptance.
+[Installation](../installation.md) writes the private executable path, `args=["serve"]` and the selected `env.SECURECRT_MCP_HOME` into the securecrt MCP entry only. Other settings, comments and existing approval/tool restrictions are retained. Reload Codex and restart the fixed native entry only when the terminal is idle.
 
-# Codex integration
+`securecrt-mcp codex-config --toolset terminal --approval-mode prompt` prints an optional additive block; it does not overwrite configuration. Use keys supported by the installed client and operator/organization approval policy. [Official MCP configuration](https://developers.openai.com/codex/mcp/) is separate from actual client UI validation.
 
-Use `securecrt-mcp codex-config` to print additive TOML with the binary's real absolute path. Merge it into your existing configuration; never overwrite other model/plugin settings. All tools default to prompt; explicitly read-only tools have approve overrides.
+Discover explicit targets with `connector_list`, bind with `connector_open`, retain its `session_id` for repeated exec/batch/status/pagination, then close. Mac execution binding selects the verified native Tab before sampling input context; no probe command is sent. Never guess targets or use POSIX envelopes in password dialogs, pagers or REPLs.
 
-See the official MCP configuration documentation: https://developers.openai.com/codex/mcp/ . The installed client must support the keys. Tool annotations are hints, not proof of authorization.
+On a dedicated idle test Tab, request a new harmless printf operation and reject it in the client approval UI. Verify zero terminal echo, remote execution and dispatch_attempt. Do not retry automatically. A new approved operation ID should produce one send, one command ID and the real final state. No approval popup or unexpected send means stop and record sanitized client/configuration details. CI and MCP annotations do not prove that UI path.
 
-Before production, request a harmless unique command and **reject** it in the actual client's approval UI. Verify zero terminal input and no dispatch_attempt for that operation. Then use a new operation ID and explicitly allow it, verifying one dispatch. CI validates configuration/metadata but cannot attest a real client's human rejection.
-
-[Migration](../migration-0.2.md) · [Test layers](../testing.md)
+Never publish tokens, endpoints, user names, handles or previous terminal history. Unknown outcomes require original-terminal inspection and explicit tracked interruption/idle recovery.
