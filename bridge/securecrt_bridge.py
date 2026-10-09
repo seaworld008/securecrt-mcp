@@ -243,12 +243,12 @@ class NativeAdapter:
                       context_warning='Configured endpoint is not proof of the current nested SSH target.')
         return result
 
-    def _guard(self, session, screen_token, expected_prompt):
+    def _guard(self, session, screen_token, expected_prompt, return_context=False):
         if isinstance(screen_token, str) and screen_token.startswith('attachment:'):
             a = self._attachment(screen_token[len('attachment:'):], write=True)
             if a['session'] != session: fail('attachment_mismatch')
             self._attachment_context(a)
-            return a['entry']
+            return (a['entry'], dict(a['context'])) if return_context else a['entry']
         e = self._session(session)
         prompt = string(expected_prompt, 'expected_prompt', 512).rstrip()
         if not prompt or any(ord(c) < 32 for c in prompt): fail('invalid expected_prompt')
@@ -261,7 +261,7 @@ class NativeAdapter:
         if current['current_line'] != prompt:
             self.metrics['context_rejections'] += 1
             fail('prompt_mismatch: target is not at the expected input context')
-        return e
+        return (e, dict(current)) if return_context else e
 
     def _before_send(self):
         if self.request_deadline is not None and self.now() >= self.request_deadline:
@@ -286,7 +286,18 @@ class NativeAdapter:
         integer(runtime_ms, 'runtime_ms', 1000, 3600000)
         if completion_marker is not None: string(completion_marker, 'completion_marker', 128)
         if any(ord(c) < 32 or ord(c) == 127 for c in text): fail('control characters are not accepted in commands')
-        e = self._guard(session, screen_token, expected_prompt)
+        e, guarded = self._guard(session, screen_token, expected_prompt, True)
+        # Another verified Tab can have been selected after this attachment was
+        # created. Select the retained target again for this actual dispatch;
+        # macOS native Send can otherwise leave the inactive input lane queued.
+        e['tab'].Activate()
+        if not self._alive(e):
+            fail('stale_session: retained target changed during native selection; nothing sent')
+        if 'digest' in guarded:
+            if self._screen(e)['digest'] != guarded['digest']:
+                fail('stale_screen: verified frame changed during native selection; nothing sent')
+        elif self._input(e) != guarded:
+            fail('context_changed: verified input changed during native selection; nothing sent')
         s = e['tab'].Screen
         self._before_send()
         self.captures[capture_id] = dict(id=capture_id, session=session, entry=e, owner=self.owner,

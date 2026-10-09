@@ -1,6 +1,6 @@
 # Codex 接入与审批
 
-[一键安装](../installation.md)自动写入`mcp_servers.securecrt`的私有二进制绝对路径和`args=["serve"]`，保留其他配置、注释、现有审批和工具范围。安装后重新加载Codex，在空闲原生终端重载当前入口。
+[一键安装](../installation.md)自动写入`mcp_servers.securecrt`的私有二进制绝对路径、`args=["serve"]`和所选目录的`env.SECURECRT_MCP_HOME`，保留其他配置、注释、现有审批和工具范围。安装后重新加载Codex，在空闲原生终端重载当前入口。
 
 需要自行选择工具范围/审批时，运行：
 

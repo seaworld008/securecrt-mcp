@@ -18,9 +18,9 @@
 | Windows Xshell | 双击 `install.cmd` | Xshell 标准 `Scripts` 目录中的 `securecrt-mcp-xshell.js` | 系统 JScript；无需 Python、Node、Rust |
 | macOS SecureCRT | 双击 `install.command` | `~/.securecrt-mcp/securecrt_bridge.py` | SecureCRT 可加载的 Python 引擎；桥接仅用标准库 |
 
-也可执行 `securecrt-mcp install`。安装把二进制放在用户私有目录，部署当前平台入口，并增量更新 Codex 的 `mcp_servers.securecrt` 二进制路径。保留其他模型、插件、MCP、现有审批及工具设置；保留 Bridge Token、策略、自定义拒绝规则和 SSH 登录。不修改全局 PATH。
+也可执行 `securecrt-mcp install`。安装把二进制放在用户私有目录，部署当前平台入口，并增量更新 Codex 的 `mcp_servers.securecrt` 二进制路径及所选应用目录环境。保留其他模型、插件、MCP、现有审批及工具设置；保留 Bridge Token、策略、自定义拒绝规则和 SSH 登录。不修改全局 PATH。
 
-安装后重新加载 Codex，并在已登录终端空闲时通过 **Script → Run** 选择固定入口。SecureCRT 每个进程运行一次，覆盖该进程所有已连接 Tab；其他 Tab 重复运行会友好提示。停止时切到 Script → Cancel 可用的 Tab，选择 **Script → Cancel**。Xshell 按实际发现的窗口/Tab 范围运行。
+安装后重新加载 Codex，并在已登录终端空闲时通过 **Script → Run** 选择固定入口。SecureCRT 每个进程运行一次，覆盖该进程所有已连接 Tab；其他 Tab 重复运行会友好提示。停止时回到最初启动脚本的 Tab，选择 **Script → Cancel**。Xshell 按实际发现的窗口/Tab 范围运行。
 
 Windows 也可直接选择解压包内的自包含 `.js` 文件，自动释放配套 Rust 程序。Mac 的 JScript 原生接口不受厂商支持，因此只保留一个最小 Python 原生适配文件；构建、打包、客户端和验收控制器均已迁移到 JS/Rust。桥接不额外限制已成功加载 Python 的最高版本，依据实际 API 和脚本摘要检查；SecureCRT 自身的引擎加载范围仍有效。[厂商平台说明](https://www.vandyke.com/products/securecrt/scripts.html)
 

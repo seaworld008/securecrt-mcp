@@ -1,6 +1,6 @@
 # Codex configuration and approvals
 
-[Installation](../installation.md) writes the private executable path and `args=["serve"]` into the securecrt MCP entry only. Other settings, comments and existing approval/tool restrictions are retained. Reload Codex and restart the fixed native entry only when the terminal is idle.
+[Installation](../installation.md) writes the private executable path, `args=["serve"]` and the selected `env.SECURECRT_MCP_HOME` into the securecrt MCP entry only. Other settings, comments and existing approval/tool restrictions are retained. Reload Codex and restart the fixed native entry only when the terminal is idle.
 
 `securecrt-mcp codex-config --toolset terminal --approval-mode prompt` prints an optional additive block; it does not overwrite configuration. Use keys supported by the installed client and operator/organization approval policy. [Official MCP configuration](https://developers.openai.com/codex/mcp/) is separate from actual client UI validation.
 

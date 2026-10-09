@@ -60,7 +60,7 @@ Xshell 为 9.90 / 3.03 秒。Xshell 后台 Tab 接近预算上限，慢机器仍
 [原生 UI 回执](acceptance/windows-native-ui-2026-10-08.json)另行记录：固定入口启动
 及友好重复提示、同进程 Cancel 后重新启动且保留两个登录连接，以及两种客户端
 断开/重连后旧附件拒绝发送、新附件执行成功。取消原生脚本时，SecureCRT 自身
-会显示 `Script Cancelled`，这是客户端取消通知。请在 Cancel 可用的 Tab 打开
+会显示 `Script Cancelled`，这是客户端取消通知。请在最初启动脚本的 Tab 打开
 Script → Cancel；其他 Tab 的 Cancel 可能处于禁用状态。
 
 [验收状态](acceptance/windows-validation-2026-10-08.json)只证明所记录二进制与
