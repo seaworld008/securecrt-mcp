@@ -920,6 +920,58 @@ class AtomicScreenTests(unittest.TestCase):
         self.assertEqual(view['text'],'new output\nuser$ ')
         a._guard(sid,view['screen_token'],'user$')
 
+class NativeBindingActivationTests(unittest.TestCase):
+    def test_execution_binding_activates_retained_tab_before_context_and_send(self):
+        app=Crt();app.focus=app.tabs[0]
+        target=app.tabs[1];other=app.tabs[0]
+        adapter=namespace['NativeAdapter'](app)
+        sid=adapter.list_sessions()['sessions'][1]['id']
+        events=[]
+        def activate():
+            events.append('activate');app.focus=target
+        target.Activate=activate
+        app.Sleep=lambda milliseconds:events.append(('sleep',milliseconds))
+        original=target.Screen.Get2
+        def sample(*args):
+            self.assertIs(app.focus,target,'target context was read before retained Tab activation')
+            self.assertIn(('sleep',10),events,'native event-loop yield must precede context sampling')
+            events.append('sample');return original(*args)
+        target.Screen.Get2=sample
+        app.tabs.reverse()  # Index reuse must not silently retarget activation.
+        binding=adapter.attach(sid,expected_prompt='user$')
+        self.assertIs(adapter.attachments[binding['attachment_id']]['entry']['tab'],target)
+        self.assertEqual(events[0],'activate')
+        self.assertLess(events.index(('sleep',10)),events.index('sample'))
+        self.assertFalse(target.Screen.sent);self.assertFalse(other.Screen.sent)
+        adapter.prepare_and_begin(attachment_id=binding['attachment_id'],text='printf target',capture_id='target-only',runtime_ms=10000)
+        self.assertEqual(target.Screen.sent,['printf target\r'])
+        self.assertFalse(other.Screen.sent)
+    def test_observe_binding_keeps_focus_and_never_activates_or_sends(self):
+        app=Crt();app.focus=app.tabs[0]
+        target=app.tabs[1];original_focus=app.focus
+        adapter=namespace['NativeAdapter'](app)
+        sid=adapter.list_sessions()['sessions'][1]['id']
+        target.Activate=lambda:self.fail('observe binding activated a native Tab')
+        app.Sleep=lambda milliseconds:self.fail('observe binding unexpectedly yielded for activation')
+        binding=adapter.attach(sid,mode='observe')
+        self.assertIs(app.focus,original_focus)
+        self.assertEqual(binding['mode'],'observe')
+        self.assertTrue(all(not tab.Screen.sent for tab in app.tabs))
+    def test_busy_same_tab_refuses_new_execution_binding_without_focus_or_send(self):
+        app=Crt();adapter=namespace['NativeAdapter'](app)
+        ids=[entry['id'] for entry in adapter.list_sessions()['sessions']]
+        binding=adapter.attach(ids[1],expected_prompt='user$')
+        adapter.prepare_and_begin(attachment_id=binding['attachment_id'],text='printf owned',capture_id='owned',runtime_ms=10000)
+        app.focus=app.tabs[0];focus=app.focus;count=len(app.tabs[1].Screen.sent)
+        app.tabs[1].Activate=lambda:self.fail('busy Tab was activated before refusing execution bind')
+        for mode in ('shared','exclusive'):
+            with self.subTest(mode=mode):
+                with self.assertRaisesRegex(Exception,'busy'):
+                    adapter.attach(ids[1],mode=mode,expected_prompt='user$')
+        self.assertIs(app.focus,focus)
+        self.assertEqual(len(app.tabs[1].Screen.sent),count)
+        self.assertIn('owned',adapter.captures)
+
 class InitialPromptStabilityTests(unittest.TestCase):
     def test_attachment_waits_for_trailing_prompt_space_before_binding(self):
         app=Crt();a=namespace['NativeAdapter'](app)
