@@ -972,6 +972,71 @@ class NativeBindingActivationTests(unittest.TestCase):
         self.assertEqual(len(app.tabs[1].Screen.sent),count)
         self.assertIn('owned',adapter.captures)
 
+class NativeDispatchActivationTests(unittest.TestCase):
+    def test_each_dispatch_reselects_retained_target_after_another_binding(self):
+        app=Crt();adapter=namespace['NativeAdapter'](app)
+        ids=[entry['id'] for entry in adapter.list_sessions()['sessions']]
+        target=app.tabs[0];other=app.tabs[1]
+        binding=adapter.attach(ids[0],expected_prompt='user$')
+        adapter.attach(ids[1],expected_prompt='user$')
+        self.assertIs(app.focus,other)
+        app.tabs.reverse()  # The original target now has a different native index.
+        selected=[];original_activate=target.Activate;original_send=target.Screen.Send
+        def activate():
+            selected.append(target);original_activate()
+        def send(text):
+            self.assertIs(app.focus,target,'native Send reached an inactive input lane')
+            self.assertEqual(selected,[target])
+            original_send(text)
+        target.Activate=activate;target.Screen.Send=send
+        result=adapter.prepare_and_begin(attachment_id=binding['attachment_id'],text='printf original',capture_id='original',runtime_ms=10000)
+        self.assertTrue(result['sent'])
+        self.assertEqual(target.Screen.sent,['printf original\r'])
+        self.assertFalse(other.Screen.sent)
+        self.assertIs(adapter.captures['original']['entry']['tab'],target)
+    def test_selection_changing_cursor_or_typed_input_refuses_without_send(self):
+        for change in ('cursor','typed-input'):
+            with self.subTest(change=change):
+                app=Crt();adapter=namespace['NativeAdapter'](app)
+                ids=[entry['id'] for entry in adapter.list_sessions()['sessions']]
+                target=app.tabs[0];other=app.tabs[1]
+                binding=adapter.attach(ids[0],expected_prompt='user$')
+                adapter.attach(ids[1],expected_prompt='user$')
+                def activate():
+                    app.focus=target
+                    if change=='cursor':target.Screen.CurrentColumn-=1
+                    else:target.Screen.text='ready\nuser$ typed-command'
+                target.Activate=activate
+                with self.assertRaisesRegex(Exception,'context_changed'):
+                    adapter.prepare_and_begin(attachment_id=binding['attachment_id'],text='printf must-not-send',capture_id='changed',runtime_ms=10000)
+                self.assertFalse(target.Screen.sent);self.assertFalse(other.Screen.sent)
+                self.assertNotIn('changed',adapter.captures)
+                self.assertFalse(adapter.send_attempted)
+    def test_invalid_prompt_does_not_activate_or_gain_permission_to_send(self):
+        app=Crt();adapter=namespace['NativeAdapter'](app)
+        ids=[entry['id'] for entry in adapter.list_sessions()['sessions']]
+        target=app.tabs[0];other=app.tabs[1]
+        binding=adapter.attach(ids[0],expected_prompt='user$')
+        adapter.attach(ids[1],expected_prompt='user$')
+        target.Activate=lambda:self.fail('invalid prompt selected the dispatch target')
+        with self.assertRaisesRegex(Exception,'prompt_mismatch'):
+            adapter.prepare_and_begin(attachment_id=binding['attachment_id'],text='printf forbidden',capture_id='forbidden',runtime_ms=10000,expected_prompt='not-the-prompt')
+        self.assertIs(app.focus,other)
+        self.assertTrue(all(not tab.Screen.sent for tab in app.tabs))
+        self.assertFalse(adapter.captures)
+    def test_observe_dispatch_cannot_select_target_or_send(self):
+        app=Crt();adapter=namespace['NativeAdapter'](app)
+        ids=[entry['id'] for entry in adapter.list_sessions()['sessions']]
+        target=app.tabs[0];other=app.tabs[1]
+        app.focus=other
+        target.Activate=lambda:self.fail('observe dispatch selected the target')
+        binding=adapter.attach(ids[0],mode='observe')
+        with self.assertRaisesRegex(Exception,'observe'):
+            adapter.prepare_and_begin(attachment_id=binding['attachment_id'],text='printf forbidden',capture_id='observe',runtime_ms=10000)
+        self.assertIs(app.focus,other)
+        self.assertTrue(all(not tab.Screen.sent for tab in app.tabs))
+        self.assertFalse(adapter.captures)
+
 class InitialPromptStabilityTests(unittest.TestCase):
     def test_attachment_waits_for_trailing_prompt_space_before_binding(self):
         app=Crt();a=namespace['NativeAdapter'](app)
