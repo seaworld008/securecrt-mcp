@@ -75,6 +75,6 @@ Updating files does not reload a running bridge. Upgrade when idle, cancel the o
 
 ## Learn more and contribute
 
-[Documentation map](docs/README.md) · [Interfaces](docs/connectors.md) · [Architecture](docs/architecture.md) · [Security model](docs/security-model.md) · [Security reporting](SECURITY.md) · [Support policy](docs/support-policy.md)
+[Documentation map](docs/README.en.md) · [Interfaces](docs/connectors.md) · [Architecture](docs/architecture.md) · [Security model](docs/security-model.md) · [Security reporting](SECURITY.md) · [Support policy](docs/support-policy.md)
 
 Start development with [contributing](CONTRIBUTING.md) and [Agent maintenance](docs/agent-maintenance.md). [Testing](docs/testing.md) and [desktop acceptance](docs/desktop-acceptance.md) separate automated checks from actual native UI, SSH and client approval evidence. Use [GitHub issues](https://github.com/seaworld008/securecrt-mcp/issues) for sanitized bug reports and questions; follow [SECURITY.md](SECURITY.md) for vulnerabilities.

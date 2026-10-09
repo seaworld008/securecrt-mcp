@@ -100,6 +100,20 @@ function run() {
         content.includes("](" + target + ")"),
         name + ": missing navigation " + target,
       );
+    if (english) {
+      const chineseGuidePaths = new Set([
+        "docs/README.md",
+        "docs/installation.md",
+        "docs/agent-usage.md",
+        "docs/clients/codex.md",
+        "docs/clients/claude.md",
+      ]);
+      for (const [, target] of content.matchAll(/\[[^\]]*\]\(([^)]+)\)/g))
+        assert(
+          !chineseGuidePaths.has(target.split("#")[0]),
+          name + ": every guide link must use its English alternative: " + target,
+        );
+    }
     assert(
       content.includes("badge.svg?branch=main"),
       name + ": CI badge must select main",
