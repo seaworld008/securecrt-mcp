@@ -24,4 +24,4 @@
 
 **开发与维护：** 根目录 `AGENTS.md` → [贡献指南](../CONTRIBUTING.md) → [Agent 维护指南](agent-maintenance.md) → 相关架构与契约 → [开发测试](testing.md) → 适用的验收与发布规则。
 
-公开 v0.5.2 的源码早于当前安装器。[安装说明](installation.md)列出发布来源、当前 main 构建和 CI artifact 核对方法。历史验收记录仅证明其中记载的源码、摘要和环境，不能代表当前 main，也不能代表所有看似兼容的设备。
+公开 v0.5.2 的源码早于当前安装器；v0.5.3 发布当前 main。[安装说明](installation.md)列出发布来源、当前 main 构建和 CI artifact 核对方法。历史验收记录仅证明其中记载的源码、摘要和环境，不能代表当前 main，也不能代表所有看似兼容的设备。

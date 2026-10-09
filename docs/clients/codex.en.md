@@ -4,7 +4,7 @@
 
 ## Choose automatic installation or manual registration
 
-Current-main `install` writes only the `securecrt` MCP command/arguments/home in Codex, preserving unrelated configuration, comments and existing approvals/tool restrictions. It uses absolute `CODEX_HOME/config.toml` when set, otherwise the user's `.codex/config.toml`. It adds default startup/tool timeouts only when absent. The public v0.5.2 binary predates this installer; check [source selection](../installation.en.md#1-select-and-verify-the-source) first.
+Current-main `install` writes only the `securecrt` MCP command/arguments/home in Codex, preserving unrelated configuration, comments and existing approvals/tool restrictions. It uses absolute `CODEX_HOME/config.toml` when set, otherwise the user's `.codex/config.toml`. It adds default startup/tool timeouts only when absent. The public v0.5.2 binary predates this installer; v0.5.3 contains current main; check [source selection](../installation.en.md#1-select-and-verify-the-source) first.
 
 For manual registration, keep the verified binary at a stable absolute path and run its `init` with the chosen application home. Inspect existing entries before adding; if `securecrt` already exists, merge only its command, arguments and home, preserving other env keys and approval/tool restrictions.
 

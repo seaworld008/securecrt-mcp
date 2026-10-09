@@ -4,7 +4,7 @@
 
 ## 自动安装或手工注册
 
-当前 main 的 `install` 增量写入 Codex 的 `securecrt` MCP 二进制、参数和应用目录，保留其他配置、注释及既有审批/工具范围。若设置了绝对路径 `CODEX_HOME`，写入其 `config.toml`，否则使用用户的 `.codex/config.toml`。仅在缺失时添加启动/工具超时。公开 v0.5.2 没有此安装入口，先核对[来源](../installation.md#1-select-and-verify-the-source)。
+当前 main 的 `install` 增量写入 Codex 的 `securecrt` MCP 二进制、参数和应用目录，保留其他配置、注释及既有审批/工具范围。若设置了绝对路径 `CODEX_HOME`，写入其 `config.toml`，否则使用用户的 `.codex/config.toml`。仅在缺失时添加启动/工具超时。公开 v0.5.2 没有此安装入口；v0.5.3 包含当前 main，先核对[来源](../installation.md#1-select-and-verify-the-source)。
 
 手工接入时，将已校验二进制保留在稳定绝对路径，用所选应用目录执行其 `init`。先检查已有 MCP；若已有 `securecrt`，仅合并 command、args、home，不覆盖其他 env、审批或工具限制。
 

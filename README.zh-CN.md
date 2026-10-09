@@ -16,6 +16,24 @@ MCP 让 AI 客户端调用你电脑上的本机工具。桌面后端沿用终端
 - OpenSSH 提供 exec / PTY 流，适合日志、分页器和 REPL；桌面后端捕获屏幕，并非原生 PTY。
 - 客户端审批和远端账号权限由操作者掌握；结果未知时先检查，不自动重发命令或确认空闲。
 
+## 架构
+
+```mermaid
+flowchart LR
+    A["MCP 客户端"] --> B["Rust Engine"]
+    B --> C["SecureCRT / Xshell 后端"]
+    C --> D["本机桥接层"]
+    D --> E["已认证的终端 Tab"]
+    B --> F["OpenSSH 后端（显式启用）"]
+    F --> G["持久 ssh / PTY"]
+    G --> H["远端主机"]
+    E --> H
+    I["CLI / JS / PowerShell"] --> J["本机回环 daemon"]
+    J --> B
+```
+
+MCP 客户端通过一个长生命周期 Rust Engine 复用已认证的桌面终端；OpenSSH 是显式启用的独立后端。桥接层只负责原生终端调用和缓冲，命令状态、边界、输出保留与审计由 Rust 管理。
+
 ## 开始使用
 
 **[安装与升级](docs/installation.md)** · [Codex](docs/clients/codex.md) · [Claude Code / Desktop](docs/clients/claude.md) · **[Agent 安装提示词](docs/agent-setup.md)**
@@ -46,7 +64,7 @@ MCP 让 AI 客户端调用你电脑上的本机工具。桌面后端沿用终端
 
 本轮未验证 Linux 桌面 SecureCRT。**源码构建**需要 Rust 1.88+ 和平台链接器；Node 22 用于开发、测试和打包，不是已安装 Windows 终端的运行依赖。macOS 引擎兼容性由当前 SecureCRT 加载器决定，不能根据 shell 的 Python 版本推断。
 
-**发布边界：** 公开 **v0.5.2** 的源码是 [`3c3489b`](https://github.com/seaworld008/securecrt-mcp/commit/3c3489ba267008af2e7bdcc09b0f890c56feb71b)，早于 `install` 和当前 Windows 自包含脚本。最新发布徽章不代表其 ZIP 含有这些功能。请核对包内文件及该包配套文档，不要混用旧二进制与当前适配器。
+**发布边界：** 公开 **v0.5.2** 的源码是 [`3c3489b`](https://github.com/seaworld008/securecrt-mcp/commit/3c3489ba267008af2e7bdcc09b0f890c56feb71b)，早于 `install` 和当前 Windows 自包含脚本。v0.5.3 包含当前 main 的安装入口；请以该版本的源码提交和校验摘要为准。旧 v0.5.2 ZIP 仍不要与当前适配器混用。
 
 需要当前安装流程时，保留最新 main 源码及其配套文档，克隆后记录完整提交：
 

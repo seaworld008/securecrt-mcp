@@ -24,4 +24,4 @@ Start with your intent. This map links the complete English overview, installati
 
 **Development/maintenance:** root `AGENTS.md` → [contributing](../CONTRIBUTING.md) → [Agent maintenance](agent-maintenance.md) → relevant architecture/contract → [testing](testing.md) → applicable acceptance/release rules.
 
-The published v0.5.2 source predates the current installer. [Installation](installation.en.md) records the release source, current-main build and CI artifact checks. Historical receipts certify only their recorded source, hashes and environment, not current main or every compatible-looking device.
+The published v0.5.2 source predates the current installer; v0.5.3 publishes the current main. [Installation](installation.en.md) records the release source, current-main build and CI artifact checks. Historical receipts certify only their recorded source, hashes and environment, not current main or every compatible-looking device.

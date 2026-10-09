@@ -27,6 +27,13 @@
 - Resolve Xshell's script folder through either its native Python getter or
   its Active Scripting string property, avoiding a startup TypeError.
 
+## [0.5.3] - 2026-10-09
+
+- Make Simplified Chinese the primary README and documentation entry while retaining complete English alternatives.
+- Add Agent installation prompts, documentation maps, cross-Agent repository guidance, and maintenance/release boundaries.
+- Clarify current-main installation, Codex/Claude configuration, release provenance, and evidence limits.
+- Harden bilingual documentation, package membership, archive links, and CRLF-compatible validation.
+
 ## [0.5.2] - 2026-10-08
 
 - Reject the unchanged pre-send prompt as completion until capture observes output progress.

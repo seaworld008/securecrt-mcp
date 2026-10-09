@@ -16,6 +16,24 @@ MCP lets an AI client call tools running on your computer. Desktop backends reus
 - Use OpenSSH exec / PTY streams for logs, pagers and REPLs. Desktop backends capture screens; they are not native PTYs.
 - Keep client approvals and remote account permissions under your control. Unknown results require inspection; commands and idle recovery are never retried automatically.
 
+## Architecture
+
+```mermaid
+flowchart LR
+    A["MCP client"] --> B["Rust Engine"]
+    B --> C["SecureCRT / Xshell backend"]
+    C --> D["Native bridge"]
+    D --> E["Authenticated terminal tab"]
+    B --> F["OpenSSH backend (explicit opt-in)"]
+    F --> G["Persistent ssh / PTY"]
+    G --> H["Remote host"]
+    E --> H
+    I["CLI / JS / PowerShell"] --> J["Loopback daemon"]
+    J --> B
+```
+
+The MCP client uses one long-lived Rust Engine to reuse authenticated desktop terminals; OpenSSH is an explicitly selected independent backend. The bridge handles native terminal calls and buffering, while Rust owns command state, boundaries, retained output and auditing.
+
 ## Get started
 
 **[Installation and upgrade](docs/installation.en.md)** · [Codex](docs/clients/codex.en.md) · [Claude Code / Desktop](docs/clients/claude.en.md) · **[Agent setup prompts](docs/agent-setup.md#english-prompt)**
@@ -46,7 +64,7 @@ The paths below describe **current main**. See the [support matrix](docs/support
 
 Linux desktop SecureCRT is unverified in the current desktop matrix. **Source builds** need Rust 1.88+ and a platform linker; Node 22 is for development/testing/packaging, not installed Windows terminal use. macOS engine support is determined by the installed SecureCRT loader, not by your shell's Python version.
 
-**Release boundary:** published **v0.5.2** comes from [`3c3489b`](https://github.com/seaworld008/securecrt-mcp/commit/3c3489ba267008af2e7bdcc09b0f890c56feb71b), before `install` and the current Windows self-contained scripts. The latest-release badge does not imply these features exist in its ZIP. Inspect the archive and its matching documentation; never mix old binaries with current adapters.
+**Release boundary:** published **v0.5.2** comes from [`3c3489b`](https://github.com/seaworld008/securecrt-mcp/commit/3c3489ba267008af2e7bdcc09b0f890c56feb71b), before `install` and the current Windows self-contained scripts. v0.5.3 contains the current-main installer; use that release's source commit and checksums as the authority. Do not mix the old v0.5.2 binary with current adapters.
 
 For the current installation flow, keep the current main checkout and its matching documentation. Clone it and record the full commit:
 

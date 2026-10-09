@@ -1,6 +1,6 @@
 // Windows Active Scripting bridge. ES3 only; native APIs stay on the host thread.
 // This module is also exercised with deterministic native API fixtures.
-var MCP_WINDOWS_VERSION = "0.5.2";
+var MCP_WINDOWS_VERSION = "0.5.3";
 function mcpFail(message) { throw String(message); }
 function mcpError(e) { return String(e.description || e.message || e) + (e.number ? " ("+e.number+")" : ""); }
 function mcpNow() { return new Date().getTime(); }
