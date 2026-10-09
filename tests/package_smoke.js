@@ -43,6 +43,13 @@ function run(binary, target) {
     );
   const members = unzip(bytes),
     expected = manifest(binary, target);
+  for (const guide of [
+    "AGENTS.md",
+    "docs/README.md",
+    "docs/agent-setup.md",
+    "docs/agent-maintenance.md",
+  ])
+    assert(members.has(guide), "archive lacks Agent documentation: " + guide);
   assert.equal(members.size, expected.length);
   for (const e of expected)
     assert(

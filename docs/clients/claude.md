@@ -1,30 +1,71 @@
-> 当前安装与平台入口见[一键安装](../installation.md)。Windows 仅使用 `.js`；Mac 仅保留 `securecrt_bridge.py` 原生层，工具均为 JS/Rust。
-
 # Claude Code / Claude Desktop
 
-Use the native persistent stdio server rather than spawning `run` for every command. Initialize/upgrade and start the installed bridge inside SecureCRT first.
+[Installation](../installation.md) · [Agent setup prompt](../agent-setup.md) · [Documentation map](../README.md)
 
-Claude Code (replace the executable path):
+## Initialize without writing Codex
 
-```powershell
-claude mcp add --transport stdio --scope user securecrt -- "C:\Tools\securecrt-mcp.exe" serve
+**Current `install` always writes Codex configuration; it does not register Claude.** Claude-only users should keep the verified binary at a stable absolute path, set the chosen absolute `SECURECRT_MCP_HOME` and run that binary's `init` instead. This initializes the bridge and application configuration without writing Codex or copying an installed binary. Use `upgrade` for subsequent bridge refreshes, not `init --force`. Follow [installation](../installation.md) for source/package selection, initialization commands and UI bridge loading.
+
+Use a persistent **stdio** server: the selected absolute executable with argument `serve`, not `run` or a daemon invocation per tool call. Both clients must receive the same application home as initialization.
+
+For a Windows custom home, the native terminal process must also inherit that home variable; a Claude env entry does not set it for SecureCRT/Xshell. See the [application-directory instructions](../installation.md#2-choose-the-application-directory-and-client) before loading the script. Preserve existing logged-in terminals.
+
+## Claude Code
+
+Check installed `claude mcp add --help` first. Inspect existing server entries/scopes; merge an existing `securecrt` entry without dropping other env keys or permission settings. For a new entry, replace the placeholder paths:
+
+```sh
+claude mcp add --transport stdio --scope user --env SECURECRT_MCP_HOME=/absolute/path/to/app-home -- securecrt /absolute/path/to/securecrt-mcp serve
 ```
 
-A stdio client JSON example:
+```powershell
+claude mcp add --transport stdio --scope user --env "SECURECRT_MCP_HOME=C:\Tools\securecrt-mcp-home" -- securecrt "C:\Tools\securecrt-mcp.exe" serve
+```
+
+The `--` after `--env` ends option parsing so the server name is not consumed as another environment value. `--scope user` is for Claude Code; it is not a Claude Desktop configuration location. Use the installed client's inspection commands/MCP status to confirm registration, then reload the client as needed. [Official Claude Code MCP instructions](https://code.claude.com/docs/en/mcp)
+
+## Claude Desktop
+
+Locate the MCP configuration for your installed Claude Desktop version through its settings/documentation. Merge this entry under the existing `mcpServers` object; do not replace the file or other servers. Do not paste it into Claude Code's configuration.
+
+Windows JSON example (placeholder paths):
 
 ```json
 {
   "mcpServers": {
     "securecrt": {
       "command": "C:\\Tools\\securecrt-mcp.exe",
-      "args": ["serve"]
+      "args": ["serve"],
+      "env": {
+        "SECURECRT_MCP_HOME": "C:\\Tools\\securecrt-mcp-home"
+      }
     }
   }
 }
 ```
 
-Merge with existing configuration; do not overwrite unrelated servers. Claude Code scopes/configuration and Claude Desktop configuration locations are separate. See [official Claude Code MCP instructions](https://code.claude.com/docs/en/mcp) for installed-client behavior. A compatible Claude Code server entry can set `timeout` in milliseconds; choose at least75000 for a60-second incremental read plus local overhead, or prefer short wait_ms values. Do not assume progress messages extend hard call limits.
+macOS equivalent:
 
-Recommended tool flow: `connector_list`, inspect target, `connector_open`, then `connector_exec` / `connector_exec_batch`. For continuous logs use the OpenSSH-only `connector_stream_open/read`; `connector_close` stops capture, not remote work. All execution/write/batch tools are non-read-only and potentially destructive. Opening a session does not authorize later commands. Client permissions are configured by the operator and should be tested, including a rejected tool call causing no terminal input.
+```json
+{
+  "mcpServers": {
+    "securecrt": {
+      "command": "/absolute/path/to/securecrt-mcp",
+      "args": ["serve"],
+      "env": {
+        "SECURECRT_MCP_HOME": "/absolute/path/to/app-home"
+      }
+    }
+  }
+}
+```
 
-Do not add a blanket approval rule merely to improve latency. The connector's `client` policy is not an attestation that Claude has approved the operation. SSH account permissions remain authoritative. Raw interactive input is a separate local opt-in.
+JSON escapes Windows backslashes as `\\`; CLI arguments use normal `\`. Absolute paths and the explicit home let a GUI-started client find the same application files without inheriting your installation shell. Restart Desktop and inspect its MCP server/tool status; a valid JSON file alone does not prove loading.
+
+## Use and verify approvals
+
+Run offline doctor, load the native bridge only when authorized and idle, and check online backend diagnostics. Then `connector_list` → verify authorized target → `connector_open` → `connector_read_screen` → `connector_exec` / `connector_exec_batch`. Follow [Agent workflow](../agent-usage.md) for state and pagination. OpenSSH-only stream tools handle logs/REPLs; `connector_close` stops capture, not remote work.
+
+Opening a session does not authorize commands. Client trust/permissions remain operator-owned. On an explicitly authorized idle test tab, request a harmless `printf` and reject it using the client's actual approval controls; verify zero terminal input and corresponding audit dispatch. Do not retry automatically. Separately authorize a new approved operation and check its actual completion/output. If the client offers no rejection control or sends despite rejection, stop and report that gap; do not claim approval verification from MCP annotations.
+
+Do not add blanket approvals to reduce latency. Local `client` policy does not attest to Claude's approval, and remote SSH permissions remain authoritative. Raw input is a separate local opt-in. Use short `wait_ms` values where client call limits require polling; progress messages do not guarantee extension of a hard timeout. Compilation, registration and doctor are separate from real session execution.

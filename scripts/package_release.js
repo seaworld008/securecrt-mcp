@@ -30,6 +30,7 @@ function manifest(binary, target) {
     "CONTRIBUTING.md",
     "SECURITY.md",
     "ROADMAP.md",
+    "AGENTS.md",
   ].map((n) => path.join(root, n));
   files.push(
     ...walk(path.join(root, "docs")).filter((n) => /\.(md|json)$/.test(n)),
