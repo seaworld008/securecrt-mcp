@@ -15,11 +15,11 @@ For a Windows custom home, the native terminal process must also inherit that ho
 Check installed `claude mcp add --help` first. Inspect existing server entries/scopes; merge an existing `securecrt` entry without dropping other env keys or permission settings. For a new entry, replace the placeholder paths:
 
 ```sh
-claude mcp add --transport stdio --scope user --env SECURECRT_MCP_HOME=/absolute/path/to/app-home -- securecrt /absolute/path/to/securecrt-mcp serve
+claude mcp add --transport stdio --scope user --env SECURECRT_MCP_HOME=/absolute/path/to/app-home securecrt -- /absolute/path/to/securecrt-mcp serve
 ```
 
 ```powershell
-claude mcp add --transport stdio --scope user --env "SECURECRT_MCP_HOME=C:\Tools\securecrt-mcp-home" -- securecrt "C:\Tools\securecrt-mcp.exe" serve
+claude mcp add --transport stdio --scope user --env "SECURECRT_MCP_HOME=C:\Tools\securecrt-mcp-home" securecrt -- "C:\Tools\securecrt-mcp.exe" serve
 ```
 
 The `--` after `--env` ends option parsing so the server name is not consumed as another environment value. `--scope user` is for Claude Code; it is not a Claude Desktop configuration location. Use the installed client's inspection commands/MCP status to confirm registration, then reload the client as needed. [Official Claude Code MCP instructions](https://code.claude.com/docs/en/mcp)

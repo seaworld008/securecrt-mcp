@@ -17,11 +17,11 @@ Windows 自定义目录时，原生终端进程也必须继承同一目录变量
 先检查已安装的 `claude mcp add --help`。检查已有服务条目及作用域；合并既有 `securecrt` 条目时，不丢弃其他 env 键或权限设置。新增条目时替换以下占位路径：
 
 ```sh
-claude mcp add --transport stdio --scope user --env SECURECRT_MCP_HOME=/absolute/path/to/app-home -- securecrt /absolute/path/to/securecrt-mcp serve
+claude mcp add --transport stdio --scope user --env SECURECRT_MCP_HOME=/absolute/path/to/app-home securecrt -- /absolute/path/to/securecrt-mcp serve
 ```
 
 ```powershell
-claude mcp add --transport stdio --scope user --env "SECURECRT_MCP_HOME=C:\Tools\securecrt-mcp-home" -- securecrt "C:\Tools\securecrt-mcp.exe" serve
+claude mcp add --transport stdio --scope user --env "SECURECRT_MCP_HOME=C:\Tools\securecrt-mcp-home" securecrt -- "C:\Tools\securecrt-mcp.exe" serve
 ```
 
 `--env` 后的 `--` 结束选项解析，避免服务名被当作另一个环境变量值。`--scope user` 属于 Claude Code，不是 Claude Desktop 配置位置。通过已安装客户端的检查命令/MCP 状态确认注册，按需重新加载客户端。[Claude Code 官方 MCP 说明](https://code.claude.com/docs/en/mcp)
