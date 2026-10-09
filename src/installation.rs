@@ -42,7 +42,8 @@ fn codex_path() -> Result<PathBuf> {
     Ok(PathBuf::from(home.context("HOME/USERPROFILE unavailable")?).join(".codex/config.toml"))
 }
 
-pub(crate) fn configure_codex(text: &str, binary: &Path) -> Result<String> {
+pub(crate) fn configure_codex(text: &str, binary: &Path, app_root: &Path) -> Result<String> {
+    ensure!(app_root.is_absolute(), "application root must be absolute");
     let mut document = text
         .parse::<DocumentMut>()
         .context("invalid Codex TOML; existing configuration preserved")?;
@@ -56,6 +57,12 @@ pub(crate) fn configure_codex(text: &str, binary: &Path) -> Result<String> {
                 server.as_table_like().is_some(),
                 "securecrt MCP entry must be a table; configuration preserved"
             );
+            if let Some(env) = server.get("env") {
+                ensure!(
+                    env.as_table_like().is_some(),
+                    "securecrt MCP env must be a TOML table; configuration preserved"
+                );
+            }
         }
     }
     let table = &mut document["mcp_servers"]["securecrt"];
@@ -63,6 +70,7 @@ pub(crate) fn configure_codex(text: &str, binary: &Path) -> Result<String> {
     let mut arguments = toml_edit::Array::new();
     arguments.push("serve");
     table["args"] = value(arguments);
+    table["env"]["SECURECRT_MCP_HOME"] = value(app_root.to_string_lossy().as_ref());
     if table.get("startup_timeout_sec").is_none() {
         table["startup_timeout_sec"] = value(30);
     }
@@ -109,7 +117,7 @@ pub fn install() -> Result<()> {
     } else {
         String::new()
     };
-    let updated = configure_codex(&old, &destination)?;
+    let updated = configure_codex(&old, &destination, &root)?;
     if old != updated {
         private_write(&path, updated.as_bytes(), false)?;
     }
@@ -129,10 +137,19 @@ mod tests {
     #[test]
     fn config_preserves_comments_and_operator_approval() {
         let old = "# keep comment\nmodel = \"existing\"\n[mcp_servers.other]\ncommand = \"unchanged\"\n[mcp_servers.securecrt]\ncommand = \"old\"\nargs = [\"old\"]\ndefault_tools_approval_mode = \"prompt\"\nenabled_tools = [\"connector_list\"]\n";
-        let new = configure_codex(old, Path::new("/test/private/securecrt-mcp")).unwrap();
+        let new = configure_codex(
+            old,
+            Path::new("/test/private/securecrt-mcp"),
+            Path::new("/test/private/app-root"),
+        )
+        .unwrap();
         assert!(new.contains("# keep comment"));
         let parsed: toml::Value = toml::from_str(&new).unwrap();
         assert_eq!(parsed["model"].as_str(), Some("existing"));
+        assert_eq!(
+            parsed["mcp_servers"]["securecrt"]["env"]["SECURECRT_MCP_HOME"].as_str(),
+            Some("/test/private/app-root")
+        );
         assert_eq!(
             parsed["mcp_servers"]["other"]["command"].as_str(),
             Some("unchanged")
@@ -149,18 +166,59 @@ mod tests {
             1
         );
         assert_eq!(
-            configure_codex(&new, Path::new("/test/private/securecrt-mcp")).unwrap(),
+            configure_codex(
+                &new,
+                Path::new("/test/private/securecrt-mcp"),
+                Path::new("/test/private/app-root")
+            )
+            .unwrap(),
             new
+        );
+    }
+
+    #[test]
+    fn env_keys_and_comments_are_preserved_and_invalid_env_is_rejected() {
+        let old = "[mcp_servers.securecrt]\n# keep env comment\n[mcp_servers.securecrt.env]\nOTHER = \"preserve\"\n";
+        let new = configure_codex(
+            old,
+            Path::new("/bin/securecrt-mcp"),
+            Path::new("/chosen/root"),
+        )
+        .unwrap();
+        assert!(new.contains("# keep env comment"));
+        let parsed: toml::Value = toml::from_str(&new).unwrap();
+        assert_eq!(
+            parsed["mcp_servers"]["securecrt"]["env"]["OTHER"].as_str(),
+            Some("preserve")
+        );
+        assert_eq!(
+            parsed["mcp_servers"]["securecrt"]["env"]["SECURECRT_MCP_HOME"].as_str(),
+            Some("/chosen/root")
+        );
+
+        let invalid = "[mcp_servers.securecrt]\nenv = \"not-a-table\"\ncommand = \"keep\"\n";
+        assert!(configure_codex(invalid, Path::new("/bin"), Path::new("/root")).is_err());
+        let parsed: toml::Value = toml::from_str(invalid).unwrap();
+        assert_eq!(
+            parsed["mcp_servers"]["securecrt"]["command"].as_str(),
+            Some("keep")
         );
     }
     #[test]
     fn new_config_is_additive_and_invalid_toml_is_rejected() {
-        let output = configure_codex("", Path::new("/binary with spaces/securecrt-mcp")).unwrap();
+        let output = configure_codex(
+            "",
+            Path::new("/binary with spaces/securecrt-mcp"),
+            Path::new("/chosen/root"),
+        )
+        .unwrap();
         let parsed: toml::Value = toml::from_str(&output).unwrap();
         assert_eq!(
             parsed["mcp_servers"]["securecrt"]["args"][0].as_str(),
             Some("serve")
         );
-        assert!(configure_codex("this is not TOML", Path::new("/binary")).is_err());
+        assert!(
+            configure_codex("this is not TOML", Path::new("/binary"), Path::new("/root")).is_err()
+        );
     }
 }
