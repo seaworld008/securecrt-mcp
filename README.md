@@ -2,7 +2,7 @@
 
 [简体中文](README.md) · [English](README.en.md) · [文档地图](docs/README.md)
 
-让 AI 助手通过你已经登录的 SSH Tab 工作。**securecrt-mcp** 是本机 Rust MCP Server，面向通过 **SecureCRT 或 Windows Xshell** 管理远端系统的用户，可接入 Codex、Claude 等 MCP 客户端。
+让 AI 助手通过你已经登录的 SSH Tab 工作。**securecrt-mcp** 是本机 Rust MCP Server，面向通过 **SecureCRT 或 Xshell** 管理远端系统的用户，可接入 Codex、Claude 等 MCP 客户端。
 
 [![CI main](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml?query=branch%3Amain)
 [![最新发布](https://img.shields.io/github/v/release/seaworld008/securecrt-mcp?display_name=tag)](https://github.com/seaworld008/securecrt-mcp/releases/latest)
