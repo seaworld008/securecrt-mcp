@@ -2,6 +2,13 @@
 
 # Changelog
 
+## [0.5.4] - 2026-10-13
+
+- Add a Chinese/English Windows quickstart covering installation, native script loading, client registration, daily use, upgrades and troubleshooting.
+- Keep Windows installer results visible; provide path lookup, separate SecureCRT/Xshell checks and initialization without Codex registration. Preserve nonzero errors and existing configuration.
+- Exercise actual packaged CMD launchers in isolated Windows profiles, including repeat installation, configuration/token preservation and failure cases.
+- Fix the Chinese README mirror and include all user entry points in package validation. Terminal execution behavior and protocol remain unchanged.
+
 ## Unreleased — 2026-10-09
 
 - Keep only the minimum macOS SecureCRT Python native layer; remove Windows Python/Xshell adapters and migrate build, package, client, desktop acceptance and regression controllers to JS/Rust. Windows installed users need no Python, Node, pywin32 or Rust.

@@ -45,6 +45,8 @@ function run(binary, target) {
     expected = manifest(binary, target);
   for (const guide of [
     "AGENTS.md",
+    "START-HERE.md",
+    "START-HERE.en.md",
     "docs/README.md",
     "docs/README.en.md",
     "docs/agent-setup.md",
@@ -67,6 +69,9 @@ function run(binary, target) {
     ),
     "non-native Python leaked into bundle",
   );
+  if (target.toLowerCase().includes("windows"))
+    for (const name of ["install.cmd", "initialize-only.cmd", "show-paths.cmd", "check-securecrt.cmd", "check-xshell.cmd"])
+      assert(members.has(name), "missing Windows user entry: " + name);
   if (target.toLowerCase().includes("windows"))
     assert(
       ![...members.keys()].some((n) => n.endsWith(".py")),

@@ -20,6 +20,7 @@ async function run(binary) {
     "file_transport_fault_smoke.js",
     "daemon_smoke.js",
     "installation_env_smoke.js",
+    "windows_bundle_smoke.js",
   ]) {
     console.log("RUN: " + name);
     const result = await command(

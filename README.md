@@ -36,6 +36,8 @@ MCP 客户端通过一个长生命周期 Rust Engine 复用已认证的桌面终
 
 ## 开始使用
 
+**Windows 0.5.4 使用包：** [从这里开始](START-HERE.md)，按“安装 → 终端加载脚本 → 客户端连接 → 检查”操作。包内提供安装、路径查看及 SecureCRT / Xshell 检查入口，无需开发环境。
+
 **[安装与升级](docs/installation.md)** · [Codex](docs/clients/codex.md) · [Claude Code / Desktop](docs/clients/claude.md) · **[Agent 安装提示词](docs/agent-setup.md)**
 
 复制到 Codex、Claude Code 或其他具备本机工具的 Agent：

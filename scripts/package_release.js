@@ -5,7 +5,8 @@ const fs = require("node:fs"),
   crypto = require("node:crypto"),
   assert = require("node:assert/strict"),
   { zip } = require("./zip"),
-  { windowsScripts } = require("./portable_scripts");
+  { windowsScripts } = require("./portable_scripts"),
+  { windowsUserFiles } = require("./windows_bundle");
 const root = path.resolve(__dirname, "..");
 const version = () =>
   fs
@@ -31,6 +32,8 @@ function manifest(binary, target) {
     "SECURITY.md",
     "ROADMAP.md",
     "AGENTS.md",
+    "START-HERE.md",
+    "START-HERE.en.md",
   ].map((n) => path.join(root, n));
   files.push(
     ...walk(path.join(root, "docs")).filter((n) => /\.(md|json)$/.test(n)),
@@ -45,14 +48,7 @@ function manifest(binary, target) {
     ...walk(path.join(root, "scripts")).filter((n) => n.endsWith(".js")),
   );
   const installers = target.toLowerCase().includes("windows")
-    ? [
-        {
-          name: "install.cmd",
-          data: Buffer.from(
-            '@echo off\r\ncd /d "%~dp0"\r\nsecurecrt-mcp.exe install\r\nif errorlevel 1 pause\r\n',
-          ),
-        },
-      ]
+    ? windowsUserFiles()
     : [
         {
           name: "install.command",

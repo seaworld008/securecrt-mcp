@@ -2,7 +2,7 @@
 
 [简体中文](README.md) · [English](README.en.md) · [文档地图](docs/README.md)
 
-让 AI 助手通过你已经登录的 SSH Tab 工作。**securecrt-mcp** 是本机 Rust MCP Server，面向通过 **SecureCRT 或 Windows Xshell** 管理远端系统的用户，可接入 Codex、Claude 等 MCP 客户端。
+让 AI 助手通过你已经登录的 SSH Tab 工作。**securecrt-mcp** 是本机 Rust MCP Server，面向通过 **SecureCRT 或 Xshell** 管理远端系统的用户，可接入 Codex、Claude 等 MCP 客户端。
 
 [![CI main](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/seaworld008/securecrt-mcp/actions/workflows/ci.yml?query=branch%3Amain)
 [![最新发布](https://img.shields.io/github/v/release/seaworld008/securecrt-mcp?display_name=tag)](https://github.com/seaworld008/securecrt-mcp/releases/latest)
@@ -35,6 +35,8 @@ flowchart LR
 MCP 客户端通过一个长生命周期 Rust Engine 复用已认证的桌面终端；OpenSSH 是显式启用的独立后端。桥接层只负责原生终端调用和缓冲，命令状态、边界、输出保留与审计由 Rust 管理。
 
 ## 开始使用
+
+**Windows 0.5.4 使用包：** [从这里开始](START-HERE.md)，按“安装 → 终端加载脚本 → 客户端连接 → 检查”操作。包内提供安装、路径查看及 SecureCRT / Xshell 检查入口，无需开发环境。
 
 **[安装与升级](docs/installation.md)** · [Codex](docs/clients/codex.md) · [Claude Code / Desktop](docs/clients/claude.md) · **[Agent 安装提示词](docs/agent-setup.md)**
 
