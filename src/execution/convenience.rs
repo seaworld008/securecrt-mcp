@@ -35,7 +35,8 @@ impl Engine {
             sha256_hex(serde_json::to_vec(&json!({
                 "session": p.session, "command": p.command, "mode": p.mode,
                 "expected_prompt": p.expected_prompt, "wait_for": p.wait_for,
-                "timeout_ms": timeout, "settle_ms": p.settle_ms.unwrap_or(750)
+                "timeout_ms": timeout, "settle_ms": p.settle_ms.unwrap_or(750),
+                "prefer_native_log": p.prefer_native_log
             }))?)
         );
         // Serialize only preflight/dispatch. Never wait in a queue and type later unexpectedly.
@@ -77,6 +78,7 @@ impl Engine {
                         wait_for: p.wait_for,
                         timeout_ms: Some(timeout),
                         settle_ms: p.settle_ms,
+                        prefer_native_log: p.prefer_native_log,
                     },
                     Some(fingerprint),
                 )
@@ -130,6 +132,7 @@ impl Engine {
                     wait_for: p.wait_for,
                     timeout_ms: Some(timeout),
                     settle_ms: p.settle_ms,
+                    prefer_native_log: p.prefer_native_log,
                 },
                 Some(fingerprint),
             )

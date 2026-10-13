@@ -32,6 +32,8 @@ pub struct ExecParams {
     pub wait_ms: Option<u64>,
     pub max_bytes: Option<usize>,
     pub wait_for: Option<String>,
+    /// Explicit private temporary raw-log opt-in; Windows SecureCRT POSIX only.
+    pub prefer_native_log: Option<bool>,
 }
 #[derive(Clone, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -43,6 +45,7 @@ pub struct BatchParams {
     /// stop (default) or continue on a confirmed nonzero exit. Uncertainty always stops.
     pub on_error: Option<String>,
     pub timeout_ms: Option<u64>,
+    pub prefer_native_log: Option<bool>,
 }
 #[derive(Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]

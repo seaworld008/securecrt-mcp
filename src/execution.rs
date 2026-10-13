@@ -9,6 +9,7 @@ use crate::{
 };
 use anyhow::{Context, Result, ensure};
 mod convenience;
+mod native_log;
 mod persistent;
 use crate::digest::sha256_hex;
 use serde::Serialize;
@@ -60,6 +61,9 @@ struct Job {
     reason: String,
     truncated: bool,
     incomplete: bool,
+    begin_marker_observed: bool,
+    end_marker_observed: bool,
+    capture_transport: Option<String>,
     audit_warning: Option<String>,
     finished: Option<Instant>,
     stop: Arc<AtomicBool>,
@@ -76,6 +80,12 @@ impl Job {
             "automatic_retry": false,
             "exit_code": self.exit_code, "reason": self.reason, "truncated": self.truncated,
             "capture_may_be_incomplete": self.incomplete, "retained_bytes": self.output.len(),
+            "begin_marker_observed": self.begin_marker_observed, "end_marker_observed": self.end_marker_observed,
+            "capture_transport": self.capture_transport,
+            "exit_code_source": if self.exit_code.is_some() { "posix_marker" } else { "unverified" },
+            "execution_state": if self.end_marker_observed { "completed" } else if self.sent == Some(false) { "not_sent" } else if self.state.active() { "awaiting_completion" } else { "unknown" },
+            "capture_state": if self.state.active() { "collecting" } else if self.sent == Some(false) { "not_started" } else if self.incomplete { "may_be_incomplete" } else { "complete" },
+            "dropped_retention_bytes": self.output_bytes.saturating_sub(self.output.len()),
             "observed_output_bytes": self.output_bytes, "audit_warning": self.audit_warning,
             "remote_termination_confirmed": false, "stream": self.stream, "output_start": self.output_start,
             "timing": {"elapsed_us": self.finished.unwrap_or_else(Instant::now).duration_since(self.created).as_micros() as u64,
@@ -271,6 +281,9 @@ impl Engine {
                     reason: "dispatch pending".into(),
                     truncated: false,
                     incomplete: false,
+                    begin_marker_observed: false,
+                    end_marker_observed: false,
+                    capture_transport: None,
                     audit_warning: None,
                     finished: None,
                     stop: stop.clone(),
@@ -326,6 +339,12 @@ impl Engine {
             json!({"session":p.session,"screen_token":p.screen_token,"expected_prompt":p.expected_prompt,
                 "text":text,"capture_id":id,"runtime_ms":timeout})
         };
+        if p.prefer_native_log == Some(true)
+            && p.mode == CaptureMode::Posix
+            && self.bridge.supports_native_log().await.unwrap_or(false)
+        {
+            request["prefer_native_log"] = json!(true);
+        }
         if fast {
             request["completion_marker"] = if p.mode == CaptureMode::Posix {
                 json!(&end)
@@ -416,6 +435,7 @@ impl Engine {
         let mut parser = MarkerParser::new(begin, end);
         let mut prompt_tail = String::new();
         let mut prompt_progress = false;
+        let mut log_reader: Option<native_log::Reader> = None;
         let (mut state, mut code, mut reason) = loop {
             if stop.load(Ordering::SeqCst) {
                 break (
@@ -449,11 +469,42 @@ impl Engine {
                     );
                 }
             };
-            let chunk = response["text"].as_str().unwrap_or("");
-            let (output, exit) = if p.mode == CaptureMode::Posix {
-                parser.feed(chunk)
+            let chunk = if let Some(path) = response["capture_log_file"].as_str() {
+                let read = async {
+                    ensure!(
+                        p.prefer_native_log == Some(true) && p.mode == CaptureMode::Posix,
+                        "unsolicited native log transport"
+                    );
+                    if log_reader.is_none() {
+                        let owned = self.bridge.capture_log_path(&p.session, &id, path).await?;
+                        log_reader = Some(native_log::Reader::new(owned).with_session_encoding(
+                            response["capture_transport"] == "native_session_log",
+                        ));
+                    }
+                    log_reader
+                        .as_mut()
+                        .expect("created above")
+                        .next_batch(response["native_log_stopped"].as_bool() == Some(true))
+                        .await
+                }
+                .await;
+                match read {
+                    Ok(text) => text,
+                    Err(error) => {
+                        break (
+                            State::Unknown,
+                            None,
+                            format!("native log capture lost: {error}; no replay"),
+                        );
+                    }
+                }
             } else {
-                (chunk.to_owned(), None)
+                response["text"].as_str().unwrap_or("").to_owned()
+            };
+            let (output, exit) = if p.mode == CaptureMode::Posix {
+                parser.feed(&chunk)
+            } else {
+                (chunk.clone(), None)
             };
             if let Some(job) = self.inner.lock().await.jobs.get_mut(&id) {
                 job.poll_calls += 1;
@@ -461,13 +512,27 @@ impl Engine {
                 job.incomplete |= response["capture_may_be_incomplete"]
                     .as_bool()
                     .unwrap_or(true);
+                job.incomplete |= log_reader.as_ref().is_some_and(|reader| reader.incomplete);
+                job.begin_marker_observed = parser.started;
+                job.end_marker_observed = parser.done;
+                job.capture_transport = response["capture_transport"].as_str().map(str::to_owned);
             }
             self.changed.notify_waiters();
+            // A fully parsed owned marker remains completion evidence even if
+            // the poll crossed its capture deadline. Retention loss is separate.
+            if let Some(exit) = exit {
+                break (
+                    State::Completed,
+                    Some(exit),
+                    "POSIX end marker observed".to_owned(),
+                );
+            }
             if response["overflow"].as_bool() == Some(true) || parser.overflow {
                 break (
                     State::Unknown,
                     None,
-                    "native chunk/line exceeded capture bound; output incomplete".to_owned(),
+                    "native capture overflow or output anchor changed; output incomplete"
+                        .to_owned(),
                 );
             }
             if response["expired"].as_bool() == Some(true) {
@@ -477,16 +542,9 @@ impl Engine {
                     "native capture deadline exceeded".to_owned(),
                 );
             }
-            if let Some(exit) = exit {
-                break (
-                    State::Completed,
-                    Some(exit),
-                    "POSIX end marker observed".to_owned(),
-                );
-            }
             if p.mode == CaptureMode::Prompt {
                 prompt_progress |= !chunk.is_empty();
-                prompt_tail.push_str(chunk);
+                prompt_tail.push_str(&chunk);
                 let wait_for = p.wait_for.as_deref().unwrap_or("");
                 // The old idle prompt may remain visible before native redraw.
                 // A screen-only match cannot complete a command until capture
@@ -532,23 +590,65 @@ impl Engine {
             state = State::Cancelled;
             code = None;
         }
+        let mut end_request = json!({"capture_id":id,"confirmed_complete":state==State::Completed});
+        if log_reader.is_some() {
+            end_request["capture_log_reader"] = json!(true);
+        }
+        let released = self.bridge.call("end", end_request).await;
+        let release_ok = released.as_ref().is_ok_and(|r| {
+            r["unresolved"].as_bool() == Some(false)
+                && r["restore_errors"].as_array().is_none_or(Vec::is_empty)
+        });
+        if let Some(reader) = &mut log_reader {
+            if released
+                .as_ref()
+                .is_ok_and(|r| r["released"] == true && r["native_log_stopped"] == true)
+            {
+                let drained = async {
+                    loop {
+                        let text = reader.next(true).await?;
+                        if text.is_empty() {
+                            break;
+                        }
+                        let (output, exit) = parser.feed(&text);
+                        if let Some(job) = self.inner.lock().await.jobs.get_mut(&id) {
+                            job.append(&output, self.config.bridge.max_output_bytes);
+                        }
+                        if let Some(exit) = exit {
+                            if state == State::TimedOut {
+                                state = State::Completed;
+                                code = Some(exit);
+                                reason =
+                                    "POSIX end marker observed in final native log flush".into();
+                            }
+                        }
+                    }
+                    let tail = reader.finish();
+                    let (output, _) = parser.feed(&tail);
+                    if let Some(job) = self.inner.lock().await.jobs.get_mut(&id) {
+                        job.append(&output, self.config.bridge.max_output_bytes);
+                        job.begin_marker_observed = parser.started;
+                        job.end_marker_observed = parser.done;
+                        job.incomplete |= reader.incomplete;
+                    }
+                    reader.cleanup().await
+                }
+                .await;
+                if let Err(error) = drained {
+                    if let Some(job) = self.inner.lock().await.jobs.get_mut(&id) {
+                        job.incomplete = true;
+                        job.audit_warning =
+                            Some(format!("native log final drain/cleanup failed: {error}"));
+                    }
+                }
+            }
+        }
         if p.mode == CaptureMode::Posix && state != State::Completed {
             let partial = parser.drain_partial();
             if let Some(job) = self.inner.lock().await.jobs.get_mut(&id) {
                 job.append(&partial, self.config.bridge.max_output_bytes);
             }
         }
-        let released = self
-            .bridge
-            .call(
-                "end",
-                json!({"capture_id": id, "confirmed_complete": state == State::Completed}),
-            )
-            .await;
-        let release_ok = released.as_ref().is_ok_and(|r| {
-            r["unresolved"].as_bool() == Some(false)
-                && r["restore_errors"].as_array().is_none_or(Vec::is_empty)
-        });
         if !release_ok && state == State::Completed {
             reason.push_str("; adapter cleanup requires inspection");
         }
@@ -592,6 +692,7 @@ impl Engine {
                 return;
             }
             job.state = state;
+            job.incomplete |= job.sent != Some(false) && state != State::Completed;
             job.requires_idle_ack = !release;
             job.exit_code = code;
             job.reason = reason.into();

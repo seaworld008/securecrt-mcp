@@ -2,7 +2,7 @@
 
 [简体中文](installation.md) · [English](installation.en.md) · [Documentation map](README.en.md) · [Agent setup prompt](agent-setup.md#english-prompt) · [Codex](clients/codex.en.md) · [Claude](clients/claude.en.md)
 
-Windows users can begin with [Start here](../START-HERE.en.md). Version 0.5.4 bundles include an installer that keeps results visible, path lookup and separate terminal checks. Detailed source, configuration and upgrade instructions follow.
+Windows users can begin with [Start here](../START-HERE.en.md). Version 0.5.5 bundles include an installer that keeps results visible, path lookup and separate terminal checks. Detailed source, configuration and upgrade instructions follow.
 
 This page describes **current main**, not every published ZIP. Desktop bridges reuse existing terminal logins; OpenSSH is a separate, explicitly chosen connection.
 
@@ -124,4 +124,20 @@ Reload the AI client. Discover via `connector_list`, verify backend/title, bind 
 
 With a newly verified binary, Codex users rerun `install`; Claude-only users retain the stable binary path and run `upgrade`. `upgrade` refreshes embedded bridge entries without writing Codex; it does not replace a separately installed binary. Stop clients before replacing a binary in use. Ordinary updates preserve tokens and policy; do not use `init --force`.
 
+On Windows, if the running installed image is locked, `install` places the new exact build alongside it under its SHA-256 and updates only the existing securecrt MCP command to that absolute path, retaining approvals, tool restrictions and other configuration. The running old process is left alone; reload the client to use the new program. Old versions are not automatically deleted. Claude-only registration paths are not automatically migrated and require a verified manual update.
+
 Replacing files does not reload running scripts. At an authorized idle boundary, cancel the old script, load the fixed entry, restart MCP, run doctor and discover/bind new targets. Old handles are invalid. For unresolved work, inspect the original tab before any cancellation or recovery. See [troubleshooting](troubleshooting.md) and [desktop acceptance](desktop-acceptance.md).
+
+## Windows native cancellation and legacy-lock migration
+
+The new Windows bridge uses a short file critical section and generation-bound owner record instead of holding a lock throughout SDK receive calls. An idle script cancelled in the actual UI can be reloaded. Captures or unresolved work prevent stale takeover. A resumed old generation checks ownership before sending and stops without cleaning the new generation's terminal state. The five-second heartbeat grace applies only to generations with no captures or unresolved work.
+
+Some older SecureCRT engines skip script finally during UI cancellation and retain the legacy lease handle. Only after actual UI cancellation and confirmation that the original test tab is idle with no unresolved captures, explicitly record migration:
+
+```powershell
+securecrt-mcp repair-native-host --host-pid VERIFIED_NATIVE_PID --previous-instance VERIFIED_OLD_INSTANCE --confirmed-script-stopped --confirmed-idle
+```
+
+Use identities from the original host diagnostic. The receipt expires in 60 seconds and binds the old generation, host and current source. Reload the installed entry through the actual UI within that window. This never closes the old OS handle, kills a terminal or reconnects SSH. Active/unresolved generations, mismatched identities and link paths are rejected. Replacing installed files alone does not reload scripts.
+
+Unreadable or unpersisted owner state stops the bridge and requires inspection of the original terminal. Missing or corrupt records never establish idle. The short lock is not a reason to delete owner state to bypass remote-command uncertainty.

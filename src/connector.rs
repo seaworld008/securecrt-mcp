@@ -100,6 +100,21 @@ pub struct ConnectorInterruptParams {
 #[serde(deny_unknown_fields)]
 pub struct ConnectorScreenParams {
     pub session_id: String,
+    /// Return only context and a fresh recovery token, omitting screen history.
+    pub context_only: Option<bool>,
+    /// Limit returned screen text to this many trailing lines (1..200).
+    pub tail_lines: Option<usize>,
+    /// UTF-8 byte limit for returned screen text (4..65536).
+    pub max_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectorRestorePromptParams {
+    pub session_id: String,
+    pub confirmed_idle: bool,
+    pub screen_token: String,
+    pub expected_prompt: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -121,6 +136,9 @@ pub struct ConnectorExecParams {
     pub timeout_ms: Option<u64>,
     pub wait_ms: Option<u64>,
     pub max_bytes: Option<usize>,
+    /// Opt-in Windows SecureCRT/Xshell POSIX acceleration. A private temporary log
+    /// contains command echo and output; existing session logging is preserved.
+    pub prefer_native_log: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
@@ -160,6 +178,9 @@ pub struct ConnectorBatchParams {
     /// outcomes always stop the batch.
     pub on_error: Option<String>,
     pub timeout_ms: Option<u64>,
+    /// Explicit native-log preference for this batch; Windows SecureCRT/Xshell
+    /// POSIX only. Includes command echo/output on local disk; defaults off.
+    pub prefer_native_log: Option<bool>,
 }
 
 struct RingBuffer {
@@ -482,6 +503,7 @@ impl ConnectorManager {
                     timeout_ms: p.timeout_ms,
                     wait_ms: None,
                     max_bytes: Some(1024),
+                    prefer_native_log: p.prefer_native_log,
                 })
                 .await
             {

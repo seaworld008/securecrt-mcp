@@ -33,11 +33,11 @@ function fixture(backend) {
         for (let i = r; i <= r2; i++)
           rows.push(
             (i === this.CurrentRow ? this.line : this.lines[i] || "").slice(
-              c - 1,
+              i === r || backend !== "xshell" ? c - 1 : 0,
               c2,
             ),
           );
-        return rows.join("\r\n");
+        return rows.join("\r\n") + (backend === "xshell" && r2 > r ? "\r\n" : "");
       },
       Get2(...args) {
         return this.Get(...args);
@@ -67,7 +67,9 @@ function fixture(backend) {
           }
         }
         this.MatchIndex = index;
-        const text = match < 0 ? this.stream : this.stream.slice(0, match);
+        // Real SecureCRT discards unmatched data on timeout and returns "".
+        // A fake that returns the unmatched stream masks capture loss.
+        const text = match < 0 ? "" : this.stream.slice(0, match);
         this.stream =
           match < 0 ? "" : this.stream.slice(match + args[index - 1].length);
         return text;
@@ -526,6 +528,8 @@ check(
     const f = fixture("xshell"),
       calls = [];
     f.screens.A.WaitForStrings = (patterns, timeout) => {
+      assert.equal(Array.isArray(patterns),false,"native numeric dispatch uses a plain object");
+      assert.equal(patterns.length,1);
       calls.push([patterns, timeout]);
       return 0;
     };
@@ -552,6 +556,13 @@ check(
   () => {
     const f = fixture("xshell"),
       s = f.screens.A;
+    // Older native JScript builds may time out on every multiline pattern.
+    // The fallback must still retain all rows within bounded receive waits.
+    s.WaitForStrings = (patterns, timeout) => {
+      assert.ok(timeout > 0 && timeout <= 50);
+      now += timeout;
+      return 0;
+    };
     const sid = f.call("list_sessions").result.sessions[0].id;
     const aid = f.call("attach", { session: sid }).result.attachment_id;
     f.call("prepare_and_begin", {
@@ -584,7 +595,7 @@ check(
         "bounded buffered output required too many round trips",
       );
     } while (!text.includes("END 0"));
-    const lines = text.replace(/\r\n/g, "\n").split("\n").filter(Boolean);
+    const lines = text.replace(/\r\n/g, "\n").trim().split("\n");
     assert.deepEqual(
       lines.slice(0, -1),
       Array.from(
@@ -595,6 +606,51 @@ check(
     assert.equal(lines[lines.length - 1], "END 0");
   },
 );
+check("Xshell clamped scrollback recovers only its exact marker frame without dropping blank lines",()=>{
+  const f=fixture("xshell"),s=f.screens.A,nonce="0123456789abcdef0123456789abcdef";
+  s.CurrentRow=10290;s.Rows=50;
+  const sid=f.call("list_sessions").result.sessions[0].id,aid=f.call("attach",{session:sid}).result.attachment_id;
+  assert(f.call("prepare_and_begin",{attachment_id:aid,capture_id:"clamped",text:"printf harmless",runtime_ms:10000,completion_marker:"MCP_END_"+nonce}).ok);
+  s.Rows=10290; // Native old builds count scrollback in Rows.
+  s.lines[10290]="command echo still arriving";
+  const pending=f.call("poll_bulk",{capture_id:"clamped"}).result;
+  assert.equal(pending.overflow,false);assert.equal(pending.text,"");
+  s.lines[10286]="MCP_BEGIN_"+nonce;s.lines[10287]="中文";s.lines[10288]="";s.lines[10289]="MCP_END_"+nonce+" 0";
+  const v=f.call("poll_bulk",{capture_id:"clamped"}).result;
+  assert.equal(v.overflow,false);assert.equal(v.capture_may_be_incomplete,false);
+  assert.equal(v.text,"MCP_BEGIN_"+nonce+"\n中文\n\nMCP_END_"+nonce+" 0\n");
+  assert.equal(f.call("poll_bulk",{capture_id:"clamped"}).result.text,"");
+  s.lines[10287]="changed";
+  const changed=f.call("poll_bulk",{capture_id:"clamped"}).result;
+  assert.equal(changed.overflow,true);assert.equal(changed.capture_may_be_incomplete,true);
+  assert.equal(f.state.sends.length,1,"frame changes never replay a command");
+});
+check("Xshell completed rows retain real blank lines and reject changing layouts", () => {
+  const f=fixture("xshell"),s=f.screens.A;
+  const sid=f.call("list_sessions").result.sessions[0].id;
+  const aid=f.call("attach",{session:sid}).result.attachment_id;
+  f.call("prepare_and_begin",{attachment_id:aid,capture_id:"layout",text:"printf harmless",runtime_ms:10000});
+  let reads=0;
+  s.Get=()=>++reads===1?"中文\n\nsecond":"中文\nsecond";
+  assert.equal(f.adapter.completedRows(s,101,1,102,100),"中文\nsecond");
+  assert.equal(reads,3);
+  s.Get=()=>"中文\n\nsecond";
+  assert.equal(f.adapter.completedRows(s,101,1,103,100),"中文\n\nsecond");
+  s.Get=()=>String(++reads);
+  assert.throws(()=>f.adapter.completedRows(s,101,1,102,100),/unstable_capture/);
+  assert.equal(f.state.sends.length,1,"a layout race must never replay the command");
+});
+check("Xshell wait support requires measured timeout behavior and is cached", () => {
+  const old=fixture("xshell");let calls=0;
+  old.screens.A.WaitForStrings=()=>{calls++;return 0;};
+  old.adapter.probeXshellWait(old.screens.A);
+  assert.equal(old.adapter.xshellShortWait,false,"a successful immediate return is not a valid wait");
+  old.adapter.probeXshellWait(old.screens.A);assert.equal(calls,1);
+  const modern=fixture("xshell");
+  modern.screens.A.WaitForStrings=(patterns,ms)=>{now+=ms;return 0;};
+  modern.adapter.probeXshellWait(modern.screens.A);
+  assert.equal(modern.adapter.xshellShortWait,true);
+});
 check(
   "SecureCRT bulk capture preserves 2500 UTF-8 rows and the actual exit suffix",
   () => {
@@ -631,13 +687,13 @@ check(
       assert.ok(Buffer.byteLength(value.text) <= 65536);
       assert.ok(!/[\ud800-\udbff]$/.test(value.text));
       text += value.text;
-      assert.ok(++polls <= 10);
+      assert.ok(++polls <= 25);
     } while (!text.endsWith("END 7\n"));
     assert.deepEqual(text.split("\n").slice(1, -2), rows);
     assert.equal(
       nativeReads,
-      2,
-      "large capture uses two native reads regardless of row count",
+      2502,
+      "line drains preserve delayed data instead of waiting for the final marker",
     );
   },
 );
@@ -677,7 +733,7 @@ check(
   },
 );
 check(
-  "SecureCRT marker prefix does not complete a capture before the real exit suffix",
+  "SecureCRT unmatched native reads report loss rather than inventing a suffix",
   () => {
     const f = fixture("securecrt"),
       s = f.screens.A;
@@ -699,16 +755,16 @@ check(
     s.ReadString = (pattern, timeout) => {
       assert.equal(timeout, 1);
       patterns.push(pattern);
-      const reply = replies.shift();
+      const reply = replies.shift() || ["", 0];
       s.MatchIndex = reply[1];
       return reply[0];
     };
     let text = f.call("poll_bulk", { capture_id: "suffix" }).result.text;
-    assert.equal(text, "body\nEND ");
-    assert.equal(f.call("poll_bulk", { capture_id: "suffix" }).result.text, "");
+    assert.equal(text, "body\n");
     text += f.call("poll_bulk", { capture_id: "suffix" }).result.text;
-    assert.equal(text, "body\nEND 7\n");
-    assert.deepEqual(patterns, ["\nEND ", "\n", "\n"]);
+    assert.equal(text, "body\n7\n");
+    assert.ok(patterns.every(x => x === "\n"));
+    assert.equal(f.adapter.captures.suffix.incomplete, true);
   },
 );
 check(
@@ -801,6 +857,105 @@ check(
     assert.equal(f.call("attach", { session: sid }).ok, true);
   },
 );
+check("SecureCRT: 100 distinct quick captures retain exact completion and never resend", () => {
+  const f = fixture("securecrt"), s = f.screens.A;
+  const sid = f.call("list_sessions").result.sessions[0].id;
+  const aid = f.call("attach", {session: sid}).result.attachment_id;
+  for(let i=0;i<100;i++) {
+    const id="quick-"+i, marker="END_"+i;
+    assert.equal(f.call("prepare_and_begin", {attachment_id:aid,capture_id:id,text:"printf harmless",runtime_ms:10000,completion_marker:marker}).sent,true);
+    s.queue=["BEGIN_"+i,"中文_"+i,marker+" "+(i%2)];
+    let text="";
+    for(let n=0;n<4 && !text.endsWith(marker+" "+(i%2)+"\n");n++) text+=f.call("poll_bulk",{capture_id:id}).result.text;
+    assert.equal(text,"BEGIN_"+i+"\n中文_"+i+"\n"+marker+" "+(i%2)+"\n");
+    assert.equal(f.adapter.captures[id].completionObserved,true);
+    assert.equal(f.call("end",{capture_id:id,confirmed_complete:true}).result.unresolved,false);
+  }
+  assert.equal(f.state.sends.length,100);
+});
+check("SecureCRT: delayed end keeps BEGIN/body across empty native timeout", () => {
+  const f=fixture("securecrt"),s=f.screens.A;
+  const sid=f.call("list_sessions").result.sessions[0].id;
+  const aid=f.call("attach",{session:sid}).result.attachment_id;
+  f.call("prepare_and_begin",{attachment_id:aid,capture_id:"delayed",text:"finite command",runtime_ms:10000,completion_marker:"END"});
+  s.queue=["BEGIN","EARLY"];
+  const first=f.call("poll_bulk",{capture_id:"delayed"}).result;
+  assert.equal(first.text,"BEGIN\nEARLY\n");
+  assert.equal(first.capture_may_be_incomplete,true);
+  s.queue=["LATE","END 0"];
+  assert.equal(f.call("poll_bulk",{capture_id:"delayed"}).result.text,"LATE\nEND 0\n");
+  assert.equal(f.adapter.captures.delayed.completionObserved,true);
+  assert.equal(f.state.sends.length,1);
+});
+check("SecureCRT: timeout discards a partial Unicode line and reports possible loss", () => {
+  const f=fixture("securecrt"),s=f.screens.A;
+  const sid=f.call("list_sessions").result.sessions[0].id;
+  const aid=f.call("attach",{session:sid}).result.attachment_id;
+  f.call("prepare_and_begin",{attachment_id:aid,capture_id:"partial-unicode",text:"finite command",runtime_ms:10000,completion_marker:"END"});
+  s.stream="中文无换行";
+  const r=f.call("poll_bulk",{capture_id:"partial-unicode"}).result;
+  assert.equal(r.text,"");assert.equal(r.capture_may_be_incomplete,true);
+  assert.equal(f.adapter.captures["partial-unicode"].completionObserved,undefined);
+});
+check("SecureCRT: inspected prompt restore sends one Enter and blocks unsafe recovery", () => {
+  const f=fixture("securecrt"),s=f.screens.A;
+  const sid=f.call("list_sessions").result.sessions[0].id;
+  const aid=f.call("attach",{session:sid}).result.attachment_id;
+  f.call("prepare_and_begin",{attachment_id:aid,capture_id:"done-for-restore",text:"finite command",runtime_ms:10000,completion_marker:"END"});
+  s.queue=["BEGIN","END 0"];
+  f.call("poll_bulk",{capture_id:"done-for-restore"});
+  f.call("end",{capture_id:"done-for-restore",confirmed_complete:true});
+  for(const line of ["Password:","user$ typed","--More--",":", ""]) {
+    s.line=line;s.CurrentColumn=line.length+1;
+    if(!line) s.CurrentColumn=1;
+    const view=f.call("read_screen",{session:sid}).result;
+    const p={attachment_id:aid,screen_token:view.screen_token,expected_prompt:"user$",confirmed_idle:true};
+    if(line) assert.equal(f.call("restore_prompt",p).sent,false);
+    else {
+      assert.equal(view.restore_prompt_available,true);
+      assert.equal(f.call("restore_prompt",{...p,confirmed_idle:false}).sent,false);
+      assert.equal(f.call("restore_prompt",p,"other-owner").sent,false);
+      const send=s.Send;s.Send=function(text){send.call(this,text);this.line="user$ ";this.CurrentColumn=7;};
+      const restored=f.call("restore_prompt",p);
+      assert.equal(restored.ok,true);assert.equal(restored.result.recovery_sent,true);
+      assert.deepEqual(f.state.sends.slice(1),["\r"]);
+      assert.equal(f.call("restore_prompt",p).sent,false);
+    }
+  }
+});
+check("SecureCRT: owned attachment renews expired enumeration lease without enumeration", () => {
+  const f=fixture("securecrt");
+  const sid=f.call("list_sessions").result.sessions[0].id;
+  const aid=f.call("attach",{session:sid}).result.attachment_id;
+  now+=120001;
+  const r=f.call("heartbeat",{attachment_id:aid});assert.equal(r.ok,true);
+  assert.ok(r.result.session_lease_expires_ms>now);
+  assert.equal(f.call("read_screen",{session:sid}).ok,true);
+  now+=600001;assert.equal(f.call("heartbeat",{attachment_id:aid}).sent,false);
+  assert.equal(f.state.sends.length,0);
+});
+check("SecureCRT: input snapshot samples cursor after Get2 rendering", () => {
+  const f=fixture("securecrt"),s=f.screens.A;
+  const sid=f.call("list_sessions").result.sessions[0].id;
+  const get=s.Get2;s.Get2=function(...args){this.CurrentColumn=8;return get.apply(this,args);};
+  assert.equal(f.adapter.input(f.adapter.sessions[sid]).cursor_column,8);
+});
+check("SecureCRT: verified millisecond receive pump has no fixed one-second prompt wait", () => {
+  const f=fixture("securecrt"),s=f.screens.A;
+  let waits=0;
+  s.WaitForString=function(pattern,timeout,ignoreCase,milliseconds){
+    assert.equal(ignoreCase,false);assert.equal(milliseconds,true);
+    assert.ok(timeout===1 || timeout===20);now+=timeout;waits++;return false;
+  };
+  const start=now;
+  f.adapter.pumpPrompt(s,"user$ ");f.adapter.pumpPrompt(s,"user$ ");
+  assert.equal(now-start,21);assert.equal(waits,2);
+  assert.equal(f.state.sends.length,0);
+  const legacy=fixture("securecrt");
+  legacy.screens.A.WaitForString=()=>{now+=1000;return false;};
+  legacy.adapter.pumpPrompt(legacy.screens.A,"user$ ");
+  assert.equal(legacy.adapter.millisecondWait,false);
+});
 check(
   "IPC enumeration tolerates a response disappearing during native property reads",
   () => {
@@ -903,6 +1058,7 @@ check(
         bridge_instance: "first",
       });
       assert.equal(typeof owner.owner, "string");
+      assert.equal(held.size,0,"native Cancel must not retain a lifetime COM stream");
       assert.equal(
         ctx.mcpClaimHost(fso, "C:\\ipc", "securecrt", {
           runtime: { host_pid: 123 },
@@ -927,6 +1083,8 @@ check(
         null,
       );
       now += 30001;
+      const paused=JSON.parse(files.get(owner.owner));paused.capture_count=1;
+      files.set(owner.owner,JSON.stringify(paused));
       assert.equal(
         ctx.mcpClaimHost(fso, "C:\\ipc", "securecrt", {
           runtime: { host_pid: 123 },
@@ -935,7 +1093,9 @@ check(
         false,
       );
       assert.equal(JSON.parse(files.get(owner.owner)).bridge_instance, "first");
-      owner.lease.Close();
+      paused.capture_count=0;paused.unresolved_count=1;files.set(owner.owner,JSON.stringify(paused));
+      assert.equal(ctx.mcpClaimHost(fso,"C:\\ipc","securecrt",{runtime:{host_pid:123},bridge_instance:"uncertain"}),false);
+      paused.unresolved_count=0;files.set(owner.owner,JSON.stringify(paused));
       const restarted = ctx.mcpClaimHost(fso, "C:\\ipc", "securecrt", {
         runtime: { host_pid: 123 },
         bridge_instance: "restarted",
@@ -944,6 +1104,14 @@ check(
         JSON.parse(files.get(restarted.owner)).bridge_instance,
         "restarted",
       );
+      assert.throws(()=>ctx.mcpHostRecord(fso,owner,{instance:"first",captures:{},unresolved:{}},true),/ownership_conflict/);
+      assert.equal(held.size,0,"stale owner's rejection releases the critical section");
+      const move=fso.MoveFile;
+      fso.MoveFile=()=>{throw Error("owner replacement denied");};
+      assert.throws(()=>ctx.mcpHostRecord(fso,restarted,{instance:"restarted",captures:{owned:{}},unresolved:{}},true),/state was not persisted/);
+      assert.equal(held.size,0,"failed owner persistence releases its short lock");
+      assert.equal(ctx.mcpClaimHost(fso,"C:\\ipc","securecrt",{runtime:{host_pid:123},bridge_instance:"unsafe-reclaim"}),false,"missing owner after failed replacement never authorizes takeover");
+      fso.MoveFile=move;files.set(restarted.owner,JSON.stringify({bridge_instance:"restarted",last_poll_ms:now,fenced:true,active:true,capture_count:0,unresolved_count:0}));
       assert.equal(
         ctx.mcpClaimHost(fso, "C:\\ipc", "securecrt", {
           runtime: { host_pid: 123 },
@@ -957,6 +1125,111 @@ check(
     }
   },
 );
+check("SecureCRT: raw logging is opt-in and existing user logs remain untouched",()=>{
+  for(const opted of [false,true]) {
+    const f=fixture("securecrt"),native=f.tabs[0].Session,s=f.screens.A;
+    native.Logging=true;native.LogFileName="user-owned.log";
+    native.Log=()=>{throw Error("must not touch user logging");};
+    f.adapter.captureFiles={create:()=>{throw Error("must not create capture");}};
+    const sid=f.call("list_sessions").result.sessions[0].id;
+    const aid=f.call("attach",{session:sid,mode:"shared"}).result.attachment_id;
+    assert(f.call("prepare_and_begin",{attachment_id:aid,capture_id:"owned-log",text:"true",runtime_ms:5000,completion_marker:"END",prefer_native_log:opted}).ok);
+    assert.equal(s.Synchronous,true);s.queue=["END 0"];
+    f.call("poll",{capture_id:"owned-log"});
+    assert(f.call("end",{capture_id:"owned-log",confirmed_complete:true}).ok);
+    assert.equal(native.Logging,true);assert.equal(native.LogFileName,"user-owned.log");
+  }
+});
+function logFixture(failStart=false) {
+  const f=fixture("securecrt"),native=f.tabs[0].Session,files=new Set(),calls=[];
+  native.Logging=false;native.LogFileName="original.log";
+  native.Log=(enabled)=>{calls.push(enabled);native.Logging=enabled;if(enabled&&failStart)throw Error("SDK rejected logging");};
+  f.adapter.captureFiles={create:(id)=>{const p="private/"+id+".capture.raw";files.add(p);return p;},size:()=>128,
+    remove:(p)=>files.delete(p),hasMarker:()=>true};
+  const sid=f.call("list_sessions").result.sessions[0].id;
+  const aid=f.call("attach",{session:sid,mode:"shared"}).result.attachment_id;
+  return {...f,native,files,calls,sid,aid};
+}
+check("SecureCRT: raw capture closes/flushed the owned logger and restores runtime state",()=>{
+  const f=logFixture(),s=f.screens.A;
+  const begin=f.call("prepare_and_begin",{attachment_id:f.aid,capture_id:"owned-log",text:"true",runtime_ms:5000,completion_marker:"END",prefer_native_log:true});
+  assert(begin.ok);assert.equal(s.Synchronous,false);assert.equal(f.native.Logging,true);
+  s.CurrentRow=3;s.line="user$ ";s.lines[2]="END 0";
+  const poll=f.call("poll",{capture_id:"owned-log"}).result;
+  assert.equal(poll.capture_transport,"native_raw_log");assert.equal(poll.native_log_stopped,true);
+  assert.equal(f.native.LogFileName,"original.log");assert.equal(f.native.Logging,false);
+  const end=f.call("end",{capture_id:"owned-log",confirmed_complete:true,capture_log_reader:true}).result;
+  assert.equal(end.unresolved,false);assert.equal(f.files.size,1,"Rust keeps the file through final flush");
+  assert.equal(f.adapter.attachments[f.aid].lastComplete,"owned-log");
+  assert.equal(s.Synchronous,false);assert.deepEqual(f.calls,[true,false]);
+});
+check("SecureCRT: a pre-send log failure rolls back before the receive fallback",()=>{
+  const f=logFixture(true);
+  assert(f.call("prepare_and_begin",{attachment_id:f.aid,capture_id:"owned-log",text:"true",runtime_ms:5000,completion_marker:"END",prefer_native_log:true}).ok);
+  assert.equal(f.native.Logging,false);assert.equal(f.native.LogFileName,"original.log");assert.equal(f.files.size,0);
+  assert.equal(f.state.sends.length,1);assert.equal(f.screens.A.Synchronous,true);
+});
+check("SecureCRT drains its completed log queue before switching to ReadString",()=>{
+  const f=logFixture(),s=f.screens.A;let pumps=0;
+  s.WaitForString=()=>{pumps++;};
+  assert(f.call("prepare_and_begin",{attachment_id:f.aid,capture_id:"raw",text:"true",runtime_ms:5000,completion_marker:"END",prefer_native_log:true}).ok);
+  assert(f.call("end",{capture_id:"raw",confirmed_complete:true,capture_log_reader:true}).ok);
+  s.line="user$ typed";s.CurrentColumn=12;
+  assert.equal(f.call("prepare_and_begin",{attachment_id:f.aid,capture_id:"unsafe",text:"never",runtime_ms:5000}).sent,false);
+  assert.equal(pumps,0,"do not drain operator input");
+  s.line="user$ ";s.CurrentColumn=7;
+  assert(f.call("prepare_and_begin",{attachment_id:f.aid,capture_id:"lines",text:"true",runtime_ms:5000,completion_marker:"NEXT"}).ok);
+  assert(pumps>=2&&pumps<=4,"bounded completion drain and stable-frame validation");assert.equal(f.state.sends.length,2);
+  assert.equal(f.adapter.attachments[f.aid].completedWithLog,false);
+});
+check("SecureCRT: logger watchdog cleans its file and never stops a changed operator log",()=>{
+  for(const changed of [false,true]) {
+    const f=logFixture();
+    assert(f.call("prepare_and_begin",{attachment_id:f.aid,capture_id:"owned-log",text:"true",runtime_ms:5000,completion_marker:"END",prefer_native_log:true}).ok);
+    if(changed) f.native.LogFileName="new-operator.log";
+    const end=f.call("end",{capture_id:"owned-log",confirmed_complete:false}).result;
+    assert.equal(end.unresolved,true);assert.equal(f.screens.A.Synchronous,false);
+    if(changed){assert.equal(f.native.Logging,true);assert.equal(f.native.LogFileName,"new-operator.log");assert.deepEqual(f.calls,[true]);}
+    else {assert.equal(f.native.Logging,false);assert.equal(f.files.size,0);assert.equal(f.native.LogFileName,"original.log");}
+  }
+});
+check("SecureCRT: millisecond scheduler pumps only an explicitly owned raw capture",()=>{
+  const f=logFixture(),s=f.screens.A,waits=[];
+  s.WaitForString=(sentinel,time,ignore,milliseconds)=>{assert.equal(milliseconds,true);waits.push(time);};
+  f.adapter.yieldHost(10);assert.equal(waits.length,0,"idle polling must not consume incoming data");
+  assert(f.call("prepare_and_begin",{attachment_id:f.aid,capture_id:"owned-log",text:"true",runtime_ms:5000,completion_marker:"END",prefer_native_log:true}).ok);
+  f.adapter.yieldHost(15);assert.deepEqual(waits,[1]);
+  f.adapter.yieldHost(1);assert.deepEqual(waits,[1,1]);
+  f.call("end",{capture_id:"owned-log",confirmed_complete:false});
+  f.adapter.yieldHost(10);assert.deepEqual(waits,[1,1]);
+});
+check("Xshell session logging preserves escaped paths, user logging and encoding",()=>{
+  const f=fixture("xshell"),s=f.screens.A,session=f.host.Session,calls=[];
+  let actual="C:\\existing\\user.log",utf8=true;
+  Object.defineProperty(session,"LogFilePath",{get(){return actual.replace(/\\/g,"\\\\");},set(v){actual=String(v).replace(/\\\\/g,"\\");}});
+  session.Logging=false;session.IsUtf8=()=>utf8;
+  session.StartLog=()=>{calls.push("start");session.Logging=true;};
+  session.StopLog=()=>{calls.push("stop");session.Logging=false;};
+  f.adapter.captureFiles={create:()=>"C:\\private\\owned.capture.log",size:()=>128,remove:()=>calls.push("remove"),hasMarker:()=>true};
+  const sid=f.call("list_sessions").result.sessions[0].id,aid=f.call("attach",{session:sid}).result.attachment_id;
+  const begin=(id)=>f.call("prepare_and_begin",{attachment_id:aid,capture_id:id,text:"true",runtime_ms:5000,completion_marker:"END",prefer_native_log:true});
+  assert(begin("owned").ok);assert.equal(s.Synchronous,false);assert.equal(session.Logging,true);
+  s.lines[100]="user$ ";s.lines[101]="END 0";s.CurrentRow=102;s.line="user$ ";
+  const poll=f.call("poll_bulk",{capture_id:"owned"}).result;
+  assert.equal(poll.capture_transport,"native_session_log");assert.equal(poll.native_log_stopped,true);
+  assert.equal(actual,"C:\\existing\\user.log");assert.equal(session.Logging,false);
+  assert(f.call("end",{capture_id:"owned",confirmed_complete:true,capture_log_reader:true}).ok);
+  assert.deepEqual(calls,["start","stop"]);
+  utf8=false;assert(begin("encoding").ok);assert.equal(f.adapter.captures.encoding.logFile,undefined);
+  f.call("end",{capture_id:"encoding",confirmed_complete:true});
+  utf8=true;session.Logging=true;assert(begin("user-log").ok);assert.equal(f.adapter.captures["user-log"].logFile,undefined);
+  f.call("end",{capture_id:"user-log",confirmed_complete:true});assert.equal(session.Logging,true);
+  assert.deepEqual(calls,["start","stop"]);
+  session.Logging=false;assert(begin("operator-change").ok);actual="C:\\operator\\new.log";
+  const ended=f.call("end",{capture_id:"operator-change",confirmed_complete:false});
+  assert.equal(ended.result.unresolved,true);assert.equal(session.Logging,true);assert.equal(actual,"C:\\operator\\new.log");
+  assert.deepEqual(calls,["start","stop","start"]);
+});
 console.log(
   "PASS: " +
     passed +

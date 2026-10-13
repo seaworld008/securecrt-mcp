@@ -1,6 +1,6 @@
 // Windows Active Scripting bridge. ES3 only; native APIs stay on the host thread.
 // This module is also exercised with deterministic native API fixtures.
-var MCP_WINDOWS_VERSION = "0.5.4";
+var MCP_WINDOWS_VERSION = "0.5.5";
 function mcpFail(message) { throw String(message); }
 function mcpError(e) { return String(e.description || e.message || e) + (e.number ? " ("+e.number+")" : ""); }
 function mcpNow() { return new Date().getTime(); }
@@ -135,14 +135,61 @@ McpWindowsAdapter.prototype.metadata=function(tab) {
 };
 McpWindowsAdapter.prototype.screenObject=function(entry) { return this.backend=="xshell" ? this.host.Screen : entry.tab.Screen; };
 McpWindowsAdapter.prototype.get=function(s,r,c,r2,c2) { this.metrics.native_reads++;var value=String(this.backend=="xshell"?s.Get(r,c,r2,c2):s.Get2(r,c,r2,c2));this.observedApis[this.backend=="xshell"?"xsh.Screen.Get":"tab.Screen.Get2"]=true;return value; };
+McpWindowsAdapter.prototype.completedRows=function(s,r,c,r2,c2) {
+    // Get can expose a transient layout while the native renderer finishes a
+    // burst. Compare the same completed range across bounded receive pumps;
+    // never remove blank lines or treat a changing layout as captured bytes.
+    var previous=this.get(s,r,c,r2,c2);
+    for(var attempt=0;attempt<3;attempt++) {
+        this.yieldHost(20);
+        var current=this.get(s,r,c,r2,c2);
+        if(current==previous) return current;
+        previous=current;
+    }
+    mcpFail("unstable_capture: completed rows changed; inspect without replay");
+};
+McpWindowsAdapter.prototype.rollingFrame=function(c,s,row) {
+    // CurrentRow is relative to retained scrollback, not a monotonic stream
+    // cursor. At its limit, a short command can leave it unchanged. Recover
+    // only this operation's exact BEGIN within the current visible frame.
+    // Never search older history or infer overlap from repeated output lines.
+    var marker=/^MCP_END_([a-f0-9]{32})$/.exec(c.marker || "");
+    if(!marker || (!c.frameMode && c.delivered)) return {handled:false};
+    // Xshell Rows includes retained scrollback on older builds. Use the same
+    // bounded 50-row context window as readScreen, never the whole buffer.
+    var first=Math.max(1,row-49),last=row-1;
+    if(last<first) return {handled:false};
+    var frame=this.get(s,first,1,last,Number(s.Columns)).replace(/\r\n/g,"\n"),again=this.get(s,first,1,last,Number(s.Columns)).replace(/\r\n/g,"\n");
+    if(frame!=again || row!=Number(s.CurrentRow)) return {handled:true,text:"",overflow:false};
+    var begin="MCP_BEGIN_"+marker[1]+"\n",at=frame.lastIndexOf(begin);
+    this.record("screen_anchor",c.id,{row:row,start_row:c.row,first_row:first,last_row:last,frame_characters:frame.length,begin_found:at>=0,frame_mode:!!c.frameMode});
+    // At a clamped cursor, the command echo may replace the old prompt before
+    // BEGIN has arrived. Await that exact line instead of declaring overflow
+    // or consuming unowned bytes. A frame that already delivered BEGIN must
+    // retain it and the entire delivered prefix.
+    if(at<0 || (at>0 && frame.charAt(at-1)!="\n")) return {handled:true,overflow:!!c.frameMode,text:""};
+    var owned=frame.substr(at);if(!/\n$/.test(owned)) owned+="\n";
+    if(c.frameMode && owned.indexOf(c.frameText)!=0) return {handled:true,overflow:true,text:""};
+    var text=c.frameMode?owned.substr(c.frameText.length):owned;
+    c.frameMode=true;c.frameText=owned;
+    return {handled:true,overflow:false,text:text};
+};
 McpWindowsAdapter.prototype.input=function(entry) {
-    var s=this.screenObject(entry),r=Number(s.CurrentRow),c=Number(s.CurrentColumn),cols=Number(s.Columns);
-    return {current_line:mcpTrim(this.get(s,r,1,r,cols)),cursor_row:r,cursor_column:c,columns:cols};
+    var s=this.screenObject(entry);
+    for(var attempt=0;attempt<4;attempt++) {
+        var r=Number(s.CurrentRow),cols=Number(s.Columns),line=mcpTrim(this.get(s,r,1,r,cols)),c=Number(s.CurrentColumn);
+        if(r==Number(s.CurrentRow) && cols==Number(s.Columns)) return {current_line:line,cursor_row:r,cursor_column:c,columns:cols};
+    }
+    mcpFail("unstable_screen: rendering changed during input snapshot; nothing sent");
 };
 McpWindowsAdapter.prototype.sameInput=function(a,b) { return mcpJson(a)==mcpJson(b); };
-McpWindowsAdapter.prototype.session=function(id) {
+McpWindowsAdapter.prototype.session=function(id,retained) {
     mcpString(id,"session",512);var e=this.sessions[id];
-    if(!e || e.invalid || (mcpNow()>e.expires && !this.unresolved[id])) mcpFail("stale_session: list and inspect again");
+    if(e && !retained) for(var aid in this.attachments) if(mcpOwn(this.attachments,aid)) {
+        var held=this.attachments[aid];
+        if(held.session==id && held.owner==this.owner && mcpNow()<=held.expires) { retained=true;break; }
+    }
+    if(!e || e.invalid || (mcpNow()>e.expires && !retained && !this.unresolved[id])) mcpFail("stale_session: list and inspect again");
     if(this.backend=="xshell") {
         var current=this.metadata();
         if(current.session_name!=e.metadata.session_name || current.tab_text!=e.metadata.tab_text) {
@@ -158,7 +205,7 @@ McpWindowsAdapter.prototype.session=function(id) {
     }
     e.expires=mcpNow()+120000;return e;
 };
-McpWindowsAdapter.prototype.capabilities=function() { return ["session_leases","screen_tokens","attachments","prepare_and_begin","per_session_capture","interrupt","ack_fresh_view","poll_bulk","file_ipc"]; };
+McpWindowsAdapter.prototype.capabilities=function() { var c=["session_leases","screen_tokens","attachments","prepare_and_begin","per_session_capture","interrupt","ack_fresh_view","poll_bulk","file_ipc","restore_prompt"];if(this.captureFiles)c.push("native_log_capture");return c; };
 McpWindowsAdapter.prototype.ping=function() {
     var apis={},apiErrors={},names=this.backend=="xshell"?
         ["xsh.Session.Connected","xsh.Session.SelectTabName","xsh.Session.SessionName","xsh.Session.TabText","xsh.Session.Sleep","xsh.Screen.Get","xsh.Screen.CurrentRow","xsh.Screen.CurrentColumn","xsh.Screen.Rows","xsh.Screen.Columns","xsh.Screen.Synchronous","xsh.Screen.Send","xsh.Screen.WaitForStrings"]:
@@ -228,24 +275,46 @@ McpWindowsAdapter.prototype.list=function() {
     return {bridge_instance:this.instance,enumeration:this.backend=="xshell"?"named_files":"tabs",sessions:out,capabilities:this.capabilities(),discovery:{errors:errors}};
 };
 McpWindowsAdapter.prototype.readScreen=function(id) {
-    var e=this.session(id),s=this.screenObject(e),value=this.input(e),r=value.cursor_row;
-    var first=this.backend=="xshell"?Math.max(0,r-49):1,last=this.backend=="xshell"?r:Number(s.Rows);
-    var text=this.get(s,first,1,last,value.columns);if(mcpSize(text)>65536) mcpFail("screen_too_large");
+    var e=this.session(id),s=this.screenObject(e),previous=null,value,text,first,last;
+    for(var attempt=0;attempt<4;attempt++) {
+        var r=Number(s.CurrentRow),cols=Number(s.Columns);
+        first=this.backend=="xshell"?Math.max(0,r-49):1;last=this.backend=="xshell"?r:Number(s.Rows);
+        text=this.get(s,first,1,last,cols);if(mcpSize(text)>65536) mcpFail("screen_too_large");
+        value=this.input(e);var frame=text+"\x00"+mcpJson(value);
+        if(frame==previous) break;
+        previous=frame;this.yieldHost(10);this.session(id);
+    }
+    if(attempt==4) mcpFail("unstable_screen: wait for a stable frame; nothing sent");
+    for(var tk in this.tokens) if(mcpOwn(this.tokens,tk) && (this.tokens[tk].session==id || mcpNow()>this.tokens[tk].expires)) delete this.tokens[tk];
     var token=this.unique("screen"),digest=mcpSha256(text+"\x00"+value.cursor_row+":"+value.cursor_column);
     this.tokens[token]={session:id,digest:digest,expires:mcpNow()+30000};
     value.text=text;value.rows=last-first+1;value.session=id;value.screen_token=token;
-    value.token_expires_ms=mcpNow()+30000;value.configured_endpoint=e.metadata;value.unresolved=this.unresolved[id] || null;
+    value.token_expires_ms=mcpNow()+30000;value.session_lease_expires_ms=e.expires;value.configured_endpoint=e.metadata;value.unresolved=this.unresolved[id] || null;
+    value.active_capture=null;value.restore_prompt_available=false;
+    for(var cid in this.captures) if(mcpOwn(this.captures,cid) && this.captures[cid].session==id) value.active_capture={capture_id:cid,completion_marker_observed:!!this.captures[cid].completionObserved};
+    for(var aid in this.attachments) if(mcpOwn(this.attachments,aid)) {
+        var attached=this.attachments[aid];
+        if(attached.session==id && attached.owner==this.owner && attached.lastComplete && !value.unresolved && !value.active_capture && value.current_line=="" && value.cursor_column==1 && value.columns==attached.context.columns) value.restore_prompt_available=true;
+    }
     return value;
 };
 McpWindowsAdapter.prototype.attachment=function(id,write) {
     var a=this.attachments[id];if(!a || mcpNow()>a.expires) mcpFail("stale_attachment");
     if(a.owner!=this.owner) mcpFail("ownership_conflict");if(write && a.mode=="observe") mcpFail("observe attachment does not permit writes");
-    this.session(a.session);a.expires=mcpNow()+600000;return a;
+    this.session(a.session,true);a.expires=mcpNow()+600000;return a;
 };
 McpWindowsAdapter.prototype.attach=function(p) {
     if(mcpCount(this.attachments)>=128) mcpFail("attachment_limit");
     var e=this.session(p.session),input=this.input(e),mode=p.mode || "shared";
     if(mode!="shared" && mode!="exclusive" && mode!="observe") mcpFail("invalid ownership mode");
+    if(mode!="observe") {
+        var stable=0,until=mcpNow()+500;
+        while(mcpNow()<until && stable<2) {
+            this.yieldHost(10);this.session(p.session);var sampled=this.input(e);
+            stable=this.sameInput(input,sampled)?stable+1:0;input=sampled;
+        }
+        if(stable<2) mcpFail("unstable_screen: initial input boundary did not settle; nothing sent");
+    }
     this.ownership(p.session);
     if(mode=="exclusive") for(var other in this.attachments) if(mcpOwn(this.attachments,other)) {
         var existing=this.attachments[other];
@@ -255,26 +324,94 @@ McpWindowsAdapter.prototype.attach=function(p) {
     if(mode!="observe" && p.expected_prompt==null && (!/[#$%]$/.test(input.current_line) || /password|passphrase|--more--/i.test(input.current_line))) mcpFail("input_context_required");
     var id=this.unique("attachment");
     this.attachments[id]={session:p.session,entry:e,context:input,mode:mode,owner:this.owner,expires:mcpNow()+600000,awaiting:false,marker:null};
-    return {attachment_id:id,session:p.session,current_line:input.current_line,mode:mode,configured_endpoint:e.metadata,unresolved:this.unresolved[p.session] || null};
+    return {attachment_id:id,session:p.session,current_line:input.current_line,mode:mode,attachment_expires_ms:this.attachments[id].expires,session_lease_expires_ms:e.expires,configured_endpoint:e.metadata,unresolved:this.unresolved[p.session] || null};
 };
 McpWindowsAdapter.prototype.ownership=function(sid) {
     for(var id in this.attachments) if(mcpOwn(this.attachments,id)) {
         var a=this.attachments[id];if(a.session==sid && a.owner!=this.owner && a.mode=="exclusive" && mcpNow()<a.expires) mcpFail("ownership_conflict");
     }
 };
-McpWindowsAdapter.prototype.beforeSend=function() { if(this.deadline && mcpNow()>=this.deadline) mcpFail("expired request immediately before native send; nothing sent"); };
+McpWindowsAdapter.prototype.beforeSend=function() {
+    if(this.hostRecord) this.hostRecord();
+    if(this.deadline && mcpNow()>=this.deadline) mcpFail("expired request immediately before native send; nothing sent");
+};
+McpWindowsAdapter.prototype.probeXshellWait=function(screen) {
+    if(typeof this.xshellShortWait!="undefined") return;
+    // Probe only inside the owner's capture. Older JScript/OS combinations
+    // return immediately for a positive timeout instead of pumping reception.
+    // Never infer short-wait support from a version string or a successful call.
+    var samples=[],supported=true;
+    for(var i=0;i<3;i++) {
+        var started=mcpNow(),matched=this.waitXshell(screen,"__MCP_WAIT_PROBE_"+this.instance+"__",50),elapsed=mcpNow()-started;
+        samples.push(elapsed);
+        if(matched!==0 || elapsed<45 || elapsed>=250) { supported=false;break; }
+    }
+    this.xshellShortWait=supported;
+    this.metrics.xshell_wait_probe={requested_ms:50,samples_ms:samples,short_wait_supported:supported};
+};
+McpWindowsAdapter.prototype.waitXshell=function(screen,pattern,ms) {
+    // JScript Array index dispatch is broken on some older Xshell/Windows
+    // combinations. The native SDK reads length and numeric properties from
+    // IDispatch; a plain object supplies that contract without a SAFEARRAY.
+    var patterns={length:1};patterns["0"]=pattern;
+    this.observedApis["xsh.Screen.WaitForStrings"]=true;
+    return Number(screen.WaitForStrings(patterns,ms));
+};
 McpWindowsAdapter.prototype.yieldHost=function(ms) {
+    var started=mcpNow(),path="sleep";
     if(this.backend=="xshell" && mcpCount(this.captures)>0) {
+        var asynchronous=true;
+        for(var key in this.captures) if(mcpOwn(this.captures,key) && !this.captures[key].logFile) asynchronous=false;
+        if(asynchronous) {
+            this.host.Session.Sleep(Math.max(1,Math.min(20,ms)));path="owned_log_sleep";
+            this.observedApis["xsh.Session.Sleep"]=true;
+        } else {
         // Synchronous capture requires a native wait to pump incoming output.
         // A never-sent instance-specific sentinel permits a bounded bulk pump;
         // waiting for each newline would turn long output into one RPC per row.
-        this.host.Screen.WaitForStrings(["__MCP_HOST_YIELD_"+this.instance+"__"],Math.max(1,Math.min(20,ms)));
+        this.waitXshell(this.host.Screen,"__MCP_HOST_YIELD_"+this.instance+"__",Math.max(1,Math.min(20,ms)));
+        path="owned_screen_wait";
         this.observedApis["xsh.Screen.WaitForStrings"]=true;
+        }
     } else if(this.backend=="xshell") {
         this.host.Session.Sleep(ms);this.observedApis["xsh.Session.Sleep"]=true;
     } else {
+        // Millisecond waits may consume input. Use them only on this capture's
+        // explicit raw logger (or its already observed completion), never on an
+        // idle/business tab or a synchronous ReadString capture.
+        var logged=null;
+        for(var key in this.captures) if(mcpOwn(this.captures,key)) {
+            var candidate=this.captures[key];
+            if(candidate.logFile && (!candidate.logStopped || candidate.logScreenEnd)) { logged=candidate;break; }
+        }
+        if(logged && this.millisecondWait!==false) try {
+            var screen=this.screenObject(logged.entry),sentinel="__MCP_LOG_YIELD_"+this.instance+"__";
+            if(typeof this.millisecondWait=="undefined") {
+                screen.WaitForString(sentinel,1,false,true);this.millisecondWait=mcpNow()-started<250;
+            } else screen.WaitForString(sentinel,Math.max(1,Math.min(20,ms)),false,true);
+            this.observedApis["tab.Screen.WaitForString"]=true;this.metrics.native_reads++;
+            this.metrics.last_host_yield={requested_ms:ms,elapsed_ms:mcpNow()-started,transport:"owned_log_wait"};return;
+        } catch(unsupported) { this.millisecondWait=false; }
         this.host.Sleep(ms);this.observedApis["crt.Sleep"]=true;
     }
+    this.metrics.last_host_yield={requested_ms:ms,elapsed_ms:mcpNow()-started,transport:path};
+};
+McpWindowsAdapter.prototype.pumpPrompt=function(screen,prompt) {
+    // WaitForString's fourth argument selects milliseconds on supported SDKs.
+    // This is a receive-only pump AFTER owned completion, never a probe send.
+    // Legacy engines keep the bounded one-second fallback.
+    if(this.millisecondWait!==false) try {
+        if(typeof this.millisecondWait=="undefined") {
+            var start=mcpNow();
+            screen.WaitForString("__MCP_WAIT_UNIT_"+this.instance+"__",1,false,true);
+            this.millisecondWait=mcpNow()-start<250;
+            this.observedApis["tab.Screen.WaitForString"]=true;this.metrics.native_reads++;return;
+        }
+        screen.WaitForString(prompt,20,false,true);
+        this.millisecondWait=true;this.observedApis["tab.Screen.WaitForString"]=true;
+        this.metrics.native_reads++;return;
+    } catch(error) { this.millisecondWait=false; }
+    screen.ReadString(prompt,1);this.observedApis["tab.Screen.ReadString"]=true;this.metrics.native_reads++;
 };
 
 McpWindowsAdapter.prototype.context=function(a) {
@@ -295,11 +432,12 @@ McpWindowsAdapter.prototype.context=function(a) {
                 // pre-display buffer. Sleep does not consume that buffer.
                 // Pump only a verified blank/owned transition, never new input.
                 var screen=this.screenObject(a.entry);
-                screen.ReadString("__MCP_IDLE_PUMP_"+this.instance+"__",1);
-                this.observedApis["tab.Screen.ReadString"]=true;
+                this.pumpPrompt(screen,a.promptPrefix || "__MCP_IDLE_PUMP_"+this.instance+"__");
             }
         }
-        this.yieldHost(10);
+        if(a.completedWithLog && this.backend=="securecrt" && this.millisecondWait!==false)
+            this.pumpPrompt(this.screenObject(a.entry),"__MCP_COMPLETED_CONTEXT_"+this.instance+"__");
+        else this.yieldHost(10);
     }
     this.metrics.context_rejections++;mcpFail("context_changed: inspect original input boundary; nothing sent");
 };
@@ -316,16 +454,77 @@ McpWindowsAdapter.prototype.begin=function(p) {
     if(/[\u0000-\u001f\u007f]/.test(p.text)) mcpFail("control characters not accepted");
     if(typeof p.runtime_ms!="number" || p.runtime_ms<1000 || p.runtime_ms>3600000 || p.runtime_ms%1) mcpFail("invalid runtime_ms");
     if(p.expected_prompt!=null && this.input(e).current_line!=mcpTrim(p.expected_prompt)) mcpFail("prompt_mismatch");
-    this.context(a);this.session(sid);this.beforeSend();
+    this.context(a);
+    if(this.backend=="securecrt" && a.completedWithLog && p.prefer_native_log!==true) {
+        // Raw logging does not drain the SDK's separate synchronous queue.
+        // Before switching back, consume only this owner's completed transition
+        // and validate the idle boundary again; no new command is sent here.
+        this.pumpPrompt(s,a.marker+" ");this.pumpPrompt(s,a.context.current_line);
+        a.awaiting=true;this.context(a);a.completedWithLog=false;
+        this.record("native_log_receive_transition",a.lastComplete,"verified before send");
+    }
+    this.session(sid);this.beforeSend();
     var c={id:p.capture_id,session:sid,owner:this.owner,entry:e,aid:p.attachment_id,until:mcpNow()+p.runtime_ms,heartbeat:mcpNow(),oldSync:s.Synchronous,oldIgnore:null,marker:p.completion_marker || null,pending:"",row:Number(s.CurrentRow),column:Number(s.CurrentColumn),partial:""};
     c.anchorRow=c.row;c.anchorColumn=c.column;c.anchor=this.get(s,c.row,1,c.row,Math.max(1,c.column-1));
     this.captures[c.id]=c;
     this.record("begin",c.id);
     try {
-        if(this.backend=="securecrt") { c.oldIgnore=s.IgnoreEscape;s.IgnoreEscape=true; }
-        s.Synchronous=true;this.beforeSend();this.sent=true;s.Send(p.text+"\r");this.observedApis[this.backend=="xshell"?"xsh.Screen.Send":"tab.Screen.Send"]=true;
+        if(this.backend=="securecrt") { c.oldIgnore=s.IgnoreEscape;s.IgnoreEscape=false; }
+        var logged=p.prefer_native_log===true && c.marker && this.startNativeLog(c);
+        s.Synchronous=logged?false:true;this.beforeSend();this.sent=true;s.Send(p.text+"\r");this.observedApis[this.backend=="xshell"?"xsh.Screen.Send":"tab.Screen.Send"]=true;
     } catch(err) { this.end({capture_id:c.id,confirmed_complete:false});throw err; }
     return {capture_id:c.id,sent:true};
+};
+McpWindowsAdapter.prototype.startNativeLog=function(c) {
+    if(!this.captureFiles) return false;
+    var session=this.backend=="xshell"?this.host.Session:c.entry.tab.Session,field=this.backend=="xshell"?"LogFilePath":"LogFileName",oldName,path;
+    // A caller must explicitly opt in: raw logs include command echo on disk.
+    // Never open/read/stop a user-owned log or persist session configuration.
+    try { if(session.Logging || typeof session.Logging=="undefined" || (this.backend=="xshell" && !session.IsUtf8())) return false;oldName=String(session[field]); }
+    catch(unsupported) { return false; }
+    path=this.captureFiles.create(c.id);
+    c.logFile=path;c.oldLogName=oldName;
+    try {
+        session[field]=path;c.logAttempted=true;
+        if(this.backend=="xshell") session.StartLog();else session.Log(true,false,true);
+        if(!session.Logging || !this.sameLogPath(String(session[field]),path)) mcpFail("native log did not start");
+        c.logOwned=true;this.observedApis[this.backend=="xshell"?"xsh.Session.StartLog":"tab.Session.Log"]=true;return true;
+    } catch(error) {
+        // A pre-send failure may fall back only after full rollback succeeds.
+        if(!this.sameLogPath(String(session[field]),path) && (this.backend!="xshell" || session.Logging || String(session[field])!=oldName)) mcpFail("native_log_ownership_changed: nothing sent");
+        if(session.Logging) { if(this.backend=="xshell") session.StopLog();else session.Log(false); }
+        session[field]=oldName;this.captureFiles.remove(path);c.logFile=null;
+        this.record("native_log_fallback",c.id,"SDK logging unavailable; nothing replayed");return false;
+    }
+};
+McpWindowsAdapter.prototype.sameLogPath=function(actual,expected) {
+    // Xshell's JScript getter escapes backslashes; accept only the two exact
+    // representations of this job's local path, never an operator's new log.
+    return actual==expected || (this.backend=="xshell" && actual==expected.replace(/\\/g,"\\\\"));
+};
+McpWindowsAdapter.prototype.stopNativeLog=function(c) {
+    if(!c.logFile || c.logStopped) return;
+    var session=this.backend=="xshell"?this.host.Session:c.entry.tab.Session,field=this.backend=="xshell"?"LogFilePath":"LogFileName";
+    if(!this.sameLogPath(String(session[field]),c.logFile)) mcpFail("native_log_ownership_changed: preserve operator logging");
+    if(session.Logging) { if(this.backend=="xshell") session.StopLog();else session.Log(false); }
+    c.logStopped=true;session[field]=c.oldLogName;
+};
+McpWindowsAdapter.prototype.pollNativeLog=function(c) {
+    var s=this.screenObject(c.entry),overflow=this.captureFiles.size(c.logFile)>16777216;
+    if(!c.logStopped) {
+        // Async display and native logging receive the same session's bytes.
+        // Screen evidence only closes/flushed the logger; Rust still requires
+        // the exact owned BEGIN/END lines from the raw file for completion.
+        this.yieldHost(1);
+        var row=Number(s.CurrentRow),recent=this.get(s,Math.max(1,row-3),1,row,Number(s.Columns)),lines=recent.split(/\r?\n/);
+        for(var i=0;i<lines.length;i++) {
+            var line=mcpTrim(lines[i]);
+            if(line.indexOf(c.marker+" ")==0 && /^\d{1,3}$/.test(line.substr(c.marker.length+1)) && Number(line.substr(c.marker.length+1))<=255) c.logScreenEnd=true;
+        }
+        if(c.logScreenEnd || overflow) this.stopNativeLog(c);
+    }
+    return {text:"",capture_log_file:c.logFile,capture_transport:this.backend=="xshell"?"native_session_log":"native_raw_log",native_log_stopped:!!c.logStopped,
+        overflow:overflow,expired:mcpNow()>=c.until,capture_may_be_incomplete:!!overflow};
 };
 McpWindowsAdapter.prototype.beginScreen=function(p) {
     var token=this.tokens[p.screen_token];delete this.tokens[p.screen_token];
@@ -343,50 +542,71 @@ McpWindowsAdapter.prototype.poll=function(p) {
         for(var k in this.unresolved) if(mcpOwn(this.unresolved,k) && this.unresolved[k].capture_id==p.capture_id) return {text:"",expired:true,overflow:false,capture_may_be_incomplete:true};
         mcpFail("capture_mismatch");
     }
-    if(c.owner!=this.owner) mcpFail("ownership_conflict");this.session(c.session);c.heartbeat=mcpNow();
+    if(c.owner!=this.owner) mcpFail("ownership_conflict");this.session(c.session,true);c.heartbeat=mcpNow();
+    var attached=this.attachments[c.aid];if(attached) attached.expires=mcpNow()+600000;
+    if(c.logFile) return this.pollNativeLog(c);
     var s=this.screenObject(c.entry),text="",overflow=false,started=mcpNow(),limit=Math.min(256,Math.max(1,p.max_reads || 128)),i;
     if(this.backend=="securecrt") {
-        if(!c.pending && c.marker && !c.markerLineDone) {
-            // Match the actual result line, not the marker literal in the
-            // echoed command. ReadString drains native output in one call;
-            // one COM call per row cannot keep up with large UTF-8 captures.
-            var delimiter=c.markerSeen?"\n":"\n"+c.marker+" ";
-            var bulk=String(s.ReadString(delimiter,1)),bulkMatch=Number(s.MatchIndex);
-            this.metrics.native_reads++;this.observedApis["tab.Screen.ReadString"]=true;
-            c.pending=bulk+(bulkMatch==1?delimiter:"");
-            if(bulkMatch==1) { if(c.markerSeen) c.markerLineDone=true;else c.markerSeen=true; }
-        } else if(!c.pending && !c.marker) for(i=0;i<limit;i++) {
+        // ReadString returns EMPTY on timeout even after consuming input.
+        // Waiting for the final marker loses the BEGIN/body of delayed commands.
+        // Drain complete lines in one bounded RPC and disclose unmatched tails.
+        if(!c.pending && !c.markerLineDone) for(i=0;i<limit;i++) {
             var patterns=p.wait_for?[p.wait_for,"\n"]:["\n"];
             var line=String(p.wait_for?s.ReadString(p.wait_for,"\n",1):s.ReadString("\n",1)),match=Number(s.MatchIndex);this.metrics.native_reads++;this.observedApis["tab.Screen.ReadString"]=true;
             if(match>0 && match<=patterns.length) line+=patterns[match-1];
+            else c.incomplete=true;
             c.pending+=line;
-            if(mcpSize(c.pending)>65536 || !match || (c.marker && line.indexOf(c.marker+" ")>=0) || mcpNow()-started>=75) break;
+            if(c.marker && line.replace(/\r?\n$/,"").indexOf(c.marker+" ")==0) c.markerLineDone=true;
+            if(mcpSize(c.pending)>65536 || !match || c.markerLineDone || (p.wait_for && match==1) || mcpNow()-started>=75) break;
         }
         var end=Math.min(c.pending.length,16384);if(end<c.pending.length && /[\ud800-\udbff]/.test(c.pending.charAt(end-1))) end--;
         text=c.pending.substr(0,end);c.pending=c.pending.substr(end);
         if(mcpSize(c.pending)>16777216) { c.pending="";overflow=true; }
     } else {
+        this.probeXshellWait(s);
         if(!c.pending && c.marker && !c.markerPumpDone) {
-            // Keep the native receive loop pumping through complete bursts,
-            // including background Tabs. Tiny sentinel waits can return only
-            // a few rendered rows, making IPC latency throttle SSH reception.
-            var pumped=Number(s.WaitForStrings(["\n"+c.marker+" "],Math.max(1,Math.min(1000,c.until-mcpNow()))));
+            // Keep the conservative burst wait when the native unit probe
+            // fails; short waits otherwise require stable completed-row frames.
+            var pumped=this.waitXshell(s,"\n"+c.marker+" ",Math.max(1,Math.min(this.xshellShortWait?50:1000,c.until-mcpNow())));
             this.observedApis["xsh.Screen.WaitForStrings"]=true;
             if(pumped>0) c.markerPumpDone=true;
         }
         if(!c.pending) for(i=0;i<limit;i++) {
             var row=Number(s.CurrentRow),anchor=this.get(s,c.anchorRow,1,c.anchorRow,Math.max(1,c.anchorColumn-1));
+            if(c.frameMode || row<=c.row || anchor!=c.anchor) {
+                var recovered=this.rollingFrame(c,s,row);
+                if(recovered.handled) { text+=recovered.text;overflow=!!recovered.overflow;break; }
+            }
             if(anchor!=c.anchor || row<c.row) { overflow=true;break; }
             var remaining=16777216-mcpSize(text),width=Math.max(1,Number(s.Columns))*4+2;
             if(remaining<width) break;
             var last=Math.min(row-1,c.row+Math.max(1,Math.floor(remaining/width))-1);
             if(last>=c.row) {
-                var first=this.get(s,c.row,c.column,c.row,Number(s.Columns));
+                if(c.marker) {
+                    // One completed range avoids seams between native calls.
+                    var block=(this.xshellShortWait?this.completedRows:this.get).call(this,s,c.row,1,last,Number(s.Columns));
+                    // Read full-width rows and remove only the saved prefix.
+                    if(c.column>1) {
+                        if(c.row!=c.anchorRow || block.indexOf(c.anchor)!=0) { overflow=true;break; }
+                        block=block.substr(c.anchor.length);
+                    }
+                    // Native multi-row Get already appends CRLF to its last
+                    // row; single-row Get does not. Preserve real blank rows.
+                    text+=block+(/\n$/.test(block)?"":"\n");
+                    if(this.get(s,c.anchorRow,1,c.anchorRow,Math.max(1,c.anchorColumn-1))!=c.anchor) { overflow=true;break; }
+                    c.row=last+1;c.column=1;
+                } else {
+                var first=(this.xshellShortWait?this.completedRows:this.get).call(this,s,c.row,c.column,c.row,Number(s.Columns));
                 if(first.indexOf(c.partial)!=0) { overflow=true;break; }
                 else {
                     text+=first.substr(c.partial.length)+"\n";c.partial="";
-                    if(last>c.row) text+=this.get(s,c.row+1,1,last,Number(s.Columns))+"\n";
+                    if(last>c.row) {
+                        var rest=(this.xshellShortWait?this.completedRows:this.get).call(this,s,c.row+1,1,last,Number(s.Columns));
+                        text+=rest+(/\n$/.test(rest)?"":"\n");
+                    }
+                    if(this.get(s,c.anchorRow,1,c.anchorRow,Math.max(1,c.anchorColumn-1))!=c.anchor) { overflow=true;break; }
                     c.row=last+1;c.column=1;
+                }
                 }
             }
             if(!c.marker && c.row==row && !overflow) {
@@ -404,7 +624,16 @@ McpWindowsAdapter.prototype.poll=function(p) {
         text=c.pending.substr(0,xsEnd);c.pending=c.pending.substr(xsEnd);
     }
     this.record("poll",c.id,{elapsed_ms:mcpNow()-started,characters:text.length,pending_characters:c.pending.length});
-    return {text:text,overflow:overflow,expired:mcpNow()>=c.until,current_line:this.input(c.entry).current_line,pending_bytes:mcpSize(c.pending),capture_may_be_incomplete:overflow};
+    if(c.marker) {
+        var evidence=(c.evidenceTail || "")+text,lines=evidence.split("\n");
+        for(var li=0;li<lines.length-1;li++) {
+            var candidate=lines[li].replace(/\r$/,"");
+            if(candidate.indexOf(c.marker+" ")==0 && /^\d{1,3}$/.test(candidate.substr(c.marker.length+1)) && Number(candidate.substr(c.marker.length+1))<=255) c.completionObserved=true;
+        }
+        c.evidenceTail=lines[lines.length-1].slice(-(c.marker.length+16));
+    }
+    if(text) c.delivered=true;
+    return {text:text,capture_transport:this.backend=="securecrt"?"native_read_string":"screen",overflow:overflow,expired:mcpNow()>=c.until,current_line:p.wait_for?this.input(c.entry).current_line:null,pending_bytes:mcpSize(c.pending),capture_may_be_incomplete:!!(overflow || c.incomplete)};
 };
 McpWindowsAdapter.prototype.end=function(p) {
     var c=this.captures[p.capture_id];if(!c) {
@@ -413,24 +642,33 @@ McpWindowsAdapter.prototype.end=function(p) {
     }
     if(typeof p.confirmed_complete!="boolean") mcpFail("invalid confirmed_complete");delete this.captures[p.capture_id];
     this.record("end",c.id,p.confirmed_complete?"confirmed":"uncertain");
-    var errors=[];
+    var errors=[],s=null;
     try {
-        this.session(c.session);var s=this.screenObject(c.entry);
-        if(this.backend=="securecrt" && p.confirmed_complete && c.marker) {
+        if(c.logFile) {
+            this.stopNativeLog(c);
+            if(p.confirmed_complete) c.completionObserved=this.captureFiles.hasMarker(c.logFile,c.marker);
+        }
+        this.session(c.session);s=this.screenObject(c.entry);
+        if(this.backend=="securecrt" && !c.logFile && p.confirmed_complete && c.marker) {
             // Finish the owned pre-display transition before releasing the
             // attachment; a newly opened attachment cannot safely pump it.
             var line=this.input(c.entry).current_line;
             if(!line || line.indexOf(c.marker+" ")==0) {
-                s.ReadString(c.anchor || "__MCP_IDLE_PUMP_"+this.instance+"__",1);
-                this.observedApis["tab.Screen.ReadString"]=true;
+                this.pumpPrompt(s,c.anchor || "__MCP_IDLE_PUMP_"+this.instance+"__");
             }
         }
-        s.Synchronous=c.oldSync;if(this.backend=="securecrt") s.IgnoreEscape=c.oldIgnore;
     } catch(e) { errors.push("native_state_restore_failed"); }
+    try { if(!s) s=this.screenObject(c.entry);s.Synchronous=c.oldSync;if(this.backend=="securecrt") s.IgnoreEscape=c.oldIgnore; }
+    catch(restore) { errors.push("native_screen_restore_failed"); }
+    if(c.logFile && p.capture_log_reader!==true && !errors.length) try { this.captureFiles.remove(c.logFile); } catch(cleanup) { errors.push("native_log_cleanup_failed"); }
     if(!p.confirmed_complete || errors.length) this.unresolved[c.session]={session:c.session,capture_id:c.id,owner:c.owner,deadline_expired:mcpNow()>=c.until};
-    var a=this.attachments[c.aid];if(a) { a.awaiting=!!(p.confirmed_complete && c.marker && !errors.length);a.marker=c.marker; }
+    var a=this.attachments[c.aid];if(a) {
+        a.awaiting=!!(p.confirmed_complete && c.marker && !errors.length);a.marker=c.marker;
+        a.lastComplete=p.confirmed_complete && c.completionObserved && !errors.length?c.id:null;
+        a.completedWithLog=!!(c.logFile && a.lastComplete);
+    }
     if(c.temporaryAttachment) delete this.attachments[c.aid];
-    return {released:true,unresolved:!!this.unresolved[c.session],restore_errors:errors};
+    return {released:true,unresolved:!!this.unresolved[c.session],restore_errors:errors,capture_log_file:c.logFile || null,native_log_stopped:!!c.logStopped};
 };
 McpWindowsAdapter.prototype.ack=function(p) {
     for(var k in this.captures) if(mcpOwn(this.captures,k) && this.captures[k].session==p.session) mcpFail("busy");
@@ -443,6 +681,35 @@ McpWindowsAdapter.prototype.ack=function(p) {
         var a=this.attachments[k];if(a.owner==this.owner && a.session==p.session) { a.context=this.input(a.entry);a.awaiting=false;a.marker=null; }
     }
     view.unresolved=null;return {idle_acknowledged:true,remote_termination_confirmed:false,screen:view};
+};
+McpWindowsAdapter.prototype.restorePrompt=function(p) {
+    // Explicit recovery sends exactly ONE Enter, never a command or interrupt.
+    // Completion evidence alone cannot prove nobody has typed since then; the
+    // operator must inspect a fresh frame and explicitly confirm idle.
+    if(p.confirmed_idle!==true) mcpFail("idle confirmation required; nothing sent");
+    var a=this.attachment(p.attachment_id,true),sid=a.session;
+    this.ownership(sid);
+    if(this.unresolved[sid] || !a.lastComplete) mcpFail("unresolved: owned completion required; nothing sent");
+    for(var id in this.captures) if(mcpOwn(this.captures,id) && this.captures[id].session==sid) mcpFail("busy");
+    if(mcpTrim(p.expected_prompt)!=a.context.current_line) mcpFail("prompt_mismatch");
+    var token=this.tokens[p.screen_token];delete this.tokens[p.screen_token];
+    var view=this.readScreen(sid),digest=mcpSha256(view.text+"\x00"+view.cursor_row+":"+view.cursor_column);
+    if(!token || token.session!=sid || mcpNow()>token.expires || token.digest!=digest) mcpFail("stale_screen");
+    if(view.columns!=a.context.columns) mcpFail("context_changed: resize requires inspection; nothing sent");
+    if(view.current_line==a.context.current_line && view.cursor_column==a.context.cursor_column) {
+        a.context=this.input(a.entry);a.awaiting=false;
+        return {prompt_restored:true,recovery_sent:false,remote_termination_confirmed:false};
+    }
+    if(view.current_line!="" || view.cursor_column!=1) mcpFail("context_changed: recovery requires an inspected blank input line; nothing sent");
+    var capture=a.lastComplete;a.lastComplete=null;
+    this.beforeSend();this.sent=true;
+    // Retain an interlock before the irreversible send. Any failure requires
+    // fresh explicit acknowledgement; repeating recovery cannot send again.
+    this.unresolved[sid]={session:sid,capture_id:capture,owner:this.owner,recovery_pending:true};
+    this.record("restore_prompt",capture,"one Enter explicitly authorized");
+    this.screenObject(a.entry).Send("\r");a.awaiting=true;
+    this.context(a);delete this.unresolved[sid];
+    return {prompt_restored:true,recovery_sent:true,remote_termination_confirmed:false};
 };
 McpWindowsAdapter.prototype.maintain=function() {
     var now=mcpNow(),k,c;
@@ -476,12 +743,13 @@ McpWindowsAdapter.prototype.dispatch=function(method,p) {
     if(method=="read_screen") return this.readScreen(p.session);
     if(method=="attach") return this.attach(p);
     if(method=="detach") { this.attachment(p.attachment_id,false);delete this.attachments[p.attachment_id];return {detached:true,sent:false,remote_termination_confirmed:false}; }
-    if(method=="heartbeat") { a=this.attachment(p.attachment_id,false);return {attachment_id:p.attachment_id,session:a.session,unresolved:this.unresolved[a.session] || null}; }
+    if(method=="heartbeat") { a=this.attachment(p.attachment_id,false);return {attachment_id:p.attachment_id,session:a.session,attachment_expires_ms:a.expires,session_lease_expires_ms:this.sessions[a.session].expires,unresolved:this.unresolved[a.session] || null}; }
     if(method=="prepare_and_begin") return this.begin(p);
     if(method=="begin") return this.beginScreen(p);
     if(method=="poll" || method=="poll_bulk") return this.poll(p);
     if(method=="end") { c=this.captures[p.capture_id];if(c && c.owner!=this.owner) mcpFail("ownership_conflict");return this.end(p); }
     if(method=="acknowledge_idle") return this.ack(p);
+    if(method=="restore_prompt") return this.restorePrompt(p);
     if(method=="focus_session") { e=this.session(p.session);if(this.backend=="securecrt") e.tab.Activate();return {focused:true}; }
     if(method=="interrupt") {
         c=this.captures[p.capture_id] || this.unresolved[p.session];
@@ -517,8 +785,8 @@ function mcpWriteJson(fso,path,value) {
     var tmp=path+".tmp",handle=fso.CreateTextFile(tmp,true,false);
     try { handle.Write(mcpJson(value)); } finally { handle.Close(); }
     // The previous heartbeat can remain visible while a concurrent reader holds it.
-    try { if(fso.FileExists(path)) fso.DeleteFile(path,true);fso.MoveFile(tmp,path); }
-    catch(e) { if(fso.FileExists(tmp)) fso.DeleteFile(tmp,true); }
+    try { if(fso.FileExists(path)) fso.DeleteFile(path,true);fso.MoveFile(tmp,path);return true; }
+    catch(e) { if(fso.FileExists(tmp)) fso.DeleteFile(tmp,true);return false; }
 }
 // Result consumers remove response files concurrently with native enumeration.
 // A disappearing unrelated file must never terminate the terminal script.
@@ -548,21 +816,38 @@ function mcpClaimHost(fso,root,backend,manifest) {
     // SecureCRT enumerates all tabs in one process. Other processes have separate locks.
     if(backend!="securecrt" || !/^[0-9]+$/.test(String(manifest.runtime.host_pid || ""))) return null;
     var hosts=fso.BuildPath(root,"hosts");if(!fso.FolderExists(hosts)) fso.CreateFolder(hosts);
-    var path=fso.BuildPath(hosts,String(manifest.runtime.host_pid)),owner=fso.BuildPath(path,"owner.json"),leasePath=fso.BuildPath(path,"lease.lock"),lease;
+    var path=fso.BuildPath(hosts,String(manifest.runtime.host_pid)),owner=fso.BuildPath(path,"owner.json"),leasePath=fso.BuildPath(path,"fence.lock"),lease,previous=null;
     if(fso.FolderExists(path)) {
         if(Number(fso.GetFolder(path).Attributes)&1024) mcpFail("invalid native host lock directory");
-        if(Number(fso.GetFolder(path).SubFolders.Count)>0 || Number(fso.GetFolder(path).Files.Count)>2) mcpFail("unexpected files in native host lock directory");
-        var previous=null;try { previous=mcpParse(mcpReadUtf8(owner)); } catch(e) {}
-        // An open native TextStream denies a second writer. The scripting
-        // engine releases COM handles even when Script > Cancel skips finally.
-        // Heartbeat expiry alone is never sufficient evidence to take over.
-        if(fso.FileExists(leasePath)) {
-            try { lease=fso.OpenTextFile(leasePath,2,false); } catch(held) {}
+        if(Number(fso.GetFolder(path).SubFolders.Count)>0 || Number(fso.GetFolder(path).Files.Count)>4) mcpFail("unexpected files in native host lock directory");
+        try { previous=mcpParse(mcpReadUtf8(owner)); }
+        catch(e) { mcpNotify(fso,hosts,"SecureCRT MCP: original host ownership cannot be verified. Inspect the original terminal before recovery.",48);return false; }
+        if(!previous || typeof previous.bridge_instance!="string" || typeof previous.last_poll_ms!="number" || (previous.fenced===true && (typeof previous.capture_count!="number" || typeof previous.unresolved_count!="number"))) {
+            mcpNotify(fso,hosts,"SecureCRT MCP: incomplete native host state; nothing sent.",48);return false;
         }
-        if(!lease && previous && mcpNow()-previous.last_poll_ms<30000) {
+        if(previous && previous.active!==false && mcpNow()-previous.last_poll_ms<5000) {
             mcpNotify(fso,hosts,"SecureCRT MCP \u5df2\u7ecf\u542f\u52a8\uff0c\u65e0\u9700\u91cd\u590d\u8fd0\u884c\u3002\n\u540c\u4e00\u7a97\u53e3\u7684\u6240\u6709\u5df2\u8fde\u63a5 Tab \u7531\u539f\u811a\u672c\u7ba1\u7406\u3002",64);
             return false;
         }
+        // Never reclaim a paused capture or unresolved command from expiry.
+        if(previous && (previous.capture_count>0 || previous.unresolved_count>0)) {
+            mcpNotify(fso,hosts,"SecureCRT MCP: inspect the original capture and acknowledge idle before reload.",48);return false;
+        }
+        // Older bridges held a COM stream throughout the script. Native Cancel
+        // can retain that handle. Migration requires an explicit stopped-script
+        // receipt for that exact generation; expiry never overrides this lock.
+        var legacy=fso.BuildPath(path,"lease.lock");
+        if(previous && previous.fenced!==true && fso.FileExists(legacy)) {
+            var oldLease=null;
+            try { oldLease=fso.OpenTextFile(legacy,2,false);oldLease.Close(); }
+            catch(heldLegacy) {
+                var receipt=null;try { receipt=mcpParse(mcpReadUtf8(fso.BuildPath(path,"legacy-stop.json"))); } catch(e) {}
+                if(!receipt || receipt.confirmed_script_stopped!==true || receipt.confirmed_idle!==true || receipt.bridge_instance!=previous.bridge_instance || receipt.adapter_sha256!=manifest.adapter_sha256 || receipt.host_pid!=manifest.runtime.host_pid || mcpNow()>receipt.expires_ms) {
+                    mcpNotify(fso,hosts,"SecureCRT MCP: the old script retains its lock. Confirm it stopped before repair; do not restart SSH sessions automatically.",48);return false;
+                }
+            }
+        }
+        try { lease=fso.OpenTextFile(leasePath,2,true); } catch(held) {}
         if(!lease) {
             mcpNotify(fso,hosts,"SecureCRT MCP \u5df2\u6709\u811a\u672c\u542f\u52a8\uff0c\u4f46\u6682\u672a\u54cd\u5e94\u3002\n\u8bf7\u5148\u505c\u6b62\u65e7\u811a\u672c\uff0c\u518d\u91cd\u65b0\u8fd0\u884c\u3002",48);
             return false;
@@ -572,9 +857,27 @@ function mcpClaimHost(fso,root,backend,manifest) {
         catch(error) { mcpNotify(fso,hosts,"SecureCRT MCP \u6b63\u5728\u542f\u52a8\uff0c\u65e0\u9700\u91cd\u590d\u8fd0\u884c\u3002",64);return false; }
         lease=fso.OpenTextFile(leasePath,2,true);
     }
-    try { mcpWriteJson(fso,owner,{bridge_instance:manifest.bridge_instance,last_poll_ms:mcpNow()}); }
-    catch(error) { lease.Close();throw error; }
-    return {owner:owner,lease:lease,leasePath:leasePath};
+    var claimed=false;
+    try {
+        // Recheck after acquiring the short critical section: another startup
+        // may have published its generation after our initial observation.
+        var current=null;try { current=mcpParse(mcpReadUtf8(owner)); } catch(e) {}
+        if(!current || (current.active===false || mcpNow()-current.last_poll_ms>=5000) && !(current.capture_count>0 || current.unresolved_count>0)) {
+            if(!mcpWriteJson(fso,owner,{bridge_instance:manifest.bridge_instance,last_poll_ms:mcpNow(),fenced:true,active:true,capture_count:0,unresolved_count:0})) mcpFail("ownership_conflict: native host claim was not persisted");
+            claimed=true;
+        }
+    }
+    finally { lease.Close(); }
+    if(!claimed) { mcpNotify(fso,hosts,"SecureCRT MCP already has an active native generation.",64);return false; }
+    return {owner:owner,leasePath:leasePath};
+}
+function mcpHostRecord(fso,lock,adapter,active) {
+    var lease=fso.OpenTextFile(lock.leasePath,2,false);
+    try {
+        var owner=mcpParse(mcpReadUtf8(lock.owner));
+        if(owner.bridge_instance!=adapter.instance) mcpFail("ownership_conflict: native host generation changed; nothing sent");
+        if(!mcpWriteJson(fso,lock.owner,{bridge_instance:adapter.instance,last_poll_ms:mcpNow(),fenced:true,active:active!==false,capture_count:mcpCount(adapter.captures),unresolved_count:mcpCount(adapter.unresolved)})) mcpFail("ownership_conflict: native host state was not persisted; nothing sent");
+    } finally { lease.Close(); }
 }
 function mcpServeWindows(host,backend,manifest,source) {
     if(mcpSha256(source)!=manifest.adapter_sha256) mcpFail("native bridge source mismatch");
@@ -583,6 +886,34 @@ function mcpServeWindows(host,backend,manifest,source) {
     var lock=mcpClaimHost(fso,root,backend,manifest);if(lock===false) return;
     var dir=fso.BuildPath(fso.BuildPath(root,"instances"),manifest.bridge_instance);mkdir(dir);
     var ready=fso.BuildPath(dir,"ready.json"),adapter=new McpWindowsAdapter(host,backend,manifest.bridge_instance,manifest.runtime,manifest.adapter_sha256);
+    if(lock) adapter.hostRecord=function() { mcpHostRecord(fso,lock,adapter,true); };
+    adapter.captureFiles={
+        create:function(id) {
+            if(!/^[a-f0-9-]{36}$/i.test(id)) mcpFail("invalid native log capture identity");
+            var path=fso.BuildPath(dir,id+(backend=="xshell"?".capture.log":".capture.raw"));
+            if(fso.FileExists(path)) mcpFail("native log capture file already exists; nothing sent");
+            return path;
+        },
+        size:function(path) { return fso.FileExists(path)?Number(fso.GetFile(path).Size):0; },
+        remove:function(path) { if(fso.FileExists(path)) fso.DeleteFile(path,true); },
+        hasMarker:function(path,marker) {
+            // Logging is CLOSED before ADODB opens it. Only ASCII marker bytes
+            // are inspected; Rust handles UTF-8 across arbitrary file chunks.
+            var stream=new ActiveXObject("ADODB.Stream");stream.Type=1;stream.Open();
+            try {
+                stream.LoadFromFile(path);if(stream.Size>16777216) return false;
+                var head=new VBArray(stream.Read(Math.min(3,Number(stream.Size)))).toArray(),utf16=head[0]==255&&head[1]==254?1:head[0]==254&&head[1]==255?2:0;
+                var offset=Math.max(0,Number(stream.Size)-65536);if(utf16 && offset%2) offset++;
+                stream.Position=offset;
+                var bytes=new VBArray(stream.Read()).toArray(),text="",parts=[];
+                if(utf16) { for(var n=0;n+1<bytes.length;n+=2) parts.push(String.fromCharCode(utf16==1?bytes[n]+bytes[n+1]*256:bytes[n]*256+bytes[n+1])); }
+                else for(var n=0;n<bytes.length;n+=2048) parts.push(String.fromCharCode.apply(null,bytes.slice(n,n+2048)));
+                text=parts.join("");var lines=text.split("\n");
+                for(n=1;n<lines.length-1;n++) { var line=lines[n].replace(/\r$/,"");if(line.indexOf(marker+" ")==0 && /^\d{1,3}$/.test(line.substr(marker.length+1)) && Number(line.substr(marker.length+1))<=255) return true; }
+                return false;
+            } finally { stream.Close(); }
+        }
+    };
     if(backend=="xshell") adapter.discoverNames=function() {
         var names=[],path=String(host.Session.Path),folder=fso.GetParentFolderName(path),budget=0;
         function walk(path,depth) {
@@ -605,11 +936,12 @@ function mcpServeWindows(host,backend,manifest,source) {
         mcpWriteJson(fso,fso.BuildPath(root,backend+"-status.json"),{state:"running",backend:backend,version:MCP_WINDOWS_VERSION,script_engine:"JScript",connected_sessions:initial.sessions.length,started_ms:mcpNow()});
         mcpNotifyStarted(fso,dir,backend,initial.sessions.length);
         while(true) {
+            if(lock && mcpParse(mcpReadUtf8(lock.owner)).bridge_instance!=adapter.instance) mcpFail("ownership_conflict: stopped native host generation");
             adapter.maintain();
             if(mcpNow()-heartbeat>=1000) {
                 mcpWriteJson(fso,ready,{bridge_instance:adapter.instance,host_pid:manifest.runtime.host_pid || null,bridge_version:MCP_WINDOWS_VERSION,protocol_version:2,script_engine:"JScript",last_poll_ms:mcpNow()});
                 mcpWriteJson(fso,fso.BuildPath(dir,"diagnostic.json"),{recent_events:adapter.events,metrics:adapter.metrics});
-                if(lock) mcpWriteJson(fso,lock.owner,{bridge_instance:adapter.instance,last_poll_ms:mcpNow()});
+                if(lock) adapter.hostRecord();
                 heartbeat=mcpNow();
             }
             adapter.stage="enumerate IPC requests";
@@ -628,6 +960,7 @@ function mcpServeWindows(host,backend,manifest,source) {
                 if(!request || request.id!=base) continue;
                 adapter.stage="dispatch "+request.method;
                 var response=adapter.request(request,manifest.token);
+                if(lock) adapter.hostRecord();
                 adapter.stage="publish IPC response";
                 mcpWriteJson(fso,fso.BuildPath(dir,base+".response.json"),response);
             }
@@ -636,9 +969,10 @@ function mcpServeWindows(host,backend,manifest,source) {
     } catch(error) {
         mcpFail(adapter.stage+": "+mcpError(error));
     } finally {
-        for(var id in adapter.captures) if(mcpOwn(adapter.captures,id)) adapter.end({capture_id:id,confirmed_complete:false});
+        var stillOwned=true;try { if(lock) stillOwned=mcpParse(mcpReadUtf8(lock.owner)).bridge_instance==adapter.instance; } catch(e) { stillOwned=false; }
+        if(stillOwned) for(var id in adapter.captures) if(mcpOwn(adapter.captures,id)) adapter.end({capture_id:id,confirmed_complete:false});
         try { if(fso.FileExists(ready)) fso.DeleteFile(ready,true); } catch(e) {}
-        try { mcpWriteJson(fso,fso.BuildPath(root,backend+"-status.json"),{state:"stopped",backend:backend,stopped_ms:mcpNow()}); } catch(e) {}
-        try { if(lock) { lock.lease.Close();if(fso.FileExists(lock.owner)) fso.DeleteFile(lock.owner,true);if(fso.FileExists(lock.leasePath)) fso.DeleteFile(lock.leasePath,true);fso.DeleteFolder(fso.GetParentFolderName(lock.owner),false); } } catch(e) {}
+        try { if(stillOwned) mcpWriteJson(fso,fso.BuildPath(root,backend+"-status.json"),{state:"stopped",backend:backend,stopped_ms:mcpNow()}); } catch(e) {}
+        try { if(lock && stillOwned) mcpHostRecord(fso,lock,adapter,false); } catch(e) {}
     }
 }

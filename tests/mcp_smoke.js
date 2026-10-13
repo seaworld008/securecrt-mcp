@@ -59,7 +59,8 @@ async function run(binary) {
     mcp = await new MCP(binary, env).start();
     const tools = (await mcp.request("tools/list")).result.tools,
       names = Object.fromEntries(tools.map((t) => [t.name, t]));
-    assert.equal(tools.length, 17);
+    assert.equal(tools.length, 18);
+    assert(names.connector_restore_prompt.annotations.destructiveHint);
     assert(
       names.connector_exec.annotations.destructiveHint &&
         !names.connector_exec.annotations.readOnlyHint &&
@@ -87,6 +88,21 @@ async function run(binary) {
     const job = await exec("printf hello", { operation_id: "dedup" });
     assert.equal(job.state, "completed");
     assert.equal(job.text, "hello\n");
+    assert.equal(job.begin_marker_observed, true);
+    assert.equal(job.end_marker_observed, true);
+    assert.equal(job.execution_state, "completed");
+    assert.equal(job.exit_code_source, "posix_marker");
+    const screenWire = await mcp.request("tools/call", {name: "connector_read_screen",
+      arguments: {session_id:sid,context_only:true}});
+    assert.equal(screenWire.result.structuredContent.text, "");
+    assert.equal(screenWire.result.structuredContent.screen_token, "test-token");
+    assert.deepEqual(screenWire.result.structuredContent,
+      JSON.parse(screenWire.result.content[0].text));
+    const beforeRestore = bridge.sent.length;
+    const unsupported = await mcp.tool("connector_restore_prompt", {session_id:sid,
+      confirmed_idle:true,screen_token:"test-token",expected_prompt:"user$"}, true);
+    assert.equal(unsupported.error.data.sent,false);
+    assert.equal(bridge.sent.length,beforeRestore);
     const count = bridge.sent.length;
     assert.equal(
       (await exec("printf hello", { operation_id: "dedup" })).command_id,

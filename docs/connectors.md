@@ -36,6 +36,15 @@ backends return an attachment-backed `session_id` and support
 exposes discovery as `xshell_enumeration` and reports probe counts and
 per-name errors in `xshell_discovery`.
 
+Updated Windows bridges additionally advertise `restore_prompt` and support
+`connector_restore_prompt` with explicit idle confirmation, a fresh screen
+token and the original prompt. Only a completed owned capture and a blank
+column-1 line permit one Enter. Unknown/active work, changed identity/width,
+typed input and other owners reject. Mac/older bridges reject without input.
+`connector_read_screen` accepts `context_only`, `tail_lines` and `max_bytes`;
+omitting returned text never weakens the full-frame token check. Successful
+tool replies include `structuredContent` as well as compatible text JSON.
+
 ## OpenSSH command session
 
 Open an `exec` session with an OpenSSH Host alias or destination using
@@ -86,6 +95,14 @@ path. The connector does not add `StrictHostKeyChecking=no`, store passwords,
 or silently fall back to another backend. Select the backend explicitly.
 
 ## Limits and measurements
+
+Windows SecureCRT and Xshell POSIX execution and batches optionally accept `prefer_native_log=true`
+and return `capture_transport`. This uses a private temporary native log of the
+same authenticated session, including command echo on disk; never opt in for
+secrets. It preserves existing user logging, falls back only before send after
+complete rollback, and retains original completion/no-replay checks. Other
+platforms/modes retain their existing path. SecureCRT uses raw UTF-8; Xshell inherits
+its configured log format and supports BOM-tagged UTF-16. See [capture usage](agent-usage.en.md).
 
 Command output is retained up to the configured bounded cache and returned in
 pages of at most 64KiB. PTY streams retain a bounded rolling tail and report a

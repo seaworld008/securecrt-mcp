@@ -18,6 +18,12 @@ pub fn code(message: &str) -> &'static str {
     let lower = message.to_ascii_lowercase();
     if lower.contains("stale_screen") {
         "stale_screen"
+    } else if lower.contains("stale_attachment") {
+        "stale_attachment"
+    } else if lower.contains("ownership_conflict") {
+        "ownership_conflict"
+    } else if lower.contains("unstable_screen") {
+        "unstable_screen"
     } else if lower.contains("stale_session") {
         "stale_session"
     } else if lower.contains("context_changed") {
@@ -63,6 +69,15 @@ pub fn action(error_code: &str) -> &'static str {
         }
         "stale_session" => {
             "List sessions again and explicitly select the intended target; never substitute a tab index."
+        }
+        "stale_attachment" => {
+            "Open a fresh attachment to the verified target. Old results remain unknown; never replay them."
+        }
+        "ownership_conflict" => {
+            "Inspect the owning client; do not take over its attachment or capture."
+        }
+        "unstable_screen" => {
+            "Wait for rendering to settle, then inspect a fresh screen frame; no input was sent."
         }
         "context_changed" => {
             "Inspect the original terminal and wait for the original idle prompt. A new intended request may revalidate the same attachment after redraw; changed prompts require explicit inspection/re-attachment. Never automatically replay or acknowledge unresolved work."

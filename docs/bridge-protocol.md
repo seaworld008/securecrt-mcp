@@ -23,9 +23,37 @@ Additions:
 | prepare_and_begin | Atomically prepare/validate and send once; accepts a session or attachment |
 | poll_bulk | Batch up to128 buffered native reads by default, bounded64KiB response chunks and explicit pending bytes |
 | stream_write | Explicit opt-in input to the owner's active capture |
+| restore_prompt | Windows capability only: explicit confirmed idle, fresh full-frame token, original expected prompt, owned completion, blank column-1 line; one Enter with a failure interlock, never replay or interrupt |
 
 ping advertises persistent_ndjson, poll_bulk, attachments, prepare_and_begin and per_session_capture, plus native-read/connection metrics. Native calls are still single-threaded; capabilities do not claim keyboard interception or raw PTY events.
 
 Captures and unresolved states are keyed by session/capture identity, not globally. Owner checks protect active capture operations; explicit recovery after an owner exits still requires fresh inspected screen context. The native script cannot prove the current nested SSH host or all manual keystrokes.
 
 Run results distinguish sent=false (known pre-send rejection), true (delivery evidence) and null (unknown). End/interrupt/close never claim all remote processes terminated. Retention gaps and output truncation are separate from command exit status.
+
+Windows SecureCRT drains newline-delimited records in bounded batches. Native
+ReadString timeout returns empty after consuming unmatched input, so timeouts
+disclose possible body loss. Completion and timeout are separate: a fully parsed
+owned completion marker can establish exit even if its poll crossed the deadline.
+Post-completion prompt pumping uses a receive-only millisecond WaitForString
+when verified by a bounded unit probe; legacy engines retain the one-second
+fallback. It does not send a shell probe. Capability/source identity must be
+checked after bridge reload; no protocol-version change is implied.
+
+Windows SecureCRT and Xshell support an explicit `prefer_native_log=true` opt-in on
+POSIX prepare/begin. The native adapter starts a unique log only when user
+logging is off; unsupported/pre-send failures can fall back after verified
+rollback. `poll` reports `capture_log_file`, `native_log_stopped` and
+`capture_transport=native_raw_log` (SecureCRT) or `native_session_log` (Xshell). Rust accepts only the current job UUID under
+its authenticated file-IPC instance, rejects links/reparse points, holds a shared
+read handle, decodes UTF-8 (or BOM-tagged UTF-16 for Xshell) incrementally and requires the exact owned markers.
+The file has a 16 MiB bound. `end` closes/flushed the logger and restores runtime
+settings. `capture_log_reader=true` leaves the file for Rust's final drain and
+cleanup; watchdog/native-only cleanup removes its own file directly. This log
+includes command echo on local disk; it is opt-in and does not save configuration
+or read/change existing user logging. A hard host/process stop can leave a file
+or logging state. Millisecond waits on the fast path pump only the owner's raw
+capture or verified completed transition; idle tabs and ReadString captures
+retain the original receive boundary. Xshell logs use a `.capture.log` suffix to
+avoid native extension rewriting and accept only exact escaped/unescaped forms
+of the owned path. Its native log formatting and terminal encoding are preserved.

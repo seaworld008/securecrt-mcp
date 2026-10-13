@@ -97,13 +97,13 @@ async function run(a) {
     receipt.checks.push(
       "reconnected generation rejects old attachment with sent=false",
     );
-    const sid = (
-        await client.tool("connector_open", {
+    const fresh = await client.tool("connector_open", {
           backend,
           target: matches[0].id,
           mode: "exec",
-        })
-      ).session_id,
+        });
+    assert(fresh.session_id,"reconnected SSH input is not ready; inspect authentication before sending");
+    const sid = fresh.session_id,
       marker = "LIFECYCLE_FRESH_" + crypto.randomUUID().replaceAll("-", "");
     let result = await client.tool("connector_exec", {
       session_id: sid,

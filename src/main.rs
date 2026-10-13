@@ -10,6 +10,7 @@ mod fault;
 mod installation;
 mod local_cli;
 mod model;
+mod native_recovery;
 mod policy;
 mod portable;
 #[cfg(test)]
@@ -61,6 +62,17 @@ enum Command {
     },
     /// Install the binary, platform bridge and an additive Codex configuration.
     Install,
+    /// Repair only a legacy native host lock after the original script stopped and its captures are idle.
+    RepairNativeHost {
+        #[arg(long)]
+        host_pid: u32,
+        #[arg(long)]
+        previous_instance: String,
+        #[arg(long)]
+        confirmed_script_stopped: bool,
+        #[arg(long)]
+        confirmed_idle: bool,
+    },
     Serve,
     /// Retain one Engine for separate CLI clients. Foreground only, never auto-spawned.
     Daemon {
@@ -137,6 +149,31 @@ async fn main() -> Result<()> {
             expected_sha256,
         } => {
             portable::initialize_portable(&backend, &manifest, &expected_sha256)?;
+        }
+        Command::RepairNativeHost {
+            host_pid,
+            previous_instance,
+            confirmed_script_stopped,
+            confirmed_idle,
+        } => {
+            ensure!(cfg!(windows), "native host lock repair requires Windows");
+            ensure!(
+                confirmed_script_stopped && confirmed_idle,
+                "confirm the original script stopped and its captures are idle; no repair written"
+            );
+            let secret = load_bridge_secret()?;
+            let root = secret
+                .ipc_dir
+                .context("native host lock repair requires file IPC")?;
+            let value = native_recovery::record(
+                Path::new(&root),
+                host_pid,
+                &previous_instance,
+                &digest::sha256_hex(WINDOWS_BRIDGE_SCRIPT.as_bytes()),
+                confirmed_script_stopped,
+                confirmed_idle,
+            )?;
+            println!("{}", serde_json::to_string(&value)?);
         }
         Command::Serve => {
             let config = Config::load()?;

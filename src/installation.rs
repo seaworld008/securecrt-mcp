@@ -24,8 +24,47 @@ fn private_write(path: &Path, bytes: &[u8], executable: bool) -> Result<()> {
     file.write_all(bytes)?;
     file.sync_all()?;
     drop(file);
-    fs::rename(&temporary, path).context("replace installed file")?;
+    if let Err(error) = fs::rename(&temporary, path) {
+        // Only our create_new staging file is eligible for cleanup.
+        let _ = fs::remove_file(&temporary);
+        return Err(error).context("replace installed file");
+    }
     Ok(())
+}
+
+fn install_binary(bin: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf> {
+    let destination = bin.join(name);
+    reject_symlink(&destination)?;
+    if destination.exists() && fs::read(&destination)? == bytes {
+        return Ok(destination);
+    }
+    match private_write(&destination, bytes, true) {
+        Ok(()) => Ok(destination),
+        Err(error)
+            if cfg!(windows)
+                && error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|e| matches!(e.raw_os_error(), Some(5 | 32 | 33))) =>
+        {
+            // A live MCP image is pinned by Windows. Leave the running client
+            // alone and install this exact build alongside it for the next load.
+            let directory = bin.join(crate::digest::sha256_hex(bytes));
+            reject_symlink(&directory)?;
+            fs::create_dir_all(&directory)?;
+            let versioned = directory.join(name);
+            reject_symlink(&versioned)?;
+            if versioned.exists() {
+                ensure!(
+                    fs::read(&versioned)? == bytes,
+                    "installed digest path contains different bytes"
+                );
+            } else {
+                private_write(&versioned, bytes, true)?;
+            }
+            Ok(versioned)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn codex_path() -> Result<PathBuf> {
@@ -95,16 +134,13 @@ pub fn install() -> Result<()> {
         fs::set_permissions(&bin, fs::Permissions::from_mode(0o700))?;
     }
     let source = std::env::current_exe()?;
-    let destination = bin.join(if cfg!(windows) {
+    let name = if cfg!(windows) {
         "securecrt-mcp.exe"
     } else {
         "securecrt-mcp"
-    });
-    reject_symlink(&destination)?;
+    };
     let bytes = fs::read(&source)?;
-    if !destination.exists() || fs::read(&destination)? != bytes {
-        private_write(&destination, &bytes, true)?;
-    }
+    let destination = install_binary(&bin, name, &bytes)?;
     initialize(false)?;
     let path = codex_path()?;
     reject_symlink(&path)?;
@@ -134,6 +170,30 @@ pub fn install() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn locked_windows_image_installs_exact_build_without_stopping_the_old_client() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let directory = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
+        fs::create_dir(&directory).unwrap();
+        let original = directory.join("securecrt-mcp.exe");
+        fs::write(&original, b"old pinned image").unwrap();
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&original)
+            .unwrap();
+        let updated = install_binary(&directory, "securecrt-mcp.exe", b"new image").unwrap();
+        assert_ne!(updated, original);
+        assert_eq!(fs::read(&original).unwrap(), b"old pinned image");
+        assert_eq!(fs::read(&updated).unwrap(), b"new image");
+        assert_eq!(
+            install_binary(&directory, "securecrt-mcp.exe", b"new image").unwrap(),
+            updated
+        );
+        drop(lock);
+        fs::remove_dir_all(directory).unwrap();
+    }
     #[test]
     fn config_preserves_comments_and_operator_approval() {
         let app_root = std::env::temp_dir().join("securecrt-mcp-install-test-root");

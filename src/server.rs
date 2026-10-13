@@ -24,21 +24,56 @@ impl SecureCrtServer {
         &self.engine
     }
 }
-fn result(value: anyhow::Result<Value>) -> Result<String, McpError> {
+fn result(value: anyhow::Result<Value>) -> Result<rmcp::model::CallToolResult, McpError> {
     value
-        .and_then(|v| serde_json::to_string(&v).map_err(Into::into))
+        .map(rmcp::model::CallToolResult::structured)
         .map_err(|e| McpError::invalid_params(e.to_string(), Some(crate::fault::details(&e))))
 }
 
-fn securecrt_capabilities() -> Value {
-    json!([
+fn project_screen(mut value: Value, p: &crate::connector::ConnectorScreenParams) -> Value {
+    let text = value["text"].as_str().unwrap_or("");
+    let original_bytes = text.len();
+    let mut start = 0;
+    if p.context_only == Some(true) {
+        start = text.len();
+    } else if let Some(lines) = p.tail_lines {
+        start = text
+            .match_indices('\n')
+            .rev()
+            .nth(lines - 1)
+            .map_or(0, |(i, _)| i + 1);
+    }
+    start = start.max(text.len().saturating_sub(p.max_bytes.unwrap_or(65536)));
+    while !text.is_char_boundary(start) {
+        start += 1;
+    }
+    let projected = text[start..].to_owned();
+    value["text"] = json!(projected);
+    value["screen_text_omitted_bytes"] = json!(start);
+    value["screen_text_total_bytes"] = json!(original_bytes);
+    value["screen_text_truncated"] = json!(start > 0);
+    value["screen_token_scope"] = json!("full_native_frame");
+    value
+}
+
+fn native_terminal_capabilities(native: &Value) -> Value {
+    let mut capabilities = json!([
         "exec",
         "batch",
         "screen_read",
         "interrupt",
         "acknowledge",
         "reuse_authenticated_session"
-    ])
+    ]);
+    for feature in ["restore_prompt", "native_log_capture"] {
+        if native
+            .as_array()
+            .is_some_and(|items| items.iter().any(|v| v == feature))
+        {
+            capabilities.as_array_mut().unwrap().push(json!(feature));
+        }
+    }
+    capabilities
 }
 
 fn namespace_batch(mut value: Value, backend: &str) -> anyhow::Result<Value> {
@@ -55,7 +90,7 @@ impl SecureCrtServer {
         description = "List currently available sessions from every configured connector backend. IDs are opaque and backend-bound; capabilities describe which operations are valid for each session.",
         annotations(read_only_hint = true, destructive_hint = false)
     )]
-    async fn connector_list(&self) -> Result<String, McpError> {
+    async fn connector_list(&self) -> Result<rmcp::model::CallToolResult, McpError> {
         let securecrt = match timeout(
             Duration::from_millis(250),
             self.engine.bridge.call("list_sessions", json!({})),
@@ -85,7 +120,7 @@ impl SecureCrtServer {
                             .map(|mut session| {
                                 session["backend"] = json!("securecrt");
                                 session["session_id"] = session["id"].clone();
-                                session["capabilities"] = securecrt_capabilities();
+                                session["capabilities"] = native_terminal_capabilities(&session["capabilities"]);
                                 session
                             })
                             .collect::<Vec<_>>());
@@ -111,11 +146,9 @@ impl SecureCrtServer {
                             if let Some(sessions) = response["xshell"].as_array_mut() {
                                 for session in sessions {
                                     session["backend"] = json!("xshell");
-                                    session["capabilities"] = json!([
-                                        "exec", "batch", "screen_read", "interrupt",
-                                        "acknowledge", "reuse_authenticated_session",
-                                        "named_session_discovery"
-                                    ]);
+                                    let mut capabilities = native_terminal_capabilities(&session["capabilities"]);
+                                    capabilities.as_array_mut().unwrap().push(json!("named_session_discovery"));
+                                    session["capabilities"] = capabilities;
                                 }
                             }
                         }
@@ -138,7 +171,7 @@ impl SecureCrtServer {
     async fn connector_open(
         &self,
         Parameters(p): Parameters<crate::connector::ConnectorOpenParams>,
-    ) -> Result<String, McpError> {
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
         if p.backend == crate::connector::ConnectorBackend::Xshell {
             let Some(xshell) = &self.xshell else {
                 return result(Err(anyhow::anyhow!(
@@ -216,7 +249,7 @@ impl SecureCrtServer {
     async fn connector_exec(
         &self,
         Parameters(p): Parameters<crate::connector::ConnectorExecParams>,
-    ) -> Result<String, McpError> {
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
         if let Some(attachment) = p.session_id.strip_prefix("xshell/") {
             let Some(xshell) = &self.xshell else {
                 return result(Err(anyhow::anyhow!("Xshell bridge is unavailable")));
@@ -233,6 +266,7 @@ impl SecureCrtServer {
                         wait_ms: p.wait_ms,
                         max_bytes: p.max_bytes,
                         wait_for: p.wait_for,
+                        prefer_native_log: p.prefer_native_log,
                     })
                     .await,
             );
@@ -250,6 +284,7 @@ impl SecureCrtServer {
                         wait_ms: p.wait_ms,
                         max_bytes: p.max_bytes,
                         wait_for: p.wait_for,
+                        prefer_native_log: p.prefer_native_log,
                     })
                     .await,
             );
@@ -268,7 +303,7 @@ impl SecureCrtServer {
     async fn connector_exec_batch(
         &self,
         Parameters(p): Parameters<crate::connector::ConnectorBatchParams>,
-    ) -> Result<String, McpError> {
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
         if let Some(attachment) = p.session_id.strip_prefix("xshell/") {
             let Some(xshell) = &self.xshell else {
                 return result(Err(anyhow::anyhow!("Xshell bridge is unavailable")));
@@ -281,6 +316,7 @@ impl SecureCrtServer {
                         operation_id: p.operation_id,
                         on_error: p.on_error,
                         timeout_ms: p.timeout_ms,
+                        prefer_native_log: p.prefer_native_log,
                     })
                     .await
                     .and_then(|value| namespace_batch(value, "xshell")),
@@ -295,6 +331,7 @@ impl SecureCrtServer {
                         operation_id: p.operation_id,
                         on_error: p.on_error,
                         timeout_ms: p.timeout_ms,
+                        prefer_native_log: p.prefer_native_log,
                     })
                     .await
                     .and_then(|value| namespace_batch(value, "securecrt")),
@@ -316,7 +353,7 @@ impl SecureCrtServer {
     async fn connector_get_batch_status(
         &self,
         Parameters(p): Parameters<crate::terminal::BatchStatusParams>,
-    ) -> Result<String, McpError> {
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
         if let Some(id) = p.batch_id.strip_prefix("securecrt/") {
             return result(
                 self.engine
@@ -351,7 +388,7 @@ impl SecureCrtServer {
     async fn connector_read(
         &self,
         Parameters(p): Parameters<crate::connector::ConnectorReadParams>,
-    ) -> Result<String, McpError> {
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
         match self.engine.connectors.read(p.clone()).await {
             Ok(value) => result(Ok(value)),
             Err(_) => result(
@@ -374,20 +411,59 @@ impl SecureCrtServer {
     async fn connector_read_screen(
         &self,
         Parameters(p): Parameters<crate::connector::ConnectorScreenParams>,
-    ) -> Result<String, McpError> {
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        if p.tail_lines.is_some_and(|n| !(1..=200).contains(&n))
+            || p.max_bytes.is_some_and(|n| !(4..=65536).contains(&n))
+        {
+            return result(Err(anyhow::anyhow!("invalid screen tail_lines/max_bytes")));
+        }
+        let project = |value| project_screen(value, &p);
         if let Some(attachment) = p.session_id.strip_prefix("xshell/") {
             let Some(xshell) = &self.xshell else {
                 return result(Err(anyhow::anyhow!("Xshell bridge is unavailable")));
             };
-            return result(xshell.attachment_screen(attachment).await);
+            return result(xshell.attachment_screen(attachment).await.map(project));
         }
         if let Some(attachment) = p.session_id.strip_prefix("securecrt/") {
-            return result(self.engine.attachment_screen(attachment).await);
+            return result(self.engine.attachment_screen(attachment).await.map(project));
         }
         result(
             self.engine
                 .bridge
                 .call("read_screen", json!({"session": p.session_id}))
+                .await
+                .map(project),
+        )
+    }
+
+    #[tool(
+        description = "Explicitly restore an overwritten prompt by sending one Enter. Requires confirmed idle, a fresh screen token, the original expected prompt, owned POSIX completion evidence and a blank input line. Never interrupts or repeats a command. Windows screen backends only; unsupported bridges reject before sending.",
+        annotations(read_only_hint = false, destructive_hint = true)
+    )]
+    async fn connector_restore_prompt(
+        &self,
+        Parameters(p): Parameters<crate::connector::ConnectorRestorePromptParams>,
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
+        let (engine, attachment) = if let Some(id) = p.session_id.strip_prefix("securecrt/") {
+            (&self.engine, id)
+        } else if let Some(id) = p.session_id.strip_prefix("xshell/") {
+            let Some(engine) = &self.xshell else {
+                return result(Err(anyhow::anyhow!("Xshell bridge is unavailable")));
+            };
+            (engine, id)
+        } else {
+            return result(Err(anyhow::anyhow!(
+                "restore_prompt requires a screen attachment"
+            )));
+        };
+        result(
+            engine
+                .restore_prompt(
+                    attachment,
+                    p.screen_token,
+                    p.expected_prompt,
+                    p.confirmed_idle,
+                )
                 .await,
         )
     }
@@ -399,7 +475,7 @@ impl SecureCrtServer {
     async fn connector_get_status(
         &self,
         Parameters(p): Parameters<crate::connector::ConnectorStatusParams>,
-    ) -> Result<String, McpError> {
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
         if p.session_id.is_some() == p.command_id.is_some() {
             return result(Err(anyhow::anyhow!(
                 "provide exactly one of session_id or command_id"
@@ -441,7 +517,7 @@ impl SecureCrtServer {
     async fn connector_stream_open(
         &self,
         Parameters(p): Parameters<crate::connector::ConnectorOpenParams>,
-    ) -> Result<String, McpError> {
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
         if p.backend != crate::connector::ConnectorBackend::Openssh {
             return result(Err(anyhow::anyhow!(
                 "connector_stream_open requires backend=openssh; this backend has no native PTY capability"
@@ -459,7 +535,7 @@ impl SecureCrtServer {
     async fn connector_stream_read(
         &self,
         Parameters(p): Parameters<crate::connector::ConnectorReadParams>,
-    ) -> Result<String, McpError> {
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
         result(self.engine.connectors.stream_read(p).await)
     }
 
@@ -474,7 +550,7 @@ impl SecureCrtServer {
     async fn connector_stream_write(
         &self,
         Parameters(p): Parameters<crate::connector::ConnectorWriteParams>,
-    ) -> Result<String, McpError> {
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
         result(self.engine.connectors.write(p).await)
     }
 
@@ -485,7 +561,7 @@ impl SecureCrtServer {
     async fn connector_resize(
         &self,
         Parameters(p): Parameters<crate::connector::ConnectorResizeParams>,
-    ) -> Result<String, McpError> {
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
         result(self.engine.connectors.resize(p).await)
     }
 
@@ -500,7 +576,7 @@ impl SecureCrtServer {
     async fn connector_interrupt(
         &self,
         Parameters(p): Parameters<crate::connector::ConnectorInterruptParams>,
-    ) -> Result<String, McpError> {
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
         match (p.session_id, p.command_id) {
             (Some(session_id), None) if session_id.starts_with("securecrt/") => result(Err(
                 anyhow::anyhow!("SecureCRT interrupt requires command_id"),
@@ -534,7 +610,7 @@ impl SecureCrtServer {
     async fn connector_acknowledge(
         &self,
         Parameters(p): Parameters<crate::connector::ConnectorAcknowledgeParams>,
-    ) -> Result<String, McpError> {
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
         if !p.confirmed_idle {
             return result(Err(anyhow::anyhow!(
                 "confirmed_idle must be true after inspecting the original session"
@@ -579,7 +655,7 @@ impl SecureCrtServer {
     async fn connector_heartbeat(
         &self,
         Parameters(p): Parameters<crate::connector::ConnectorHeartbeatParams>,
-    ) -> Result<String, McpError> {
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
         if let Some(attachment) = p.session_id.strip_prefix("securecrt/") {
             return result(self.engine.attachment_heartbeat(attachment).await);
         }
@@ -610,7 +686,7 @@ impl SecureCrtServer {
     async fn connector_close(
         &self,
         Parameters(p): Parameters<crate::connector::ConnectorSessionParams>,
-    ) -> Result<String, McpError> {
+    ) -> Result<rmcp::model::CallToolResult, McpError> {
         if let Some(attachment) = p.session_id.strip_prefix("securecrt/") {
             return result(self.engine.detach(attachment).await);
         }
@@ -627,7 +703,7 @@ impl SecureCrtServer {
         description = "Report connector session and command counts for the local process.",
         annotations(read_only_hint = true, destructive_hint = false)
     )]
-    async fn connector_metrics(&self) -> Result<String, McpError> {
+    async fn connector_metrics(&self) -> Result<rmcp::model::CallToolResult, McpError> {
         result(self.engine.connectors.metrics().await)
     }
 }

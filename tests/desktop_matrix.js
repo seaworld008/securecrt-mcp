@@ -115,9 +115,9 @@ async function identityPreflight(binary, backends) {
         supports.length &&
         supports.every(
           (r) =>
-            r.tier === "unknown" &&
+            r.tier === "tier_2" || (r.tier === "unknown" &&
             r.reasons?.length === 1 &&
-            r.reasons[0] === "native_probe_incomplete_or_no_tab",
+            r.reasons[0] === "native_probe_incomplete_or_no_tab"),
         );
       assert(
         identities.some((x) => x.backend === backend) &&
@@ -184,6 +184,7 @@ async function isolation(
   backend,
   targets,
   createClient = async () => new MCP(binary).start(),
+  preferNativeLog = false,
 ) {
   const client = await createClient(),
     opened = [],
@@ -229,6 +230,7 @@ async function isolation(
             mode: "posix",
             wait_ms: 0,
             timeout_ms: 10000,
+            prefer_native_log:preferNativeLog,
           })
           .then((value) => ({ value, index }))
           .catch((error) => ({ error, index })),
@@ -374,6 +376,7 @@ async function run(a) {
                       "--output",
                       receipt,
                       ...(a.exercise_recovery ? ["--exercise-recovery"] : []),
+                      ...(a.prefer_native_log==="true"?["--prefer-native-log","true"]:[]),
                     ]
                   : [
                       path.join(ROOT, "tests/connector_acceptance.js"),
@@ -393,6 +396,7 @@ async function run(a) {
                       new Date().toISOString().slice(0, 10),
                       "--output",
                       receipt,
+                      ...(a.prefer_native_log==="true"?["--prefer-native-log","true"]:[]),
                     ];
             const before = Date.now();
             let value,
@@ -436,7 +440,7 @@ async function run(a) {
   }
   for (const b of backends) {
     const selected = passing.filter((x) => x.backend === b);
-    if (selected.length > 1) results.push(await isolation(binary, b, selected));
+    if (selected.length > 1) results.push(await isolation(binary, b, selected,undefined,a.prefer_native_log==="true"));
   }
   const runtime = {};
   for (const b of backends) {

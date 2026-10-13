@@ -2,6 +2,17 @@
 
 # Changelog
 
+## [0.5.5] - 2026-10-14
+
+- Preserve delayed Windows capture output and report native capture loss separately from command completion.
+- Add explicit, guarded one-Enter prompt restoration, stable full-frame tokens and owned attachment renewal.
+- Reduce file IPC latency and add opt-in SecureCRT raw logs and Xshell UTF-8/UTF-16 session logs for POSIX commands and batches; preserve existing user logging and restore runtime settings.
+- Match Xshell native multi-row newline semantics, bound saturated-scrollback recovery to exact owned marker frames, verify short waits at runtime and drain the owned SecureCRT receive transition when leaving raw logging.
+- Fence native host generations without retaining a lock across SDK calls; require explicit stopped/idle confirmation for legacy-lock migration.
+- Return structured MCP results, support bounded screen context and provide a verified script-chunk caller helper.
+- Install locked Windows executables alongside their exact digest without stopping existing clients.
+- Add native capture/performance regressions and improve portable Mac contract execution on Windows.
+
 ## [0.5.4] - 2026-10-13
 
 - Synchronize the Unix partial-marker timeout fixture with interpreter readiness; retain the 200 ms capture deadline and all output assertions despite slow process startup.

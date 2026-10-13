@@ -2,7 +2,7 @@
 
 [简体中文](installation.md) · [English](installation.en.md) · [文档地图](README.md) · [Agent 安装提示词](agent-setup.md#中文提示词) · [Codex](clients/codex.md) · [Claude](clients/claude.md)
 
-Windows 新用户优先阅读[从这里开始](../START-HERE.md)：0.5.4 包提供保留结果窗口的安装入口、路径查看与两个终端的独立检查入口。下面保留完整的来源、配置和升级说明。
+Windows 新用户优先阅读[从这里开始](../START-HERE.md)：0.5.5 包提供保留结果窗口的安装入口、路径查看与两个终端的独立检查入口。下面保留完整的来源、配置和升级说明。
 
 本页介绍**当前 main**，并不适用于每一个已发布的 ZIP。桌面桥接沿用终端已有登录；OpenSSH 是需要显式选择并另行授权的独立连接。
 
@@ -134,4 +134,20 @@ doctor --backend openssh
 
 核验新二进制后，Codex 用户重新运行 `install`；仅用 Claude 的用户保留稳定二进制路径并运行 `upgrade`。`upgrade` 更新内嵌桥接入口，不写 Codex，也不替换单独安装的二进制。替换正在使用的二进制前先停止客户端。常规更新保留令牌和策略，不要使用 `init --force`。
 
+Windows `install` 遇到正在运行的二进制被锁定时，会按新二进制 SHA-256 并排安装，并仅将原 `securecrt` MCP 的 command 更新为新绝对路径，保留审批、工具限制和其他配置。正在运行的旧进程保持不动，重新加载客户端后才使用新程序；旧版本不会自动删除。Claude-only 不会自动迁移注册路径，需在核验后自行更新。
+
 替换磁盘文件不会重新加载运行中的脚本。在已授权的空闲边界取消旧脚本，加载固定入口，重启 MCP，运行 doctor 并重新发现/绑定目标。旧句柄失效。未决工作应先检查原 Tab，再考虑取消或恢复。见[排障](troubleshooting.md)和[桌面验收](desktop-acceptance.md)。
+
+## Windows 原生脚本取消与旧锁迁移
+
+新 Windows 桥接用短暂文件互斥和带代次的 owner 记录保护同一终端宿主，不在原生接收循环中持有锁文件。界面取消空闲脚本后可以重新加载；暂停但仍有捕获或未决工作时拒绝抢占。旧代次恢复运行后会在再次发送前检查 owner，失去所有权就停止，不清理新代次的终端状态。5 秒心跳宽限仅用于确认无捕获、无未决工作的空闲代次。
+
+某些旧 SecureCRT 引擎在界面 Cancel 后跳过脚本 finally，并保留旧 lease 文件句柄。只在已通过真实界面取消旧脚本、检查原测试标签页空闲且确认没有未决捕获后，才使用显式迁移：
+
+```powershell
+securecrt-mcp repair-native-host --host-pid VERIFIED_NATIVE_PID --previous-instance VERIFIED_OLD_INSTANCE --confirmed-script-stopped --confirmed-idle
+```
+
+参数必须来自原宿主的诊断，不猜测。修复只写有效期 60 秒、绑定旧代次/宿主/当前源码的迁移回执；在此期间通过实际界面加载安装入口。不会关闭旧文件句柄、终止终端或重新登录 SSH。活跃、未决、代次不符及链接路径都拒绝。升级文件本身不会重载运行中的原生脚本。
+
+owner 状态无法读取或写入时停止并要求检查原终端，不从损坏/缺失的记录推断空闲。锁文件只是短临界区，不能用清理 owner 文件来强行解除远端命令的不确定状态。

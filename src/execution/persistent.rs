@@ -93,6 +93,40 @@ impl Engine {
         .await
     }
 
+    pub async fn restore_prompt(
+        &self,
+        id: &str,
+        screen_token: String,
+        expected_prompt: String,
+        confirmed_idle: bool,
+    ) -> Result<Value> {
+        ensure!(confirmed_idle, "idle confirmation required; nothing sent");
+        let attachment = self.attachment_value(id).await?;
+        let capabilities = self.bridge.call("ping", json!({})).await?;
+        ensure!(
+            capabilities["capabilities"]
+                .as_array()
+                .is_some_and(|items| items.iter().any(|v| v == "restore_prompt")),
+            "bridge_incompatible: restore_prompt requires the updated Windows bridge; nothing sent"
+        );
+        self.audit
+            .record(
+                "restore_prompt",
+                id,
+                attachment["session"].as_str().unwrap_or("attachment"),
+                "explicit one Enter recovery",
+                None,
+            )
+            .await?;
+        self.bridge
+            .call(
+                "restore_prompt",
+                json!({"attachment_id": id, "screen_token": screen_token,
+            "expected_prompt": expected_prompt, "confirmed_idle": true}),
+            )
+            .await
+    }
+
     pub async fn attachment_status(&self, id: &str) -> Result<Value> {
         let value = self.attachment_heartbeat(id).await?;
         Ok(json!({
@@ -127,7 +161,7 @@ impl Engine {
         let fingerprint = format!(
             "attachment:{}",
             sha256_hex(serde_json::to_vec(&json!({
-            "attachment":p.attachment_id,"command":p.command,"mode":p.mode,"timeout":timeout,"wait_for":p.wait_for,"expected_prompt":p.expected_prompt}))?)
+            "attachment":p.attachment_id,"command":p.command,"mode":p.mode,"timeout":timeout,"wait_for":p.wait_for,"expected_prompt":p.expected_prompt,"prefer_native_log":p.prefer_native_log}))?)
         );
         let job = self
             .submit_internal(
@@ -145,6 +179,7 @@ impl Engine {
                     wait_for: p.wait_for,
                     timeout_ms: Some(timeout),
                     settle_ms: None,
+                    prefer_native_log: p.prefer_native_log,
                 },
                 Some(fingerprint),
             )
@@ -225,6 +260,7 @@ impl Engine {
                         wait_ms: Some(60000),
                         max_bytes: Some(1024),
                         wait_for: None,
+                        prefer_native_log: p.prefer_native_log,
                     })
                     .await;
                 let mut result = result.unwrap_or_else(|e| fault::details(&e));

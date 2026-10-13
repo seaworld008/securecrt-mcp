@@ -52,6 +52,9 @@ pub struct ExecuteParams {
     pub wait_for: Option<String>,
     pub timeout_ms: Option<u64>,
     pub settle_ms: Option<u64>,
+    /// Opt-in Windows SecureCRT/Xshell POSIX acceleration via a private temporary log.
+    /// Includes command echo on local disk; leaves existing user logging untouched.
+    pub prefer_native_log: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -84,4 +87,6 @@ pub struct RunParams {
     /// First output page bound in UTF-8 bytes, 4..65536. Default 16384.
     pub max_bytes: Option<usize>,
     pub settle_ms: Option<u64>,
+    /// Same explicit temporary-log opt-in as execute; Windows SecureCRT/Xshell POSIX only.
+    pub prefer_native_log: Option<bool>,
 }

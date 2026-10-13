@@ -1289,9 +1289,12 @@ async function run() {
   return new Promise((resolve, reject) => {
     const proc = spawn(
       process.env.SECURECRT_TEST_PYTHON || "python3",
-      ["-c", nativeContract, ROOT],
-      { stdio: "inherit" },
+      ["-", ROOT],
+      { stdio: ["pipe", "inherit", "inherit"] },
     );
+    // Pipe the large fixture instead of exceeding Windows CreateProcess argv.
+    proc.stdin.on("error", reject);
+    proc.stdin.end(nativeContract);
     proc.on("error", reject);
     proc.on("exit", (code) =>
       code === 0
@@ -1334,6 +1337,9 @@ async function compiledNative(binary) {
     await new Promise((r) => free.close(r));
     const secret = readJSON(path.join(home, "bridge.json"));
     secret.port = port;
+    // This development fixture serves the Mac adapter over TCP even when
+    // Windows initialization defaults to native file IPC.
+    secret.ipc_dir = null;
     writeJSON(path.join(home, "bridge.json"), secret);
     const cfg = path.join(home, "config.toml");
     fs.writeFileSync(
@@ -1342,9 +1348,11 @@ async function compiledNative(binary) {
     );
     worker = spawn(
       process.env.SECURECRT_TEST_PYTHON || "python3",
-      ["-c", nativeWorker, ROOT, home],
-      { stdio: ["ignore", "ignore", "pipe"], env },
+      ["-", ROOT, home],
+      { stdio: ["pipe", "ignore", "pipe"], env },
     );
+    worker.stdin.on("error", () => {});
+    worker.stdin.end(nativeWorker);
     let errors = "";
     worker.stderr.on("data", (b) => (errors += b));
     const until = Date.now() + 5000;
@@ -1422,7 +1430,7 @@ async function compiledNative(binary) {
         ...extra,
       });
     for (const cmd of ["hostname", "uptime", "pwd"]) {
-      const v = await exec(cmd);
+      const v = await exec(cmd,cmd==="uptime"?{prefer_native_log:true}:{});
       assert.equal(v.state, "completed");
       assert.equal(v.exit_code, 0);
       assert.equal(v.text, cmd + "-output\n");
@@ -1431,6 +1439,7 @@ async function compiledNative(binary) {
       session_id: sid,
       commands: ["hostname", "uptime", "df -h /"],
       operation_id: "native-readiness",
+      prefer_native_log: true,
     });
     while (batch.state === "running") {
       await sleep(10);

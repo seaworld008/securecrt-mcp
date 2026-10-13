@@ -27,6 +27,7 @@ async fn batch_ledger_exhaustion_returns_prior_command_receipts() {
             operation_id: Some("capacity-batch".into()),
             on_error: None,
             timeout_ms: Some(1000),
+            prefer_native_log: None,
         })
         .await
         .unwrap();
@@ -211,6 +212,7 @@ async fn output_eviction_keeps_the_operation_ledger_and_never_replays() {
         timeout_ms: Some(1000),
         wait_ms: None,
         max_bytes: None,
+        prefer_native_log: None,
     };
     for index in 0..=MAX_COMMANDS {
         let value = manager.exec(params(index)).await.unwrap();

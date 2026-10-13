@@ -36,6 +36,7 @@ async function run(a) {
         mode: "posix",
         wait_ms: 10000,
         timeout_ms: 10000,
+        prefer_native_log:a.prefer_native_log==="true",
         ...p,
       });
     const result = await exec({ command: "printf 'MCP_ACCEPTANCE_OK\\n'" });
@@ -52,6 +53,7 @@ async function run(a) {
         "printf 'BATCH_B\\n'",
         "printf 'BATCH_C\\n'",
       ],
+      prefer_native_log:a.prefer_native_log==="true",
     });
     const until = Date.now() + 20000;
     while (batch.state === "running" && Date.now() < until) {
@@ -130,6 +132,7 @@ if (require.main === module) {
         backend: a.backend?.[0],
         protocol: a.protocol || "legacy",
         error_type: e.name,
+        failure: e.message,
         source_commit: a.source_commit,
         tested_on: a.tested_on,
       });
