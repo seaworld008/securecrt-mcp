@@ -4,6 +4,8 @@
 
 ## [0.5.4] - 2026-10-13
 
+- Synchronize the Unix partial-marker timeout fixture with interpreter readiness; retain the 200 ms capture deadline and all output assertions despite slow process startup.
+
 - Add a Chinese/English Windows quickstart covering installation, native script loading, client registration, daily use, upgrades and troubleshooting.
 - Keep Windows installer results visible; provide path lookup, separate SecureCRT/Xshell checks and initialization without Codex registration. Preserve nonzero errors and existing configuration.
 - Exercise actual packaged CMD launchers in isolated Windows profiles, including repeat installation, configuration/token preservation and failure cases.
