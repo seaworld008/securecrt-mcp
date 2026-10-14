@@ -285,14 +285,14 @@ async fn main() -> Result<()> {
                                     .is_some_and(|sid| sid.starts_with(&format!("{id}/")))
                             })
                             .filter_map(|session| {
-                                session["tab_text"]
-                                    .as_str()
-                                    .or(session["caption"].as_str())
-                                    .or(session["session_name"].as_str())
+                                ["tab_text", "caption", "session_name"]
+                                    .iter()
+                                    .filter_map(|key| session[*key].as_str())
+                                    .find(|value| !value.trim().is_empty())
                             })
                             .collect();
                         println!(
-                            "{}. {}",
+                            "{}. {} (instance: {})",
                             i + 1,
                             if labels.is_empty() {
                                 "Windows bridge".to_owned()
@@ -302,7 +302,8 @@ async fn main() -> Result<()> {
                                     .chars()
                                     .filter(|c| !c.is_control())
                                     .collect::<String>()
-                            }
+                            },
+                            id.chars().filter(|c| !c.is_control()).collect::<String>()
                         );
                     }
                     print!("Select the idle bridge to stop (0 = cancel): ");

@@ -31,7 +31,7 @@ Load one script per SecureCRT process for its connected tabs. Do not assume one 
 
 Install once. While the terminal and script remain open, rediscover sessions through your AI client. Closing the terminal stops the script; after your next login, load it again through the menu. A running MCP server does not imply a running terminal bridge. Keep the authenticated terminal open.
 
-To stop, first confirm that no command is running or unresolved, then open `stop-securecrt.cmd` or `stop-xshell.cmd` and confirm. A bridge supporting normal stop exits naturally and preserves SSH logins, avoiding SecureCRT's native `Script Cancelled` warning. With multiple online bridges, choose one by its terminal label or enter `0` to cancel; stopping is never broadcast. CLI `--instance` also selects one explicitly. Older bridges require one idle native cancellation and reload to upgrade. Inspect an unknown stop outcome instead of automatically retrying.
+To stop, first confirm that no command is running or unresolved, then open `stop-securecrt.cmd` or `stop-xshell.cmd` and confirm. A bridge supporting normal stop exits naturally and preserves SSH logins, avoiding SecureCRT's native `Script Cancelled` warning. With multiple online bridges, choose one by its terminal label and instance ID or enter `0` to cancel; stopping is never broadcast. CLI `--instance` also selects one explicitly. Older bridges require one idle native cancellation and reload to upgrade. Inspect an unknown stop outcome instead of automatically retrying.
 
 ## Claude or another MCP client only
 
