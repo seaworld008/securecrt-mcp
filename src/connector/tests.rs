@@ -1,5 +1,6 @@
 use super::*;
 
+#[cfg(unix)]
 fn test_manager() -> ConnectorManager {
     ConnectorManager::new(
         crate::policy::PolicyEngine::new(&crate::config::PolicyConfig::default()).unwrap(),
