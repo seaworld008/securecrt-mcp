@@ -179,6 +179,61 @@ async fn openssh_raw_and_interrupt_require_policy_and_before_send_audit() {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn openssh_repeat_returns_original_receipt_without_audit_or_resend() {
+    let path = std::env::temp_dir().join(format!("openssh-dedup-{}.jsonl", Uuid::new_v4()));
+    let (mut manager, transport) = guarded_fixture(
+        Default::default(),
+        crate::audit::AuditLog::new(true, false, path.clone()),
+    )
+    .await;
+    let mut params = guarded_params("counter=$((${counter:-0}+1)); printf '%s' \"$counter\"");
+    params.operation_id = Some("dedup-audit".into());
+    let original = manager.exec(params.clone()).await.unwrap();
+    let repeated = manager.exec(params.clone()).await.unwrap();
+    assert_eq!(repeated["command_id"], original["command_id"]);
+    assert_eq!(std::fs::read_to_string(&path).unwrap().lines().count(), 1);
+    manager.guard = security::DispatchGuard::new(
+        crate::policy::PolicyEngine::new(&Default::default()).unwrap(),
+        crate::audit::AuditLog::new(
+            true,
+            false,
+            path.with_extension("missing").join("audit.jsonl"),
+        ),
+    );
+    let repeated = manager.exec(params.clone()).await.unwrap();
+    assert_eq!(repeated["command_id"], original["command_id"]);
+    assert_eq!(repeated["state"], "completed");
+    params.operation_id = Some("new-audit-failure".into());
+    assert_eq!(
+        crate::fault::details(&manager.exec(params).await.unwrap_err())["error_code"],
+        "audit_unavailable"
+    );
+    let probe = run_exec(&transport, "printf '%s' \"$counter\"", 1000).await;
+    assert_eq!(String::from_utf8(probe.output).unwrap(), "1\n");
+    std::fs::remove_file(path).unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn openssh_timed_out_operation_can_be_queried_without_clearing_its_interlock() {
+    let (manager, transport) = guarded_fixture(
+        Default::default(),
+        crate::audit::AuditLog::new(false, false, std::path::PathBuf::new()),
+    )
+    .await;
+    let mut params = guarded_params("sleep 0.3; printf finite-test");
+    params.operation_id = Some("dedup-timeout".into());
+    params.timeout_ms = Some(100);
+    let original = manager.exec(params.clone()).await.unwrap();
+    assert_eq!(original["state"], "unknown");
+    let repeated = manager.exec(params).await.unwrap();
+    assert_eq!(repeated["command_id"], original["command_id"]);
+    assert_eq!(repeated["state"], "unknown");
+    assert!(transport.unresolved.load(Ordering::SeqCst));
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn openssh_allowed_command_writes_a_private_audit_before_dispatch() {
     let path = std::env::temp_dir().join(format!("openssh-audit-{}.jsonl", Uuid::new_v4()));
     let (manager, _) = guarded_fixture(

@@ -396,16 +396,6 @@ impl ConnectorManager {
         ensure!((4..=MAX_PAGE).contains(&max), "invalid max_bytes");
         let timeout_ms = p.timeout_ms.unwrap_or(30_000);
         ensure!((100..=600_000).contains(&timeout_ms), "invalid timeout_ms");
-        let session = self.session(&p.session_id).await?;
-        let SessionTransport::Exec(transport) = &session.transport else {
-            return Err(anyhow!(
-                "connector session is PTY mode; use connector_stream_*"
-            ));
-        };
-        ensure!(
-            !transport.unresolved.load(Ordering::SeqCst),
-            "session unresolved; inspect or close and reopen before sending"
-        );
         let operation_id = p.operation_id.unwrap_or_else(|| Uuid::new_v4().to_string());
         ensure!(
             !operation_id.is_empty()
@@ -421,31 +411,41 @@ impl ConnectorManager {
             timeout_ms
         ]))?);
         let command_id = Uuid::new_v4().to_string();
-        self.guard
-            .command(&p.session_id, &command_id, &p.command)
-            .await?;
-        let existing_command = {
+        let transport = {
             let mut operations = self.operations.lock().await;
             if let Some((old, old_fingerprint)) = operations.get(&operation_id) {
                 ensure!(
                     old_fingerprint == &fingerprint,
                     "operation_id conflict; nothing sent"
                 );
-                Some(old.clone())
-            } else {
-                ensure!(
-                    operations.len() < MAX_OPERATIONS,
-                    "operation ledger limit; finish and inspect work before restarting"
-                );
-                operations.insert(operation_id.clone(), (command_id.clone(), fingerprint));
-                None
+                let old = old.clone();
+                drop(operations);
+                return self.command_status(&old).await;
             }
+            ensure!(
+                operations.len() < MAX_OPERATIONS,
+                "operation ledger limit; finish and inspect work before restarting"
+            );
+            let session = self.session(&p.session_id).await?;
+            let SessionTransport::Exec(transport) = &session.transport else {
+                return Err(anyhow!(
+                    "connector session is PTY mode; use connector_stream_*"
+                ));
+            };
+            ensure!(
+                !transport.unresolved.load(Ordering::SeqCst),
+                "session unresolved; inspect or close and reopen before sending"
+            );
+            // A repeat only retrieves its original receipt. Audit and reserve
+            // exactly one new dispatch while holding the operation gate.
+            self.guard
+                .command(&p.session_id, &command_id, &p.command)
+                .await?;
+            operations.insert(operation_id.clone(), (command_id.clone(), fingerprint));
+            transport.clone()
         };
-        if let Some(existing_command) = existing_command {
-            return self.command_status(&existing_command).await;
-        }
         let created = Instant::now();
-        let outcome = run_exec(transport, &p.command, timeout_ms).await;
+        let outcome = run_exec(&transport, &p.command, timeout_ms).await;
         let output_bytes = outcome.output.len();
         let record = CommandRecord {
             session_id: p.session_id,
