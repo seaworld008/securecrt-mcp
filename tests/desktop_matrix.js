@@ -158,6 +158,13 @@ async function identityPreflight(binary, backends, explicit = []) {
         backend + ": runtime identity/support gate failed before SSH",
       );
     }
+    if (!config.ipc_dir) {
+      const actual = probe.stdout.match(/"adapter_sha256"\s*:\s*"([a-f0-9]{64})"/),
+        expected = hash(path.join(ROOT, "bridge/securecrt_bridge.py"));
+      assert(actual, "TCP runtime report must contain its loaded adapter identity");
+      assert.equal(actual[1], expected, "running TCP adapter differs from repository source");
+      identities.push({backend, expected_sha256: expected, running_sha256: actual[1]});
+    }
   }
   return identities;
 }
