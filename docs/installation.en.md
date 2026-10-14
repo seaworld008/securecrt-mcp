@@ -104,6 +104,8 @@ macOS SecureCRT does not have the Windows JScript/ActiveX scripting interface. R
 
 See the [support matrix](support-matrix.md) for tested versions/architectures. Linux desktop SecureCRT is unverified in the current matrix. Source builders need Rust 1.88+ and a linker; Node 22 is a development/test/package dependency and Python is also used by Mac adapter contract tests. These are distinct from installed end-user requirements.
 
+Online Windows `doctor` returns JSON diagnostics per instance and checks all online instances by default. Use `doctor --backend securecrt --instance <UUID>` (or `xshell`) to check only that instance. A missing target fails without probing another host. The macOS TCP bridge retains its existing text report.
+
 ## 4. Check each layer separately
 
 Use the selected binary's absolute path; the commands below show subcommands to append to it:

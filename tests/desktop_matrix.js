@@ -28,6 +28,21 @@ function scopedReports(reports, instances) {
   assert.equal(new Set(selected.map((report) => report.instance)).size, instances.size, "selected native instance missing from runtime report");
   return selected;
 }
+async function runtimeProbe(binary, backend, explicit = []) {
+  const home = process.env.SECURECRT_MCP_HOME || path.join(os.homedir(), ".securecrt-mcp"),
+    config = readJSON(path.join(home, backend === "securecrt" ? "bridge.json" : "xshell_bridge.json")),
+    selected = config.ipc_dir ? selectedInstances(backend, explicit) : null;
+  if (!selected) return command(binary, ["doctor", "--backend", backend]);
+  const reports = [];
+  let code = 0;
+  for (const instance of selected) {
+    const probe = await command(binary, ["doctor", "--backend", backend, "--instance", instance]);
+    const result = JSON.parse(probe.stdout);
+    reports.push(...scopedReports(result.instances || [], new Set([instance])));
+    if (probe.code !== 0) code = probe.code;
+  }
+  return {code, stdout: JSON.stringify({backend, instances: reports})};
+}
 async function identityPreflight(binary, backends, explicit = []) {
   const home =
       process.env.SECURECRT_MCP_HOME ||
@@ -106,12 +121,12 @@ async function identityPreflight(binary, backends, explicit = []) {
         );
       }
     }
-    const probe = await command(binary, ["doctor", "--backend", backend]);
+    const probe = await runtimeProbe(binary, backend, explicit);
     if (probe.code !== 0) {
       let supports = [],
         validationFailed = true;
       try {
-        if (backend === "securecrt") {
+        if (backend === "securecrt" && !config.ipc_dir) {
           supports = probe.stdout
             .split(/\r?\n/)
             .filter((x) => x.startsWith("support="))
@@ -461,8 +476,9 @@ async function run(a) {
   }
   const runtime = {};
   for (const b of backends) {
-    const probe = await command(binary, ["doctor", "--backend", b]);
-    const selected = b === "xshell" && !a.all_idle ? selectedInstances(b, explicit) : null;
+    const probe = await runtimeProbe(binary, b, a.all_idle ? [] : explicit);
+    const nativeIPC = probe.stdout.trimStart().startsWith("{");
+    const selected = nativeIPC && !a.all_idle ? selectedInstances(b, explicit) : null;
     let passed = probe.code === 0;
     let selectedReports;
     if (selected) {
@@ -477,11 +493,11 @@ async function run(a) {
       backend: b,
       phase: "runtime-and-source-identity",
       passed,
-      scope: selected ? "explicit selected native instances" : "all online native instances",
+      scope: selected ? "explicit selected native instances" : nativeIPC ? "all online native instances" : "representative TCP bridge",
     });
     let native = [];
     try {
-      if (b === "securecrt") {
+      if (b === "securecrt" && !nativeIPC) {
         const raw = probe.stdout
           .replaceAll("\r\n", "\n")
           .split("bridge: OK\n")[1];
@@ -593,4 +609,4 @@ if (require.main === module) {
       process.exitCode = 1;
     });
 }
-module.exports = { run, identityPreflight, discover, isolation, selectedInstances, scopedReports };
+module.exports = { run, identityPreflight, discover, isolation, selectedInstances, scopedReports, runtimeProbe };

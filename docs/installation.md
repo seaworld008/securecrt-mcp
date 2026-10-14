@@ -112,6 +112,8 @@ macOS SecureCRT 没有 Windows JScript/ActiveX 脚本接口。优先复用已有
 
 <a id="4-check-each-layer-separately"></a>
 
+Windows 的在线 `doctor` 逐实例返回 JSON 诊断；默认检查所有在线实例。指定 `doctor --backend securecrt --instance <UUID>`（或 `xshell`）只检查该实例，缺失目标直接失败且不会探测替代宿主。macOS TCP 桥接继续返回现有文本报告。
+
 ## 4. 分层验证
 
 使用所选二进制的绝对路径，下面列出要追加的子命令：

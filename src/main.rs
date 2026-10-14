@@ -115,6 +115,9 @@ enum Command {
         backend: String,
         #[arg(long)]
         offline: bool,
+        /// Diagnose one native Windows instance without pinging unrelated hosts.
+        #[arg(long, conflicts_with_all = ["offline", "latency"])]
+        instance: Option<String>,
         #[arg(long, conflicts_with = "offline")]
         latency: bool,
     },
@@ -348,6 +351,7 @@ async fn main() -> Result<()> {
             backend,
             offline,
             latency,
+            instance,
         } => {
             if latency {
                 ensure!(
@@ -356,6 +360,7 @@ async fn main() -> Result<()> {
                 );
                 local_cli::emit(&local_cli::engine()?.latency(20).await?)?;
             } else if backend == "openssh" {
+                ensure!(instance.is_none(), "OpenSSH does not use native instances");
                 let report = support::openssh_report().await?;
                 local_cli::emit(&report)?;
                 ensure!(
@@ -363,8 +368,14 @@ async fn main() -> Result<()> {
                     "OpenSSH unavailable; see support report"
                 );
             } else if backend == "xshell" {
-                doctor_xshell(offline).await?;
+                doctor_native("xshell", offline, instance.as_deref()).await?;
+            } else if load_bridge_secret()?.ipc_dir.is_some() && !offline {
+                doctor_native("securecrt", false, instance.as_deref()).await?;
             } else {
+                ensure!(
+                    instance.is_none(),
+                    "instance selection requires native file IPC"
+                );
                 doctor(offline).await?;
             }
         }
@@ -621,21 +632,25 @@ async fn doctor(offline: bool) -> Result<()> {
     Ok(())
 }
 
-async fn doctor_xshell(offline: bool) -> Result<()> {
+async fn doctor_native(backend: &str, offline: bool, instance: Option<&str>) -> Result<()> {
     let config = Config::load()?;
-    let secret = load_xshell_bridge_secret()?;
+    let secret = if backend == "xshell" {
+        load_xshell_bridge_secret()?
+    } else {
+        load_bridge_secret()?
+    };
     if offline {
-        local_cli::emit(&support::report("xshell", None))?;
+        local_cli::emit(&support::report(backend, None))?;
         return Ok(());
     }
     let mut bridge_config = config.bridge;
     bridge_config.port = secret.port;
     let ipc_dir = portable::transport_path(&secret)?;
     let bridge = BridgeClient::new_file(bridge_config, secret, ipc_dir)?;
-    let reports = match bridge.runtime_reports().await {
+    let reports = match bridge.runtime_reports_for(instance).await {
         Ok(reports) => reports,
         Err(error) => {
-            local_cli::emit(&support::report("xshell", None))?;
+            local_cli::emit(&support::report(backend, None))?;
             return Err(error);
         }
     };
@@ -643,8 +658,8 @@ async fn doctor_xshell(offline: bool) -> Result<()> {
     let mut output = Vec::new();
     for mut report in reports {
         let runtime = report.get("runtime");
-        let support_report = support::report("xshell", runtime);
-        let validation = runtime.map(|info| support::validate_runtime("xshell", info));
+        let support_report = support::report(backend, runtime);
+        let validation = runtime.map(|info| support::validate_runtime(backend, info));
         if runtime.is_none()
             || validation.as_ref().is_some_and(|v| v.is_err())
             || !matches!(support_report["tier"].as_str(), Some("tier_1" | "tier_2"))
@@ -658,11 +673,11 @@ async fn doctor_xshell(offline: bool) -> Result<()> {
         output.push(report);
     }
     local_cli::emit(
-        &serde_json::json!({"backend":"xshell","instances":output,"all_runtime_checks_passed":!failed}),
+        &serde_json::json!({"backend":backend,"instances":output,"all_runtime_checks_passed":!failed}),
     )?;
     ensure!(
         !failed,
-        "one or more Xshell runtimes require repair; see per-instance support reports"
+        "one or more native runtimes require repair; see per-instance support reports"
     );
     Ok(())
 }

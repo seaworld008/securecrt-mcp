@@ -2,7 +2,8 @@
 
 Date: 2026-10-14. Base: `9fdf27e436c94dda67f9ea201aa142764994eac5`.
 Changes: normal native stop, professional notices, Windows recovery guidance,
-selected-instance desktop diagnostics and bounded consecutive IPC waits.
+selected-instance desktop diagnostics, bilingual README overhaul and bounded
+consecutive IPC waits.
 
 Private receipts remain local, including failed attempts. No credentials, endpoint
 addresses, tokens, session IDs or existing terminal history are included here.
@@ -29,7 +30,7 @@ The SecureCRT RSA key was also compared with a direct SSH handshake before
 acceptance. Credentials were read only from the authorized workbook record and
 were never included in command-line arguments or reports.
 
-Both persistent paths returned exactly 2,500 Chinese rows / 40,000 UTF-8 bytes:
+The direct PTY and exec-channel checks returned exactly 2,500 Chinese rows / 40,000 UTF-8 bytes:
 PTY 24.851 ms, exec channel 102.874 ms, SHA-256
 `d9317cab19ed37c2b414c7fc3466aa0ec61655c0080d8cb62d7f5d2065bb76e5`.
 These are protocol baselines, not MCP overhead measurements or a claim that
@@ -50,7 +51,7 @@ distinct; an exact output-limit body is no longer truncated by its separator.
 
 ## Final candidate results
 
-Local Windows executable SHA-256:
+Full behavioral/performance candidate executable SHA-256:
 `a80c87c2c5e1eda0c0bef51d96e3c731db051ca526d1ff8af4a48c6614e7fe77`.
 Windows native adapter SHA-256:
 `9c9c502a21f73c0eaf60f1f458534d700f769ca7ebf19c7fe61bfdc034247f99`.
@@ -58,6 +59,18 @@ Mac adapter SHA-256:
 `6836a59fab221cb21aedf3c74eecbdfecbd298c4d22acc4306f2aa5541d16054`.
 Release builds can have different executable hashes; their checksums and pinned
 source are supplied by the release workflow.
+
+Post-review diagnostic acceptance executable SHA-256:
+`52c04617872c147e7edc036babb1ae78cea8a71a62a8d5daf65ef86706541c82`.
+The additional change is scoped to native diagnostics and acceptance routing;
+both native adapters and the command/capture paths retain the hashes and behavior
+tested above. This executable repeated both clients' two-tab parallel native-log
+full/modern/isolation matrices, the compiled Node suite, 43 Rust tests and 91 Mac
+adapter assertions. SecureCRT default full suites also passed sequentially with
+separate simultaneous isolation on this executable. Compiled two-instance diagnostics check only the requested
+host, retain selected source failures, refuse missing targets without probing
+another host, and check all hosts by default. The test's non-atomic heartbeat
+fixture failure was retained and corrected to match native atomic publication.
 
 Real clients: SecureCRT 9.6.0 x64 and Xshell 8.0.0.26 x86 on Windows
 10.0.26200.0. Only explicitly authorized idle test tabs received commands.

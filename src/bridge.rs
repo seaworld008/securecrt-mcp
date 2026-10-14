@@ -288,15 +288,31 @@ impl BridgeClient {
     /// Doctor validates every process, rather than the representative ping used
     /// for fast-path negotiation. No remote input is sent by these requests.
     pub async fn runtime_reports(&self) -> Result<Vec<Value>> {
+        self.runtime_reports_for(None).await
+    }
+
+    /// Validate a requested instance before pinging; never substitute another host.
+    pub async fn runtime_reports_for(&self, selected: Option<&str>) -> Result<Vec<Value>> {
         match self.transport.as_ref() {
             Transport::Tcp { .. } => {
+                ensure!(
+                    selected.is_none(),
+                    "instance selection requires native file IPC"
+                );
                 Ok(vec![json!({"runtime":self.call("ping",json!({})).await?})])
             }
             Transport::File { state } => {
-                let instances = self.file_instances(state).await?;
+                let mut instances = self.file_instances(state).await?;
+                if let Some(selected) = selected {
+                    instances.retain(|(instance, _)| instance == selected);
+                    ensure!(
+                        !instances.is_empty(),
+                        "selected native instance is not online"
+                    );
+                }
                 ensure!(
                     !instances.is_empty(),
-                    "Xshell bridge is not running; start its script"
+                    "Terminal bridge is not running; start its script"
                 );
                 let calls = instances.iter().map(|(instance, path)| async move {
                     match self
