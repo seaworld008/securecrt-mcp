@@ -14,7 +14,7 @@ async function run(binary){
   for(const n of fs.readdirSync(dir).filter(n=>n.endsWith(".request.json"))){let q;try{q=JSON.parse(fs.readFileSync(path.join(dir,n)))}catch{continue}
    fs.unlinkSync(path.join(dir,n));assert.equal(q.token,token);let result;
    if(q.method==="ping"){pings.push(id);result={platform:"Windows",script_engine:"JScript",securecrt_version:"9.6.0",xshell_version:"8.0.0.26",bridge_version:version,protocol_version:2,capabilities:["graceful_stop"],adapter_sha256:i===0?source:"outdated-source",api_capabilities:Object.fromEntries([...apis.securecrt,...apis.xshell].map(name=>[name,true]))};}
-   else if(q.method==="list_sessions")result={sessions:[{id:id+"/session/1",tab_text:"",caption:"DUPLICATE_TEST_CAPTION",session_name:"TEST_BRIDGE_"+(i+1)}]};
+   else if(q.method==="list_sessions")result={sessions:[{id:id+"/session/1",tab_text:"",caption:"DUPLICATE_TEST_CAPTION\u202e\u2066\x1b[31m\r\n",session_name:"TEST_BRIDGE_"+(i+1)}]};
    else if(q.method==="stop_host"){assert.equal(q.params.bridge_instance,id);assert.equal(q.params.adapter_sha256,source);assert.equal(q.params.confirmed_idle,true);stops.push(id);stopped.add(id);fs.unlinkSync(path.join(dir,"ready.json"));result={stopped:true,sent:false};}
    else throw Error("unexpected native request");
    fs.writeFileSync(path.join(dir,q.id+".response.json"),JSON.stringify({id:q.id,protocol_version:2,bridge_instance:id,ok:true,sent:false,result}));
@@ -32,7 +32,7 @@ async function run(binary){
   }}finally{if(prior===undefined)delete process.env.SECURECRT_MCP_HOME;else process.env.SECURECRT_MCP_HOME=prior;}
   assert.deepEqual(stops,[]);
   console.log("PASS: compiled SecureCRT/Xshell doctor selects only the requested instance, preserves selected failures, rejects missing hosts and validates every host by default");
-  let r=await select("0\n");assert.equal(r.code,0,r.stderr);assert(r.stdout.includes("DUPLICATE_TEST_CAPTION")&&r.stdout.includes("Cancelled"));assert(ids.every(id=>r.stdout.includes("instance: "+id)),"duplicate captions must show distinct stable instance IDs");assert.deepEqual(stops,[]);
+  let r=await select("0\n");assert.equal(r.code,0,r.stderr);assert(r.stdout.includes("DUPLICATE_TEST_CAPTION")&&r.stdout.includes("Cancelled"));assert(ids.every(id=>r.stdout.includes("instance: "+id)),"duplicate captions must show distinct stable instance IDs");assert(r.stdout.includes("\\u{202e}")&&r.stdout.includes("\\u{2066}"));assert(!/[\u202e\u2066\x1b\r]/.test(r.stdout),"untrusted labels must not reorder identity, inject ANSI or introduce extra lines");assert.deepEqual(stops,[]);
   r=await select("99\n");assert.notEqual(r.code,0);assert.deepEqual(stops,[]);
   r=await select("1\n",["--choose"]);assert.notEqual(r.code,0);assert.deepEqual(stops,[]);
   r=await select("1\n");assert.equal(r.code,0,r.stderr);assert.deepEqual(stops,[ids[0]]);assert(fs.existsSync(path.join(root,"instances",ids[1],"ready.json")));

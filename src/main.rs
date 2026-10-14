@@ -297,13 +297,9 @@ async fn main() -> Result<()> {
                             if labels.is_empty() {
                                 "Windows bridge".to_owned()
                             } else {
-                                labels
-                                    .join(", ")
-                                    .chars()
-                                    .filter(|c| !c.is_control())
-                                    .collect::<String>()
+                                native_choice_text(&labels.join(", "))
                             },
-                            id.chars().filter(|c| !c.is_control()).collect::<String>()
+                            native_choice_text(id)
                         );
                     }
                     print!("Select the idle bridge to stop (0 = cancel): ");
@@ -435,6 +431,22 @@ fn reject_symlink(path: &Path) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn native_choice_text(value: &str) -> String {
+    let mut displayed = String::new();
+    for c in value.chars() {
+        // Terminal labels are untrusted. Escape direction/line formatting as
+        // well as control codes so they cannot reorder the trusted instance ID.
+        if c.is_control()
+            || matches!(c, '\u{00ad}' | '\u{061c}' | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2060}'..='\u{206f}' | '\u{feff}')
+        {
+            displayed.push_str(&c.escape_unicode().to_string());
+        } else {
+            displayed.push(c);
+        }
+    }
+    displayed
 }
 
 fn replace_with_backup(path: &Path, contents: &str) -> Result<()> {
