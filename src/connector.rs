@@ -31,6 +31,7 @@ use tokio::{
 use uuid::Uuid;
 
 mod exec;
+mod security;
 use exec::run_exec;
 
 const MAX_OUTPUT: usize = 1_048_576;
@@ -297,16 +298,22 @@ struct ExecOutcome {
     native_read_count: u64,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct ConnectorManager {
     sessions: Arc<Mutex<HashMap<String, Arc<Session>>>>,
     commands: Arc<Mutex<HashMap<String, CommandRecord>>>,
     operations: Arc<Mutex<HashMap<String, (String, String)>>>,
+    guard: security::DispatchGuard,
 }
 
 impl ConnectorManager {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(policy: crate::policy::PolicyEngine, audit: crate::audit::AuditLog) -> Self {
+        Self {
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+            commands: Arc::new(Mutex::new(HashMap::new())),
+            operations: Arc::new(Mutex::new(HashMap::new())),
+            guard: security::DispatchGuard::new(policy, audit),
+        }
     }
 
     pub async fn list(&self) -> Result<Value> {
@@ -414,6 +421,9 @@ impl ConnectorManager {
             timeout_ms
         ]))?);
         let command_id = Uuid::new_v4().to_string();
+        self.guard
+            .command(&p.session_id, &command_id, &p.command)
+            .await?;
         let existing_command = {
             let mut operations = self.operations.lock().await;
             if let Some((old, old_fingerprint)) = operations.get(&operation_id) {
@@ -481,6 +491,15 @@ impl ConnectorManager {
             ["stop", "continue"].contains(&on_error),
             "on_error must be stop or continue"
         );
+        for command in &p.commands {
+            validate_command(command)?;
+            let decision = self.guard.policy.classify_command(command);
+            ensure!(
+                decision.decision == crate::policy::Decision::Allow,
+                "{}",
+                decision.reason
+            );
+        }
         let batch_id = p
             .operation_id
             .clone()
@@ -604,6 +623,7 @@ impl ConnectorManager {
 
     pub async fn write(&self, p: ConnectorWriteParams) -> Result<Value> {
         validate_text(&p.text)?;
+        self.guard.raw(&p.session_id, &p.text).await?;
         let session = self.session(&p.session_id).await?;
         let SessionTransport::Pty(transport) = &session.transport else {
             return Err(anyhow!("connector_write requires a PTY session"));
@@ -648,6 +668,7 @@ impl ConnectorManager {
     }
 
     pub async fn interrupt(&self, p: ConnectorSessionParams) -> Result<Value> {
+        self.guard.interrupt(&p.session_id).await?;
         let session = self.session(&p.session_id).await?;
         match &session.transport {
             SessionTransport::Pty(transport) => {

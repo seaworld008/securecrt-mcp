@@ -8,6 +8,9 @@ async function run(binary) {
     "windows_bridge_test.js",
     "windows_driver_contract.js",
     "client_contract.js",
+    // Windows developers can run the optional WSL contract separately; CI must
+    // not require an installed Linux distribution on the Windows runner.
+    ...(process.platform === "win32" ? [] : ["script_transport_contract.js"]),
     "desktop_matrix_contract.js",
     "original_prompt_observer_contract.js",
     "protocol_harness.js",

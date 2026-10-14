@@ -154,7 +154,7 @@ impl Engine {
     ) -> Self {
         Self {
             bridge,
-            connectors: ConnectorManager::new(),
+            connectors: ConnectorManager::new(policy.clone(), audit.clone()),
             audit,
             policy,
             config,

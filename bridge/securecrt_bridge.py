@@ -18,7 +18,7 @@ import time
 import uuid
 from pathlib import Path
 
-BRIDGE_VERSION = "0.5.5"
+BRIDGE_VERSION = "0.5.6"
 SCRIPT_SHA256 = None
 PROTOCOL_VERSION = 2
 MAX_FRAME = 262144
@@ -291,6 +291,9 @@ class NativeAdapter:
         # created. Select the retained target again for this actual dispatch;
         # macOS native Send can otherwise leave the inactive input lane queued.
         e['tab'].Activate()
+        # Activate queues native focus/input changes on macOS. Yield before
+        # validating again and sending, as attach does for its first binding.
+        sleep(self.app, PROMPT_SAMPLE_MS)
         if not self._alive(e):
             fail('stale_session: retained target changed during native selection; nothing sent')
         if 'digest' in guarded:
@@ -442,6 +445,8 @@ class NativeAdapter:
 
     def acknowledge_idle(self, session, screen_token, expected_prompt):
         if any(c['session'] == session for c in self.captures.values()): fail('busy: cannot acknowledge idle during capture')
+        if not isinstance(screen_token, str) or screen_token.startswith('attachment:'):
+            fail('stale_screen: acknowledgement requires a fresh full screen token')
         self._ownership(session)
         self._guard(session, screen_token, expected_prompt)
         self.unresolved_sessions.pop(session, None)

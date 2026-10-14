@@ -28,7 +28,20 @@ async function run() {
     assert.equal(receipt.executed,false);assert.equal(receipt.rpc_calls,calls);
     const q="'"+destination.replaceAll("'","'\\''")+"'";
     assert.equal(shell("cat -- "+q).stdout,normalized);
-    assert.equal(shell("stat -c '%a' -- "+q).stdout.trim(),"600");
+    const modeCommand=process.platform==="darwin" ? "stat -f '%Lp' " : "stat -c '%a' -- ";
+    assert.equal(shell(modeCommand+q).stdout.trim(),"600");
+    // A BSD/macOS host may have only shasum. Hide GNU sha256sum discovery while
+    // still running real shell commands, and exercise escaped checksum filenames.
+    const fallbackPath=root+"/back\\slash 'quoted'.sh";
+    const hideGnu="command() { if [ \"$1\" = -v ] && [ \"$2\" = sha256sum ]; then return 1; fi; /bin/sh -c 'command -v \"$1\"' sh \"$2\"; }; ";
+    const fallback=await uploadScript(async(command)=>{
+      const r=shell(hideGnu+command);
+      return {state:"completed",sent:true,exit_code:r.status,text:r.stdout};
+    },source,fallbackPath,{chunk_bytes:3072});
+    assert.equal(fallback.sha256,receipt.sha256);
+    const fq="'"+fallbackPath.replaceAll("'","'\\''")+"'";
+    assert.equal(shell("cat -- "+fq).stdout,normalized);
+    assert.equal(shell(modeCommand+fq).stdout.trim(),"600");
     let stopped=0;
     await assert.rejects(()=>uploadScript(async()=>{stopped++;return {state:"unknown",sent:null};},"echo harmless\n",root+"/unknown"),
       e=>e.automatic_retry===false && e.staging_path.startsWith(root+"/unknown.mcp-"));

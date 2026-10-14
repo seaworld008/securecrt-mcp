@@ -2,6 +2,9 @@
 // Optional helper over an already-owned connector. No new authentication or raw input.
 const { createHash, randomUUID } = require("node:crypto");
 const quote = (value) => "'" + value.replaceAll("'", "'\\''") + "'";
+// Hash stdin so checksum tools cannot escape or reinterpret the filename.
+const checksum = (file) => "if command -v sha256sum >/dev/null 2>&1; then sha256sum < " +
+  quote(file) + "; else shasum -a 256 < " + quote(file) + "; fi";
 
 async function uploadScript(execute, source, destination, options = {}) {
   if (typeof execute !== "function" || typeof source !== "string")
@@ -25,17 +28,19 @@ async function uploadScript(execute, source, destination, options = {}) {
     return result;
   }
   try {
-    await checked("command -v base64 >/dev/null && command -v sha256sum >/dev/null && " +
+    await checked("command -v base64 >/dev/null && " +
+      "(command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1) && " +
       "(umask 077; set -C; : > " + quote(stage) + ")");
     for (let offset = 0; offset < bytes.length; offset += chunkBytes) {
       const encoded = bytes.subarray(offset, offset + chunkBytes).toString("base64");
       await checked("printf '%s' " + quote(encoded) + " | base64 -d >> " + quote(stage));
     }
     // Verify before atomic rename, then verify the final path. Upload is not execution.
-    const check = "actual=$(sha256sum -- " + quote(stage) + ") && " +
-      "test \"${actual%% *}\" = " + quote(digest) + " && chmod 600 -- " + quote(stage) +
+    // Absolute paths were validated above; chmod needs no GNU-only '--'.
+    const check = "actual=$(" + checksum(stage) + ") && " +
+      "test \"${actual%% *}\" = " + quote(digest) + " && chmod 600 " + quote(stage) +
       " && mv -f -- " + quote(stage) + " " + quote(destination) +
-      " && sha256sum -- " + quote(destination);
+      " && " + checksum(destination);
     const receipt = await checked(check);
     if (receipt.capture_may_be_incomplete || receipt.truncated ||
         !receipt.text?.trim().startsWith(digest + " "))

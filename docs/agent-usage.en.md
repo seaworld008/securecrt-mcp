@@ -82,6 +82,8 @@ The private IPC instance directory temporarily stores command echo and output, w
 
 The optional [script transport helper](../clients/script_transport.js) uses an already-owned attachment: UTF-8/LF, bounded chunks, a private 0600 staging file, SHA-256 verification and same-directory atomic replacement, with a 1 MiB limit. The caller explicitly selects the destination and authorizes overwriting it. Upload is distinct from execution. Do not upload secrets; retain default `include_command_text=false`. Base64 chunks still echo in the terminal, so this is not hidden transfer. Uncertainty stops all further writes, including cleanup; inspect the returned staging_path without automatically uploading again.
 
+The target shell needs `base64` and either `sha256sum` or `shasum -a 256`. Permission commands support GNU/Linux and macOS. Checksums read file contents through stdin, avoiding escaped-filename output differences.
+
 Redirect the entire background launch, for example:
 
 ```sh

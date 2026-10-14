@@ -14,8 +14,8 @@ const fs = require("node:fs"),
     sleep,
   } = require("./node_harness");
 class FileAdapter {
-  constructor(root, token) {
-    this.instance = crypto.randomUUID();
+  constructor(root, token, instance = crypto.randomUUID()) {
+    this.instance = instance;
     this.directory = path.join(root, "instances", this.instance);
     fs.mkdirSync(this.directory, { recursive: true });
     this.token = token;
@@ -182,6 +182,37 @@ async function run(binary) {
         fs.rmSync(home, { recursive: true, force: true });
       }
     }
+  const home=fs.mkdtempSync(path.join(os.tmpdir(),"securecrt-mixed-"));
+  const env={...process.env,SECURECRT_MCP_HOME:home};
+  let m,a,b;
+  try {
+    assert.equal((await command(binary,["init"],env)).code,0);
+    const secret=readJSON(path.join(home,"bridge.json"));
+    secret.ipc_dir=path.join(home,"mixed-ipc");
+    writeJSON(path.join(home,"bridge.json"),secret);
+    a=new FileAdapter(secret.ipc_dir,secret.token,"00000000-0000-4000-8000-000000000001");
+    b=new FileAdapter(secret.ipc_dir,secret.token,"ffffffff-ffff-4fff-8fff-ffffffffffff");
+    const method=b.fake.method.bind(b.fake);
+    b.fake.method=async(name,params)=>{
+      if(name==="restore_prompt") return {restored:true,sent:true};
+      const result=await method(name,params);
+      if(name==="ping") result.capabilities.push("restore_prompt");
+      return result;
+    };
+    m=await new MCP(binary,env).start();
+    const session=(await m.tool("connector_open",{backend:"securecrt",target:b.instance+"/session/1",mode:"exec"})).session_id;
+    const oldCalls=[...a.calls];
+    const result=await m.tool("connector_restore_prompt",{session_id:session,confirmed_idle:true,screen_token:"test-token",expected_prompt:"user$"});
+    assert.equal(result.restored,true);
+    assert(b.calls.includes("ping") && b.calls.includes("restore_prompt"));
+    assert.deepEqual(a.calls,oldCalls,"recovery must query only its bound instance");
+    console.log("PASS: mixed-version recovery capability probe stays bound to the target instance");
+  } finally {
+    if(m) await m.close();
+    if(a) a.close();
+    if(b) b.close();
+    fs.rmSync(home,{recursive:true,force:true});
+  }
 }
 if (require.main === module)
   run(process.argv[2]).catch((e) => {

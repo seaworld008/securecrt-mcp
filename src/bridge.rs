@@ -251,6 +251,15 @@ impl BridgeClient {
         Ok(*self.native_log.get().unwrap_or(&false))
     }
 
+    pub async fn attachment_runtime(&self, id: &str) -> Result<Value> {
+        let params = if matches!(self.transport.as_ref(), Transport::File { .. }) {
+            json!({"attachment_id": id})
+        } else {
+            json!({})
+        };
+        self.call("ping", params).await
+    }
+
     /// Doctor validates every process, rather than the representative ping used
     /// for fast-path negotiation. No remote input is sent by these requests.
     pub async fn runtime_reports(&self) -> Result<Vec<Value>> {
@@ -399,7 +408,14 @@ impl BridgeClient {
                 break;
             }
         }
-        self.finish_response(serde_json::from_slice(&frame)?, &id)
+        let response: Value = serde_json::from_slice(&frame)?;
+        let persistent = response["persistent"].as_bool() == Some(true);
+        let result = self.finish_response(response, &id);
+        if result.is_ok() && persistent && connection.reader.buffer().is_empty() {
+            connection.used = Instant::now();
+            *guard = Some(connection);
+        }
+        result
     }
 
     async fn file_instances(&self, state: &FileTransport) -> Result<Vec<(String, PathBuf)>> {

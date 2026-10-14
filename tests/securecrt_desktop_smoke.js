@@ -108,6 +108,10 @@ async function run(a) {
     const first = await execute(sid, "printf 'SCRT_MCP_DESKTOP_OK\\n'", {
       operation_id: "desktop-dedup",
     });
+    report.initial_capture = Object.fromEntries(
+      ["state", "sent", "exit_code", "error_code", "requires_idle_ack",
+       "capture_may_be_incomplete", "begin_marker_observed", "end_marker_observed", "wall_ms"]
+        .map(key => [key, first[key]]));
     check(
       "POSIX marker completion",
       first.state === "completed" &&

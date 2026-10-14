@@ -560,6 +560,7 @@ fn print_codex_config(approval_mode: &str, toolset: &str) -> Result<()> {
             "connector_get_status",
             "connector_read",
             "connector_read_screen",
+            "connector_restore_prompt",
             "connector_stream_open",
             "connector_stream_read",
             "connector_stream_write",

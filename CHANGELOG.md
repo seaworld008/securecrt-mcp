@@ -2,6 +2,15 @@
 
 # Changelog
 
+## [0.5.6] - 2026-10-14
+
+- Apply operator command/raw-input/interrupt policy and before-send audit to OpenSSH, with batch preflight before any command is sent.
+- Require fresh full-screen tokens for Mac idle recovery; retained attachments cannot bypass prompt validation.
+- Yield after Mac native Tab activation and revalidate before sending; retain the original capture budget.
+- Reuse successfully negotiated TCP connections without retrying failed exchanges.
+- Include prompt restoration in newly generated Codex terminal toolsets and query the bound native instance for recovery capabilities.
+- Support GNU/BSD script transfer, shasum fallback and checksum filenames containing backslashes; add the contract to Linux/macOS CI.
+
 ## [0.5.5] - 2026-10-14
 
 - Preserve delayed Windows capture output and report native capture loss separately from command completion.

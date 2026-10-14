@@ -102,7 +102,7 @@ impl Engine {
     ) -> Result<Value> {
         ensure!(confirmed_idle, "idle confirmation required; nothing sent");
         let attachment = self.attachment_value(id).await?;
-        let capabilities = self.bridge.call("ping", json!({})).await?;
+        let capabilities = self.bridge.attachment_runtime(id).await?;
         ensure!(
             capabilities["capabilities"]
                 .as_array()

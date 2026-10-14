@@ -60,6 +60,9 @@ async function run(binary) {
     const tools = (await mcp.request("tools/list")).result.tools,
       names = Object.fromEntries(tools.map((t) => [t.name, t]));
     assert.equal(tools.length, 18);
+    const configuredTools=JSON.parse(codex.match(/^enabled_tools = (\[.*\])$/m)[1]);
+    assert.deepEqual([...configuredTools].sort(),tools.map(t=>t.name).sort(),
+      "generated terminal toolset must include every exposed connector tool");
     assert(names.connector_restore_prompt.annotations.destructiveHint);
     assert(
       names.connector_exec.annotations.destructiveHint &&

@@ -4,6 +4,8 @@ const net = require("node:net"),
   { MCP, fixture, assert, sleep } = require("./node_harness");
 async function run(binary) {
   const f = await fixture(binary, { persistent: true, fragmentReplies: true });
+  let connections=0;
+  f.bridge.server.on("connection",()=>connections++);
   let m;
   try {
     await new Promise((resolve, reject) => {
@@ -54,6 +56,11 @@ async function run(binary) {
         mode: "exec",
       })
     ).session_id;
+    const beforeConnections=connections;
+    assert(beforeConnections>0);
+    for(let i=0;i<3;i++) await m.tool("connector_read_screen", {session_id:sid});
+    assert.equal(connections,beforeConnections,
+      "successful persistent Rust exchanges must reuse the same TCP lane");
     f.bridge.fault = "lost";
     const result = await m.tool("connector_exec", {
       session_id: sid,

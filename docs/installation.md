@@ -2,7 +2,7 @@
 
 [简体中文](installation.md) · [English](installation.en.md) · [文档地图](README.md) · [Agent 安装提示词](agent-setup.md#中文提示词) · [Codex](clients/codex.md) · [Claude](clients/claude.md)
 
-Windows 新用户优先阅读[从这里开始](../START-HERE.md)：0.5.5 包提供保留结果窗口的安装入口、路径查看与两个终端的独立检查入口。下面保留完整的来源、配置和升级说明。
+Windows 新用户优先阅读[从这里开始](../START-HERE.md)：0.5.6 包提供保留结果窗口的安装入口、路径查看与两个终端的独立检查入口。下面保留完整的来源、配置和升级说明。
 
 本页介绍**当前 main**，并不适用于每一个已发布的 ZIP。桌面桥接沿用终端已有登录；OpenSSH 是需要显式选择并另行授权的独立连接。
 
