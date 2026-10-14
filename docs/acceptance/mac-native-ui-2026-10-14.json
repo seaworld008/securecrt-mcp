@@ -1,0 +1,59 @@
+{
+  "scope": "real SecureCRT macOS native UI and SSH",
+  "tested_on": "2026-10-14",
+  "tested_source_commit": "036a5e52e9259620fe6ba804290a574f2398cd99",
+  "binary_sha256": "ebe4ef63c0d288ede5fef80b6c047494bd4315ae18faa77a6188d9829b03c2c4",
+  "adapter_sha256": "ba0b6159d328b6fd8ddd0063fd2abcdd12fbc59b2ebaae2929a75c681529d54e",
+  "runtime": {
+    "python": "3.11.17",
+    "platform": "Darwin",
+    "architecture": "arm64",
+    "os_version": "27.0.1",
+    "adapter_sha256": "ba0b6159d328b6fd8ddd0063fd2abcdd12fbc59b2ebaae2929a75c681529d54e",
+    "securecrt_version": "9.5.2 (ARM64 build 3325)"
+  },
+  "checks": [
+    {
+      "case": "U01",
+      "passed": true,
+      "evidence": "Script Run fixed installed entry; startup reports two connected Tabs; matching online source identity"
+    },
+    {
+      "case": "U02",
+      "passed": true,
+      "evidence": "On another Tab, native Run is disabled while the process bridge runs; original two handles remain responsive",
+      "boundary": "Friendly duplicate notification branch not exercised because this exact Mac client blocks a second native script launch"
+    },
+    {
+      "case": "U03",
+      "passed": true,
+      "evidence": "Cancel on script host shows client Script Cancelled; loopback listener refuses connection; two SSH sessions remain connected; Run reloads and replaces both native handles"
+    },
+    {
+      "case": "U04",
+      "scope": "real MCP / native UI disconnect and reconnect / SSH",
+      "backend": "securecrt",
+      "checks": [
+        "original idle connected attachment",
+        "disconnected old attachment rejected with sent=false",
+        "reconnected generation rejects old attachment with sent=false",
+        "fresh generation executes exactly one unique marker"
+      ],
+      "passed": true,
+      "wall_seconds": 34.626
+    },
+    {
+      "case": "native recovery and log fallback",
+      "scope": "real Mac SDK / explicit idle recovery and reload",
+      "checks": [
+        "native reload preserves two SSH connections and issues new handles",
+        "prefer_native_log true safely falls back on both Mac tabs",
+        "attachment token and wrong prompt reject native recovery with sent=false",
+        "inspected idle plus fresh full-screen token recovers explicitly"
+      ],
+      "passed": true
+    }
+  ],
+  "passed": true,
+  "client_approval_ui": "untested"
+}

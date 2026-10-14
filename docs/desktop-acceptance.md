@@ -6,6 +6,8 @@
 Mac 2026-10-09 两 Tab 完整矩阵及原生 UI 已通过，见[脱敏 Mac 回执](acceptance/mac-native-matrix-2026-10-09.md)。Windows历史回执只认证其中的确切源码；Linux桌面未进行本轮真机验收。
 模拟测试、编译和 Windows 通过均不能替代 Mac 真机证据。
 
+2026-10-14 的 0.5.6 修复源码已完成新的双 Tab 完整矩阵及原生生命周期验收，见[本次 Mac 回执](acceptance/mac-native-matrix-2026-10-14.md)。本机重复启动被原生 Run 菜单禁用阻止；回执明确记录未触发的提示分支及未测客户端审批 UI。
+
 ## 入口与统一接口
 
 所有客户端使用同一个 Rust 核心和 `connector_*` 工具协议。Windows 共用

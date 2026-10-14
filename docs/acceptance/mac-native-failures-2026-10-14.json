@@ -1,0 +1,215 @@
+{
+  "scope": "real desktop / native SDK / SSH; UI startup separately checked",
+  "tested_on": "2026-10-14",
+  "binary_sha256": "47341b663cd774524f9525cc5e8a483fa05372bfd8b3fdf9fbd1260382ae1eb0",
+  "code_revision": {
+    "commit": "d3c3459f3c3d2ca5d608c7494a3377d3d864ef63",
+    "working_tree_modified": true
+  },
+  "source_sha256": {
+    "bridge/windows_bridge.js": "a8bdd9d25849fae567c5bde53c543bc2e4f48b41cf49ac6ce235a70f6d995d65",
+    "bridge/securecrt_bridge.py": "cd97012d10fc595d6e38c3a440799f8d1a45572b9ae876eedd7c90860c51b362"
+  },
+  "tabs": {
+    "securecrt": 2
+  },
+  "runtime": {
+    "securecrt": [
+      {
+        "python": "3.11.17",
+        "platform": "Darwin",
+        "architecture": "arm64",
+        "os_version": "27.0.1",
+        "adapter_sha256": "cd97012d10fc595d6e38c3a440799f8d1a45572b9ae876eedd7c90860c51b362",
+        "securecrt_version": "9.5.2 (ARM64 build 3325)"
+      }
+    ]
+  },
+  "wall_seconds": 20.132,
+  "explicit_recovery_probes": true,
+  "passed": false,
+  "results": [
+    {
+      "label": "securecrt-tab-2",
+      "backend": "securecrt",
+      "phase": "full-legacy",
+      "passed": false,
+      "wall_ms": 10832,
+      "result": {
+        "scope": "real MCP / native desktop / SSH",
+        "backend": "securecrt",
+        "protocol": "legacy",
+        "binary_sha256": "47341b663cd774524f9525cc5e8a483fa05372bfd8b3fdf9fbd1260382ae1eb0",
+        "checks": [
+          "unified connector tool discovery",
+          "explicit connected target",
+          "fresh native screen and idle prompt"
+        ],
+        "failure": {
+          "check": "POSIX marker completion"
+        },
+        "passed": false,
+        "error_type": "AssertionError"
+      }
+    },
+    {
+      "label": "securecrt-tab-1",
+      "backend": "securecrt",
+      "phase": "full-legacy",
+      "passed": true,
+      "wall_ms": 18840,
+      "result": {
+        "scope": "real MCP / native desktop / SSH",
+        "backend": "securecrt",
+        "protocol": "legacy",
+        "binary_sha256": "47341b663cd774524f9525cc5e8a483fa05372bfd8b3fdf9fbd1260382ae1eb0",
+        "checks": [
+          "unified connector tool discovery",
+          "explicit connected target",
+          "fresh native screen and idle prompt",
+          "POSIX marker completion",
+          "same operation returns same command without replay",
+          "Unicode and no-newline capture",
+          "nonzero exit code retained",
+          "three-command diagnostics batch",
+          "twenty consecutive commands retain original attachment",
+          "large UTF-8 output pagination",
+          "all 2500 UTF-8 rows match exactly in order without loss or duplicates",
+          "wrong prompt rejected before native send",
+          "attachment heartbeat",
+          "timeout preserves uncertainty",
+          "original prompt restored after finite sleep",
+          "unresolved session refuses new input",
+          "false idle confirmation cannot clear uncertainty",
+          "explicit recovery with fresh context",
+          "new attachment works after recovery",
+          "explicit Ctrl+C on the tracked command",
+          "interrupt outcome retained",
+          "idle prompt after explicit interrupt",
+          "explicit post-interrupt recovery"
+        ],
+        "diagnostics_batch": {
+          "state": "completed",
+          "results": [
+            {
+              "state": "completed",
+              "exit_code": 0,
+              "sent": true,
+              "error_code": null,
+              "requires_idle_ack": false
+            },
+            {
+              "state": "completed",
+              "exit_code": 0,
+              "sent": true,
+              "error_code": null,
+              "requires_idle_ack": false
+            },
+            {
+              "state": "completed",
+              "exit_code": 0,
+              "sent": true,
+              "error_code": null,
+              "requires_idle_ack": false
+            }
+          ]
+        },
+        "short_command_wall_ms": {
+          "median": 97,
+          "p95": 107,
+          "samples": [
+            107,
+            104,
+            112,
+            101,
+            97,
+            86,
+            76,
+            100,
+            107,
+            102,
+            106,
+            87,
+            95,
+            88,
+            75,
+            76,
+            75,
+            75,
+            74,
+            98
+          ]
+        },
+        "large_output_capture": {
+          "state": "completed",
+          "exit_code": 0,
+          "sent": true,
+          "error_code": null,
+          "requires_idle_ack": false,
+          "wall_ms": 1680
+        },
+        "large_output_integrity": {
+          "rows": 2500,
+          "expected_rows": 2500,
+          "exact_ordered_rows": true
+        },
+        "large_output": {
+          "pages": 71,
+          "bytes": 72501,
+          "capture_budget_ms": 10000,
+          "wall_ms_to_first_page": 1680
+        },
+        "timeout_probe": {
+          "state": "timed_out",
+          "exit_code": null,
+          "sent": true,
+          "error_code": "capture_timeout",
+          "requires_idle_ack": true
+        },
+        "finite_sleep_prompt_observation": {
+          "matched": true,
+          "reads": 1,
+          "wall_ms": 11,
+          "budget_ms": 3000,
+          "read_only": true
+        },
+        "interrupt_prompt_observation": {
+          "matched": true,
+          "reads": 1,
+          "wall_ms": 33,
+          "budget_ms": 3000,
+          "read_only": true
+        },
+        "passed": true
+      }
+    },
+    {
+      "label": "securecrt-tab-1",
+      "backend": "securecrt",
+      "phase": "minimal-modern",
+      "passed": true,
+      "wall_ms": 552,
+      "result": {
+        "scope": "live_connector",
+        "backend": "securecrt",
+        "protocol": "modern",
+        "status": "PASS",
+        "checks": [
+          "attach",
+          "exec",
+          "batch",
+          "pagination",
+          "rejection"
+        ],
+        "pages": 12,
+        "source_commit": "d3c3459f3c3d2ca5d608c7494a3377d3d864ef63; working-tree modified; see hashes",
+        "tested_on": "2026-10-14"
+      }
+    },
+    {
+      "backend": "securecrt",
+      "phase": "runtime-and-source-identity",
+      "passed": true
+    }
+  ]
+}

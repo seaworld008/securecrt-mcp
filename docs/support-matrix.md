@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | Windows 11 ARM64 / SecureCRT 9.6.2 x64 | JScript，共用Windows核心 | [2026-10-08 四Tab矩阵](acceptance/windows-native-matrix-2026-10-08.json)，两个SecureCRT Tab；[原生UI](acceptance/windows-native-ui-2026-10-08.json) |
 | Windows 11 ARM64 / Xshell 8.0.0.26 x86 | JScript，共用Windows核心 | 同一历史矩阵的两个Xshell Tab；只认证回执中的源码/二进制 |
-| macOS 27.0.1 / ARM64 / SecureCRT 9.5.2 build3325 | 实际Python 3.11.17 | 本次独立Mac验收回执；精确源码摘要改变后需重新加载与验证 |
+| macOS 27.0.1 / ARM64 / SecureCRT 9.5.2 build3325 | 实际Python 3.11.17 | [2026-10-14 双Tab矩阵及原生UI](acceptance/mac-native-matrix-2026-10-14.md)；精确源码摘要改变后需重新加载与验证 |
 | 其他Windows/Mac版本、架构 | 原生API探测 | 未实测组合不冒称认证 |
 | Linux桌面SecureCRT | 未进行本轮真机验收 | 未测；安装工具可用不等于桌面通过 |
 | 系统OpenSSH | Rust + OS ssh | 本地探测与真实认证、exec/PTY分开 |
