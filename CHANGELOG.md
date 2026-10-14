@@ -2,6 +2,15 @@
 
 # Changelog
 
+## [0.5.7] - 2026-10-14
+
+- Stop Windows native bridges normally through an explicitly selected, authenticated and idle-confirmed host; keep SSH connections open and avoid the terminal's forced-cancellation warning.
+- Include guarded SecureCRT/Xshell stop launchers in Windows bundles and use clear professional startup messages.
+- Keep consecutive file IPC exchanges responsive for a bounded 25 ms burst, then restore normal native idle waits.
+- Correct Windows native recovery guidance and scope desktop diagnostics/lifecycle identity to the selected test instances and tabs.
+- Remove only the OpenSSH command envelope's final separator LF; preserve exact empty/no-newline output, real blank lines and the output limit.
+- Regress the Mac 0.5.6 changes on Windows, with same-host native SSH performance measurements and preserved failed receipts.
+
 ## [0.5.6] - 2026-10-14
 
 - Apply operator command/raw-input/interrupt policy and before-send audit to OpenSSH, with batch preflight before any command is sent.

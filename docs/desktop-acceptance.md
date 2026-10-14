@@ -8,6 +8,11 @@ Mac 2026-10-09 两 Tab 完整矩阵及原生 UI 已通过，见[脱敏 Mac 回�
 
 2026-10-14 的 0.5.6 修复源码已完成新的双 Tab 完整矩阵及原生生命周期验收，见[本次 Mac 回执](acceptance/mac-native-matrix-2026-10-14.md)。本机重复启动被原生 Run 菜单禁用阻止；回执明确记录未触发的提示分支及未测客户端审批 UI。
 
+0.5.7 的 Windows 回归、正常停止、双客户端重连及同机原生 SSH 对照见
+[Windows 回执](acceptance/windows-mac-regression-2026-10-14.md)。默认捕获的完整恢复用例
+按 Tab 顺序运行，并另测同时执行隔离；原生日志通过并行完整矩阵。回执保留
+默认 `ReadString` 混合并行压力测试的超时边界，不把分项通过表述为该压力场景通过。
+
 ## 入口与统一接口
 
 所有客户端使用同一个 Rust 核心和 `connector_*` 工具协议。Windows 共用
@@ -41,6 +46,8 @@ JScript 的 COM 方法属性读取可能直接调用方法。在线检查只读�
 不得等待远端输入或发送命令；实际执行测试后再次检查接口记录。
 
 拉取源代码本身不会覆盖用户目录中的脚本。开发测试按下面顺序更新：
+
+Windows 新桥接支持正常停止：`securecrt-mcp.exe stop-native-host --backend securecrt --confirmed-idle`（Xshell 使用 `--backend xshell`）。必须确认空闲；有捕获或未决命令时拒绝。多个实例必须加 `--instance`，只向该代际发送一次带认证的停止请求，不发送 SSH 输入、不重放或强行关闭终端。自然返回后清理登记与所有权，并显示普通停止通知。SecureCRT 自带的 Script → Cancel 文案仍由客户端控制，不能修改。
 
 ```powershell
 cargo build --release --locked

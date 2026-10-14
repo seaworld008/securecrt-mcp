@@ -18,7 +18,7 @@ const fs = require("node:fs"),
 function buildStressDriver(source, stop, manifest) {
   return (
     source +
-    "\nmcpNotifyStarted=function(){};\nvar stopPath=" +
+    "\nmcpNotifyStarted=function(){};mcpNotify=function(){};\nvar stopPath=" +
     JSON.stringify(stop) +
     ';\nvar host={GetTabCount:function(){return 0;},Sleep:function(ms){if(new ActiveXObject("Scripting.FileSystemObject").FileExists(stopPath)) throw "script cancelled";WScript.Sleep(ms);}};\ntry{mcpServeWindows(host,"securecrt",' +
     JSON.stringify(manifest) +
@@ -43,17 +43,18 @@ function preserveStressFailure(primary, cleanup, state) {
   if (primary && cleanup) failure.cleanup_error = cleanup.message;
   return failure;
 }
-async function stress(work, source, cscript) {
+async function stress(work, source, cscript, binary) {
   const root = path.join(work, "concurrent-ipc");
   fs.mkdirSync(root);
   const stop = path.join(root, "stop.flag"),
-    directory = path.join(root, "instances", "stress-instance"),
+    instance = crypto.randomUUID(),
+    directory = path.join(root, "instances", instance),
     manifest = {
-      bridge_instance: "stress-instance",
+      bridge_instance: instance,
       ipc_dir: root,
       adapter_sha256: crypto.createHash("sha256").update(source).digest("hex"),
-      token: "stress-token",
-      runtime: {},
+      token: "stress-token-".repeat(4),
+      runtime: {host_pid: 23456},
     };
   const driver = path.join(work, "concurrent-ipc.js");
   writeJScript(driver, buildStressDriver(source, stop, manifest));
@@ -94,7 +95,7 @@ async function stress(work, source, cscript) {
         writeJSON(tmp, {
           id,
           protocol_version: 2,
-          token: "stress-token",
+          token: manifest.token,
           client_id: "stress-client",
           deadline_ms: Date.now() + 35000,
           method: "list_sessions",
@@ -126,6 +127,24 @@ async function stress(work, source, cscript) {
     console.log(
       "PASS: 800 authenticated native IPC requests with concurrent deletion",
     );
+    const app = path.join(work, "normal-stop-app"), env = {...process.env, SECURECRT_MCP_HOME: app};
+    fs.mkdirSync(app);
+    fs.writeFileSync(path.join(app,"config.toml"), '[audit]\nenabled=false\n');
+    writeJSON(path.join(app,"bridge.json"), {host:"127.0.0.1",port:8765,token:manifest.token,max_request_bytes:262144,ipc_dir:root});
+    const before = await command(binary, ["stop-native-host"], env);
+    assert.notEqual(before.code,0,"missing idle confirmation must not stop a host");
+    assert.equal(proc.exitCode,null);
+    const stopped = await command(binary, ["stop-native-host","--confirmed-idle"], env);
+    assert.equal(stopped.code,0,stopped.stderr);
+    assert(JSON.parse(stopped.stdout).stopped);
+    const ended = Date.now()+5000;
+    while(!closed && Date.now()<ended) await sleep(10);
+    assert(closed && proc.exitCode===0,"native host must end normally, without cancellation");
+    assert(!fs.existsSync(path.join(directory,"ready.json")));
+    const owner=readJSON(path.join(root,"hosts","23456","owner.json"));
+    assert.equal(owner.active,false);
+    assert.equal(owner.capture_count,0);
+    console.log("PASS: compiled normal-stop CLI / real WSH IPC exits naturally and cleans registration/owner without Cancel");
     phase = "completed";
   } catch (error) {
     primaryFailure = error;
@@ -219,7 +238,7 @@ async function run(binary) {
     work = fs.mkdtempSync(path.join(os.tmpdir(), "MCP 中文 bootstrap "));
   let primaryFailure;
   try {
-    await stress(work, source, path.join(windir, "System32/cscript.exe"));
+    await stress(work, source, path.join(windir, "System32/cscript.exe"), binary);
     const core = path.join(work, "core.js");
     writeJScript(
       core,

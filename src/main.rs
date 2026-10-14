@@ -62,6 +62,19 @@ enum Command {
     },
     /// Install the binary, platform bridge and an additive Codex configuration.
     Install,
+    /// Normally stop one idle Windows bridge, preserving terminal SSH connections.
+    StopNativeHost {
+        #[arg(long, default_value="securecrt", value_parser=["securecrt", "xshell"])]
+        backend: String,
+        /// Required if multiple native instances are online.
+        #[arg(long)]
+        instance: Option<String>,
+        /// Show terminal labels and let the operator select an instance.
+        #[arg(long, conflicts_with = "instance")]
+        choose: bool,
+        #[arg(long)]
+        confirmed_idle: bool,
+    },
     /// Repair only a legacy native host lock after the original script stopped and its captures are idle.
     RepairNativeHost {
         #[arg(long)]
@@ -215,6 +228,120 @@ async fn main() -> Result<()> {
             ended?;
         }
         Command::Install => installation::install()?,
+        Command::StopNativeHost {
+            backend,
+            instance,
+            choose,
+            confirmed_idle,
+        } => {
+            ensure!(
+                cfg!(windows),
+                "normal native stop currently requires Windows"
+            );
+            ensure!(
+                confirmed_idle,
+                "confirm idle before stopping; bridge remains running"
+            );
+            let config = Config::load()?;
+            let secret = if backend == "xshell" {
+                load_xshell_bridge_secret()?
+            } else {
+                load_bridge_secret()?
+            };
+            let mut settings = config.bridge.clone();
+            settings.port = secret.port;
+            let client = BridgeClient::new(settings, secret)?;
+            let selected = if let Some(id) = instance {
+                id
+            } else {
+                let reports = client.runtime_reports().await?;
+                ensure!(
+                    !reports.is_empty(),
+                    "no online native bridge; nothing stopped"
+                );
+                let index = if reports.len() == 1 {
+                    0
+                } else {
+                    ensure!(
+                        choose,
+                        "select one explicit --instance or use --choose; no bridge stopped"
+                    );
+                    let listed = client.call("list_sessions", serde_json::json!({})).await?;
+                    let sessions = listed["sessions"]
+                        .as_array()
+                        .context("missing native session labels")?;
+                    for (i, report) in reports.iter().enumerate() {
+                        let id = report["instance"]
+                            .as_str()
+                            .context("missing native instance")?;
+                        let labels: Vec<&str> = sessions
+                            .iter()
+                            .filter(|session| {
+                                session["id"]
+                                    .as_str()
+                                    .is_some_and(|sid| sid.starts_with(&format!("{id}/")))
+                            })
+                            .filter_map(|session| {
+                                session["tab_text"]
+                                    .as_str()
+                                    .or(session["caption"].as_str())
+                                    .or(session["session_name"].as_str())
+                            })
+                            .collect();
+                        println!(
+                            "{}. {}",
+                            i + 1,
+                            if labels.is_empty() {
+                                "Windows bridge".to_owned()
+                            } else {
+                                labels
+                                    .join(", ")
+                                    .chars()
+                                    .filter(|c| !c.is_control())
+                                    .collect::<String>()
+                            }
+                        );
+                    }
+                    print!("Select the idle bridge to stop (0 = cancel): ");
+                    std::io::stdout().flush()?;
+                    let mut input = String::new();
+                    std::io::stdin().read_line(&mut input)?;
+                    let number: usize = input
+                        .trim()
+                        .parse()
+                        .context("invalid selection; nothing stopped")?;
+                    if number == 0 {
+                        println!("Cancelled; bridge remains running.");
+                        return Ok(());
+                    }
+                    ensure!(
+                        number <= reports.len(),
+                        "invalid selection; nothing stopped"
+                    );
+                    number - 1
+                };
+                reports[index]["instance"]
+                    .as_str()
+                    .context("missing native instance")?
+                    .to_owned()
+            };
+            let audit = AuditLog::new(
+                config.audit.enabled,
+                config.audit.include_command_text,
+                config.audit_path()?,
+            )
+            .with_sync(config.audit.durability == "each_event");
+            audit
+                .record(
+                    "native_host_stop",
+                    "",
+                    &selected,
+                    "explicit idle confirmation; no SSH input",
+                    None,
+                )
+                .await?;
+            local_cli::emit(&client.stop_native_host(&selected).await?)?;
+        }
         Command::Init { force } => initialize(force)?,
         Command::Upgrade => initialize(false)?,
         Command::Doctor {
@@ -413,9 +540,7 @@ fn initialize(force: bool) -> Result<()> {
         bridge_script_path()?.display()
     );
     #[cfg(windows)]
-    println!(
-        "When idle, cancel the old script and run the native .js entry above. No Python is required."
-    );
+    println!("When idle, stop the old bridge and load the native script entry above.");
     println!(
         "Run doctor, reload Codex, list sessions again. Old session handles are intentionally invalid."
     );
@@ -488,7 +613,7 @@ async fn doctor(offline: bool) -> Result<()> {
     );
     println!("bridge: OK\n{}", serde_json::to_string_pretty(&info)?);
     if info["script_engine"] == "JScript" {
-        println!("Native Windows JScript bridge: Python is not required.");
+        println!("Native Windows JScript bridge.");
     } else {
         println!("Check the terminal's actual embedded Python compatibility in this report.");
     }

@@ -27,7 +27,9 @@ fn floor(policy: &Value, name: &str) -> (u64, u64) {
 
 pub fn report(backend: &str, runtime: Option<&Value>) -> Value {
     let policy: Value = serde_json::from_str(POLICY).expect("compiled support policy");
-    let api_policy = if runtime.is_some_and(|r| r["script_engine"] == "JScript") {
+    let native_windows = runtime.is_some_and(|r| r["script_engine"] == "JScript")
+        || (runtime.is_none() && (cfg!(windows) || backend == "xshell"));
+    let api_policy = if native_windows {
         "native_windows_required_apis"
     } else {
         "required_apis"
@@ -151,9 +153,9 @@ pub fn report(backend: &str, runtime: Option<&Value>) -> Value {
     if !unknown.is_empty() {
         reasons.push("native_probe_incomplete_or_no_tab");
     }
-    let guidance = if runtime.is_some_and(|r| r["script_engine"] == "JScript") {
+    let guidance = if native_windows {
         vec![
-            "Run the self-contained Windows .js entry inside its terminal; Python is not required.",
+            "Load the Windows bridge script inside its terminal.",
             "Cancel an old script only when idle; restart the MCP client after changing bridge transport.",
             "Open a verified connected test session and repeat doctor and the native acceptance suite.",
         ]
@@ -251,6 +253,26 @@ pub fn validate_runtime(backend: &str, runtime: &Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn absent_runtime_uses_platform_guidance_and_preserves_explicit_python_runtime() {
+        let offline = report("securecrt", None);
+        let guide = offline["repair_guidance"].to_string();
+        assert_eq!(guide.contains("Windows bridge script"), cfg!(windows));
+        let explicit = report(
+            "securecrt",
+            Some(&json!({"script_engine":"Python","python":"3.11.17"})),
+        );
+        assert!(
+            explicit["repair_guidance"]
+                .to_string()
+                .contains("Python engine")
+        );
+        assert!(
+            report("xshell", None)["repair_guidance"]
+                .to_string()
+                .contains("Windows bridge script")
+        );
+    }
     #[test]
     fn missing_api_is_unsupported_but_tabless_probe_is_unknown() {
         let policy: Value = serde_json::from_str(POLICY).unwrap();

@@ -18,7 +18,7 @@ import time
 import uuid
 from pathlib import Path
 
-BRIDGE_VERSION = "0.5.6"
+BRIDGE_VERSION = "0.5.7"
 SCRIPT_SHA256 = None
 PROTOCOL_VERSION = 2
 MAX_FRAME = 262144

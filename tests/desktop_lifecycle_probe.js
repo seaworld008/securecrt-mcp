@@ -3,7 +3,7 @@
 const fs = require("node:fs"),
   path = require("node:path"),
   crypto = require("node:crypto"),
-  { MCP, sleep, args, writeJSON, assert } = require("./node_harness");
+  { MCP, sleep, args, writeJSON, assert, hash } = require("./node_harness");
 const fingerprint = (item) =>
   Object.fromEntries(
     [
@@ -13,6 +13,7 @@ const fingerprint = (item) =>
       "protocol",
       "port",
       "session_name",
+      "tab_text",
       "remote_address",
       "remote_port",
       "user",
@@ -30,6 +31,8 @@ async function run(a) {
     receipt = {
       scope: "real MCP / native UI disconnect and reconnect / SSH",
       backend,
+      binary_sha256: hash(path.resolve(a._[0])),
+      adapter_sha256: hash(path.join(__dirname, "../bridge/windows_bridge.js")),
       checks: [],
       passed: false,
     };
@@ -70,13 +73,18 @@ async function run(a) {
       assert(Date.now() < until, "disconnected target still connected");
       await sleep(50);
     }
+    const rejectedMarker = "LIFECYCLE_MUST_NOT_SEND_" + crypto.randomUUID().replaceAll("-", "");
     async function rejectOld() {
       const r = await client.tool("connector_exec", {
         session_id: old,
-        command: "printf 'LIFECYCLE_MUST_NOT_SEND\\n'",
+        command: "printf '" + rejectedMarker + "\\n'",
         mode: "posix",
         wait_ms: 0,
       });
+      receipt.last_stale_rejection = Object.fromEntries(
+        ["sent", "state", "error_code", "requires_idle_ack", "automatic_retry"]
+          .filter((key) => key in r).map((key) => [key, r[key]]),
+      );
       assert(
         r.sent === false && r.state === "rejected",
         "old attachment did not fail before send",

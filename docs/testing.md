@@ -57,4 +57,13 @@ node tests/desktop_matrix.js target/release/securecrt-mcp --backend securecrt --
 
 U01–U04另用实际终端UI：启动、其他Tab重复启动、空闲取消且登录保留、重新加载获得新句柄、专用Tab断开/重连拒绝旧附件。`desktop_lifecycle_probe.js`通过新控制目录的实际阶段与flag协调原生UI；没有真实确认不能写flag。关闭重建Tab不等同断开重连，未做项目明确写未测。
 
+断开 flag 必须在终端确认框完成后，以原生 Tab 已断开和其他测试页仍连接为证据；
+确认框阻塞脚本造成的 IPC 暂时离线不证明 SSH 已断开。重连 flag 还须核对同一 Tab
+身份和认证后的新鲜空闲画面。UI 等待期限与原定命令预算分开，失败保留且不重放。
+
+同一 SecureCRT 脚本线程的默认 `ReadString` 会进行秒级等待。完整 legacy 套件混合
+长输出与其他 Tab 的刻意超时/恢复时，使用 `--jobs 1` 分项运行，再单独验收同时执行
+隔离；原生日志用并行完整套件验收。不得增加长输出预算或隐藏混合并行的 FAIL。
+0.5.7 的确切范围和同机 OpenSSH 对照见[Windows 回执](acceptance/windows-mac-regression-2026-10-14.md)。
+
 失败保留FAIL阶段和审计；不自动重发未知命令、不扩大长输出预算、不自动中断业务命令。恢复必须检查原会话结束和新鲜空闲屏幕。公开回执脱敏，不含Token、地址、用户名、会话ID和已有终端历史。代码/CI通过、原生GUI通过、远端业务通过分别报告。

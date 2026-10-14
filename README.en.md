@@ -36,7 +36,7 @@ The MCP client uses one long-lived Rust Engine to reuse authenticated desktop te
 
 ## Get started
 
-**Windows 0.5.6 bundle:** follow [Start here](START-HERE.en.md): install → load the terminal script → connect the client → check. The bundle includes installation, path lookup and separate SecureCRT / Xshell checks; no development tools are needed.
+**Windows 0.5.7 bundle:** follow [Start here](START-HERE.en.md): install → load the terminal script → connect the client → check. The bundle includes installation, path lookup and separate SecureCRT / Xshell checks; no development tools are needed.
 
 **[Installation and upgrade](docs/installation.en.md)** · [Codex](docs/clients/codex.en.md) · [Claude Code / Desktop](docs/clients/claude.en.md) · **[Agent setup prompts](docs/agent-setup.md#english-prompt)**
 

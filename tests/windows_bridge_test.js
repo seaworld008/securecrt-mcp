@@ -14,6 +14,14 @@ function check(name, fn) {
   passed++;
   console.log("PASS: " + name);
 }
+check("IPC response bursts expire and clock rollback restores idle pumping",()=>{
+  assert.equal(ctx.mcpIpcYieldMs(0,100000),15);
+  assert.equal(ctx.mcpIpcYieldMs(100000,100000),1);
+  assert.equal(ctx.mcpIpcYieldMs(100000,100024),1);
+  assert.equal(ctx.mcpIpcYieldMs(100000,100025),15);
+  assert.equal(ctx.mcpIpcYieldMs(100000,99999),15);
+  assert.equal(ctx.mcpIpcYieldMs(100000,110000),15);
+});
 function fixture(backend) {
   const state = { selected: "A", sends: [], failSend: false };
   function screen() {
@@ -162,6 +170,30 @@ function fixture(backend) {
   }
   return { adapter, call, host, state, screens, tabs };
 }
+check("normal stop requires authenticated idle and matching generation without terminal input", () => {
+  for (const backend of ["securecrt", "xshell"]) {
+    const f = fixture(backend), p = { confirmed_idle: true, bridge_instance: "instance", adapter_sha256: ctx.mcpSha256(source) };
+    assert(!f.call("stop_host", { ...p, confirmed_idle: false }).ok);
+    assert(!f.call("stop_host", { ...p, bridge_instance: "old" }).ok);
+    assert(!f.call("stop_host", { ...p, adapter_sha256: "old-source" }).ok);
+    f.adapter.captures.owned = {};
+    assert(!f.call("stop_host", p).ok);
+    delete f.adapter.captures.owned;
+    f.adapter.unresolved.owned = {};
+    assert(!f.call("stop_host", p).ok);
+    delete f.adapter.unresolved.owned;
+    f.adapter.hostRecord = () => { throw Error("ownership_conflict"); };
+    assert(!f.call("stop_host", p).ok);
+    assert(!f.adapter.stopRequested);
+    f.adapter.hostRecord = () => {};
+    const rejected = f.adapter.request({ protocol_version: 2, token: "wrong", id: "stop", client_id: "client", deadline_ms: now + 1000, method: "stop_host", params: p }, "secret");
+    assert(!rejected.ok && !f.adapter.stopRequested);
+    const stopped = f.call("stop_host", p);
+    assert(stopped.ok && stopped.result.stopped && stopped.sent === false);
+    assert.equal(f.adapter.stopRequested, true);
+    assert.deepEqual(f.state.sends, []);
+  }
+});
 check(
   "SHA-256 matches UTF-8, Unicode, block boundaries and packaged source",
   () => {

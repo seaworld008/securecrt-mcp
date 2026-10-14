@@ -1,9 +1,16 @@
 // Windows Active Scripting bridge. ES3 only; native APIs stay on the host thread.
 // This module is also exercised with deterministic native API fixtures.
-var MCP_WINDOWS_VERSION = "0.5.6";
+var MCP_WINDOWS_VERSION = "0.5.7";
 function mcpFail(message) { throw String(message); }
 function mcpError(e) { return String(e.description || e.message || e) + (e.number ? " ("+e.number+")" : ""); }
 function mcpNow() { return new Date().getTime(); }
+function mcpIpcYieldMs(lastResponse,now) {
+    // Rust normally submits the next exchange just after this response. Keep
+    // that short burst responsive without removing the native message pump or
+    // turning an idle terminal into a permanent fast polling loop.
+    var elapsed=now-lastResponse;
+    return lastResponse>0 && elapsed>=0 && elapsed<25?1:15;
+}
 function mcpOwn(o, k) { return Object.prototype.hasOwnProperty.call(o, k); }
 function mcpCount(o) { var n=0;for(var k in o) if(mcpOwn(o,k)) n++;return n; }
 function mcpTrim(s) { return String(s).replace(/\s+$/, ""); }
@@ -205,7 +212,7 @@ McpWindowsAdapter.prototype.session=function(id,retained) {
     }
     e.expires=mcpNow()+120000;return e;
 };
-McpWindowsAdapter.prototype.capabilities=function() { var c=["session_leases","screen_tokens","attachments","prepare_and_begin","per_session_capture","interrupt","ack_fresh_view","poll_bulk","file_ipc","restore_prompt"];if(this.captureFiles)c.push("native_log_capture");return c; };
+McpWindowsAdapter.prototype.capabilities=function() { var c=["session_leases","screen_tokens","attachments","prepare_and_begin","per_session_capture","interrupt","ack_fresh_view","poll_bulk","file_ipc","restore_prompt","graceful_stop"];if(this.captureFiles)c.push("native_log_capture");return c; };
 McpWindowsAdapter.prototype.ping=function() {
     var apis={},apiErrors={},names=this.backend=="xshell"?
         ["xsh.Session.Connected","xsh.Session.SelectTabName","xsh.Session.SessionName","xsh.Session.TabText","xsh.Session.Sleep","xsh.Screen.Get","xsh.Screen.CurrentRow","xsh.Screen.CurrentColumn","xsh.Screen.Rows","xsh.Screen.Columns","xsh.Screen.Synchronous","xsh.Screen.Send","xsh.Screen.WaitForStrings"]:
@@ -739,6 +746,14 @@ McpWindowsAdapter.prototype.maintain=function() {
 McpWindowsAdapter.prototype.dispatch=function(method,p) {
     this.maintain();var a,e,c;
     if(method=="ping") return this.ping();
+    if(method=="stop_host") {
+        if(p.confirmed_idle!==true) mcpFail("idle confirmation required; bridge remains running");
+        if(p.bridge_instance!=this.instance || p.adapter_sha256!=this.sourceHash) mcpFail("stale_session: native generation or source changed; bridge remains running");
+        if(mcpCount(this.captures)>0 || mcpCount(this.unresolved)>0) mcpFail("busy: capture or unresolved command exists; bridge remains running");
+        this.beforeSend(); // Revalidate the native generation without sending input.
+        this.stopRequested=true;
+        return {stopped:true,sent:false,ssh_connections_preserved:true};
+    }
     if(method=="list_sessions") return this.list();
     if(method=="read_screen") return this.readScreen(p.session);
     if(method=="attach") return this.attach(p);
@@ -810,7 +825,7 @@ function mcpNotify(fso,dir,message,style) {
     shell.Run('"'+shell.ExpandEnvironmentStrings("%WINDIR%")+'\\System32\\wscript.exe" //nologo "'+script+'"',0,false);
 }
 function mcpNotifyStarted(fso,dir,backend,count) {
-    mcpNotify(fso,dir,(backend=="xshell"?"Xshell":"SecureCRT")+" MCP \u5df2\u542f\u52a8\uff0c\u5df2\u8fde\u63a5\u4f1a\u8bdd\uff1a"+count+"\u3002\n\u65e0\u9700 Python\uff1b\u5173\u95ed\u63d0\u793a\u540e\u7ee7\u7eed\u8fd0\u884c\u3002",64);
+    mcpNotify(fso,dir,(backend=="xshell"?"Xshell":"SecureCRT")+" MCP \u5df2\u542f\u52a8\uff0c\u5df2\u8fde\u63a5\u4f1a\u8bdd\uff1a"+count+"\u3002\n\u5173\u95ed\u63d0\u793a\u540e\u7ee7\u7eed\u8fd0\u884c\u3002",64);
 }
 function mcpClaimHost(fso,root,backend,manifest) {
     // SecureCRT enumerates all tabs in one process. Other processes have separate locks.
@@ -925,7 +940,7 @@ function mcpServeWindows(host,backend,manifest,source) {
         }
         if(folder) walk(folder,0);return names;
     };
-    var heartbeat=0;
+    var heartbeat=0,lastResponse=0;
     try {
         var initial;
         try { initial=adapter.list(); }
@@ -963,8 +978,11 @@ function mcpServeWindows(host,backend,manifest,source) {
                 if(lock) adapter.hostRecord();
                 adapter.stage="publish IPC response";
                 mcpWriteJson(fso,fso.BuildPath(dir,base+".response.json"),response);
+                lastResponse=mcpNow();
+                if(adapter.stopRequested) break;
             }
-            adapter.yieldHost(paths.length?1:15);
+            if(adapter.stopRequested) break;
+            adapter.yieldHost(mcpIpcYieldMs(lastResponse,mcpNow()));
         }
     } catch(error) {
         mcpFail(adapter.stage+": "+mcpError(error));
@@ -975,4 +993,5 @@ function mcpServeWindows(host,backend,manifest,source) {
         try { if(stillOwned) mcpWriteJson(fso,fso.BuildPath(root,backend+"-status.json"),{state:"stopped",backend:backend,stopped_ms:mcpNow()}); } catch(e) {}
         try { if(lock && stillOwned) mcpHostRecord(fso,lock,adapter,false); } catch(e) {}
     }
+    if(adapter.stopRequested) mcpNotify(fso,root,(backend=="xshell"?"Xshell":"SecureCRT")+" MCP \u5df2\u505c\u6b62\u3002\nSSH \u8fde\u63a5\u4fdd\u6301\u4e0d\u53d8\uff1b\u9700\u8981\u65f6\u53ef\u91cd\u65b0\u8fd0\u884c\u6865\u63a5\u811a\u672c\u3002",64);
 }

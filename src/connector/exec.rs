@@ -1,5 +1,16 @@
 use super::*;
 
+fn finish_framed_output(output: &mut Vec<u8>, truncated: &mut bool) {
+    // The envelope adds exactly one LF before END, including when the command
+    // has no output or omits its own final newline. Remove only that byte when
+    // it was retained; a truncated prefix contains command bytes instead.
+    if !*truncated && output.last() == Some(&b'\n') {
+        output.pop();
+    }
+    *truncated |= output.len() > MAX_OUTPUT;
+    output.truncate(MAX_OUTPUT);
+}
+
 struct UnresolvedOnDrop {
     transport: Arc<ExecTransport>,
     armed: bool,
@@ -115,11 +126,14 @@ pub(super) async fn run_exec(
                 text.strip_prefix(&(end.clone() + " "))
                     .and_then(|s| s.parse::<i32>().ok())
             }) {
+                finish_framed_output(&mut output, &mut truncated);
                 return Ok((output.clone(), code, truncated));
             }
             if started {
-                if output.len() < MAX_OUTPUT {
-                    let remaining = MAX_OUTPUT - output.len();
+                // One extra byte reserves room for the framing LF. A command
+                // returning exactly MAX_OUTPUT bytes is still complete.
+                if output.len() < MAX_OUTPUT + 1 {
+                    let remaining = MAX_OUTPUT + 1 - output.len();
                     let take = remaining.min(line.len());
                     output.extend_from_slice(&line[..take]);
                     truncated |= take != line.len();
@@ -137,6 +151,11 @@ pub(super) async fn run_exec(
         let take = MAX_OUTPUT.saturating_sub(output.len()).min(line.len());
         output.extend_from_slice(&line[..take]);
         truncated |= take != line.len();
+    }
+    if !matches!(&deadline, Ok(Ok(_))) {
+        // Without END there is no evidence of a protocol newline to remove.
+        truncated |= output.len() > MAX_OUTPUT;
+        output.truncate(MAX_OUTPUT);
     }
     let outcome = match deadline {
         Ok(Ok((output, exit_code, truncated))) => ExecOutcome {
@@ -182,4 +201,46 @@ pub(super) async fn run_exec(
         transport.unresolved.store(false, Ordering::SeqCst);
     }
     outcome
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn completion_preserves_real_newlines_and_truncated_prefixes() {
+        for (wire, expected) in [
+            (b"\n".as_slice(), b"".as_slice()),
+            (b"line\n", b"line"),
+            (b"line\n\n", b"line\n"),
+            (b"line\n\n\n", b"line\n\n"),
+            (b"line\r\n\n", b"line\r\n"),
+        ] {
+            let mut output = wire.to_vec();
+            let mut truncated = false;
+            finish_framed_output(&mut output, &mut truncated);
+            assert_eq!(output, expected);
+            assert!(!truncated);
+        }
+        let mut prefix = b"retained\n".to_vec();
+        let mut truncated = true;
+        finish_framed_output(&mut prefix, &mut truncated);
+        assert_eq!(prefix, b"retained\n");
+        assert!(truncated);
+    }
+
+    #[test]
+    fn framing_byte_does_not_truncate_an_exact_limit_body() {
+        let mut output = vec![b'x'; MAX_OUTPUT];
+        output.push(b'\n');
+        let mut truncated = false;
+        finish_framed_output(&mut output, &mut truncated);
+        assert_eq!(output.len(), MAX_OUTPUT);
+        assert!(!truncated);
+        let mut output = vec![b'x'; MAX_OUTPUT + 1];
+        let mut truncated = true;
+        finish_framed_output(&mut output, &mut truncated);
+        assert_eq!(output.len(), MAX_OUTPUT);
+        assert!(truncated);
+    }
 }

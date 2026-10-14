@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 "use strict";
-const { isolation } = require("./desktop_matrix");
+const { isolation, selectedInstances, scopedReports } = require("./desktop_matrix");
 const { assert, fixture, MCP } = require("./node_harness");
 class IsolationDouble {
   constructor(mode) {
@@ -73,6 +73,15 @@ class IsolationDouble {
   }
 }
 async function run() {
+  const one="11111111-1111-4111-8111-111111111111",two="22222222-2222-4222-8222-222222222222";
+  const selected=selectedInstances("xshell",["xshell="+one+"/session/1","xshell="+one+"/session/2","securecrt="+two+"/session/1"]);
+  assert.deepEqual([...selected],[one]);
+  assert.equal(selectedInstances("xshell",[]),null);
+  assert.throws(()=>selectedInstances("xshell",["xshell=unbound-target"]));
+  const selectedFailure={instance:one,validation_error:"source changed"};
+  assert.deepEqual(scopedReports([{instance:two,validation_error:"unrelated older host"},selectedFailure],selected),[selectedFailure]);
+  assert.throws(()=>scopedReports([{instance:two}],selected),/missing/);
+  console.log("PASS: explicit native scope excludes unrelated hosts but preserves selected failures and rejects missing instances");
   for (const mode of ["overlap", "sequential", "cross-talk"]) {
     const client = new IsolationDouble(mode);
     let watchdog;

@@ -260,6 +260,31 @@ impl BridgeClient {
         self.call("ping", params).await
     }
 
+    /// Stop one explicitly selected idle Windows generation; never broadcast or retry.
+    pub async fn stop_native_host(&self, instance: &str) -> Result<Value> {
+        let Transport::File { state } = self.transport.as_ref() else {
+            anyhow::bail!("normal native stop requires Windows file IPC");
+        };
+        let directory = require_file_instance(&state.root, instance).await?;
+        let runtime = self
+            .call_file_instance("ping", json!({}), state, instance, &directory)
+            .await?;
+        ensure!(
+            runtime["platform"] == "Windows"
+                && runtime["capabilities"]
+                    .as_array()
+                    .is_some_and(|items| items.iter().any(|v| v == "graceful_stop")),
+            "loaded bridge does not support normal stop; upgrade and reload it first"
+        );
+        self.call_file_instance(
+            "stop_host",
+            json!({"confirmed_idle":true,"bridge_instance":instance,"adapter_sha256":runtime["adapter_sha256"]}),
+            state,
+            instance,
+            &directory,
+        ).await
+    }
+
     /// Doctor validates every process, rather than the representative ping used
     /// for fast-path negotiation. No remote input is sent by these requests.
     pub async fn runtime_reports(&self) -> Result<Vec<Value>> {

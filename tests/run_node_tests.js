@@ -6,6 +6,7 @@ async function run(binary) {
   binary = path.resolve(binary);
   for (const name of [
     "windows_bridge_test.js",
+    "native_stop_selection_smoke.js",
     "windows_driver_contract.js",
     "client_contract.js",
     // Windows developers can run the optional WSL contract separately; CI must

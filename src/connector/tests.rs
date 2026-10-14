@@ -66,7 +66,7 @@ async fn openssh_policy_and_audit_rejections_send_nothing_to_the_transport() {
             1000,
         )
         .await;
-        assert_eq!(String::from_utf8(probe.output).unwrap(), "unchanged\n");
+        assert_eq!(String::from_utf8(probe.output).unwrap(), "unchanged");
     }
     let audit_path = std::env::temp_dir()
         .join(Uuid::new_v4().to_string())
@@ -87,7 +87,7 @@ async fn openssh_policy_and_audit_rejections_send_nothing_to_the_transport() {
         1000,
     )
     .await;
-    assert_eq!(String::from_utf8(probe.output).unwrap(), "unchanged\n");
+    assert_eq!(String::from_utf8(probe.output).unwrap(), "unchanged");
 }
 
 #[cfg(unix)]
@@ -121,7 +121,7 @@ async fn openssh_batch_checks_every_command_before_the_first_send() {
         1000,
     )
     .await;
-    assert_eq!(String::from_utf8(probe.output).unwrap(), "unchanged\n");
+    assert_eq!(String::from_utf8(probe.output).unwrap(), "unchanged");
 }
 
 #[tokio::test]
@@ -209,7 +209,7 @@ async fn openssh_repeat_returns_original_receipt_without_audit_or_resend() {
         "audit_unavailable"
     );
     let probe = run_exec(&transport, "printf '%s' \"$counter\"", 1000).await;
-    assert_eq!(String::from_utf8(probe.output).unwrap(), "1\n");
+    assert_eq!(String::from_utf8(probe.output).unwrap(), "1");
     std::fs::remove_file(path).unwrap();
 }
 
@@ -319,6 +319,37 @@ fn local_transport() -> Arc<ExecTransport> {
         command_lock: Mutex::new(()),
         unresolved: AtomicBool::new(false),
     })
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn persistent_exec_preserves_exact_command_output() {
+    let transport = local_transport();
+    for (command, expected, code) in [
+        ("true", "", 0),
+        ("printf plain", "plain", 0),
+        ("printf 'line\\n'", "line\n", 0),
+        ("printf 'line\\n\\n'", "line\n\n", 0),
+        ("printf '中文\\nsecond'", "中文\nsecond", 0),
+        ("printf 'line\\r\\n'", "line\r\n", 0),
+        ("(exit 7)", "", 7),
+    ] {
+        let result = run_exec(&transport, command, 1000).await;
+        assert_eq!(result.state, "completed");
+        assert_eq!(result.output, expected.as_bytes());
+        assert_eq!(result.exit_code, Some(code));
+        assert!(!result.truncated);
+        assert!(!transport.unresolved.load(Ordering::SeqCst));
+    }
+    let result = run_exec(
+        &transport,
+        &format!("awk 'BEGIN {{for (i=0;i<{MAX_OUTPUT};i++) printf \"x\"}}'"),
+        10000,
+    )
+    .await;
+    assert_eq!(result.state, "completed");
+    assert_eq!(result.output.len(), MAX_OUTPUT);
+    assert!(!result.truncated);
 }
 
 #[cfg(unix)]

@@ -2,7 +2,7 @@
 
 [简体中文](installation.md) · [English](installation.en.md) · [Documentation map](README.en.md) · [Agent setup prompt](agent-setup.md#english-prompt) · [Codex](clients/codex.en.md) · [Claude](clients/claude.en.md)
 
-Windows users can begin with [Start here](../START-HERE.en.md). Version 0.5.6 bundles include an installer that keeps results visible, path lookup and separate terminal checks. Detailed source, configuration and upgrade instructions follow.
+Windows users can begin with [Start here](../START-HERE.en.md). Version 0.5.7 bundles include an installer that keeps results visible, path lookup and separate terminal checks. Detailed source, configuration and upgrade instructions follow.
 
 This page describes **current main**, not every published ZIP. Desktop bridges reuse existing terminal logins; OpenSSH is a separate, explicitly chosen connection.
 

@@ -33,7 +33,7 @@ function entry(commands, success, failure) {
 }
 
 function windowsUserFiles() {
-  return Object.entries({
+  const files = Object.entries({
     "install.cmd": entry(
       ["install", "doctor --offline", "doctor --backend xshell --offline", "paths"],
       "Local installation checked. Load the terminal script, then reload Codex.",
@@ -60,6 +60,18 @@ function windowsUserFiles() {
       "Initialization or local checks did not complete. Do not continue yet.",
     ),
   }).map(([name, data]) => ({ name, data }));
+  for (const backend of ["securecrt", "xshell"]) {
+    files.push({name: "stop-" + backend + ".cmd", data: entry([
+      'stop-native-host --backend ' + backend + ' --choose --confirmed-idle',
+    ], "Stop request finished. Review the result above; SSH connections remain open.",
+    "Bridge was not confirmed stopped. Inspect its state; do not retry an unknown result.")});
+    const file = files[files.length - 1];
+    file.data = Buffer.from(file.data.toString("ascii").replace("setlocal DisableDelayedExpansion\r\n","setlocal DisableDelayedExpansion\r\nchcp 65001 >nul\r\n").replace(
+      '"%~dp0securecrt-mcp.exe" stop-native-host',
+      'echo Confirm no command is running or unresolved before stopping the bridge.\r\nchoice /c YN /n /m "Stop the idle bridge? [Y/N] "\r\nif errorlevel 2 exit /b 0\r\nif errorlevel 1 goto confirmed\r\nexit /b 1\r\n:confirmed\r\n"%~dp0securecrt-mcp.exe" stop-native-host',
+    ), "ascii");
+  }
+  return files;
 }
 
 module.exports = { windowsUserFiles };
