@@ -5,6 +5,7 @@
 ## [0.5.6] - 2026-10-14
 
 - Apply operator command/raw-input/interrupt policy and before-send audit to OpenSSH, with batch preflight before any command is sent.
+- Retrieve an existing OpenSSH operation receipt before checking the current audit sink or unresolved session, without creating another dispatch attempt or clearing uncertainty.
 - Require fresh full-screen tokens for Mac idle recovery; retained attachments cannot bypass prompt validation.
 - Yield after Mac native Tab activation and revalidate before sending; retain the original capture budget.
 - Reuse successfully negotiated TCP connections without retrying failed exchanges.

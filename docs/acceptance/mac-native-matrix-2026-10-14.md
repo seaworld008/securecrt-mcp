@@ -2,6 +2,8 @@
 
 本次在 macOS 27.0.1 / ARM64、SecureCRT 9.5.2 (ARM64 build 3325)、实际加载的 Python 3.11.17 上，通过两个明确获准的空闲 POSIX 测试 Tab 验收。
 
+以下保留首个修复候选提交及 UI 的验收记录。发布前另补 OpenSSH 去重顺序修复，并以新二进制通过[最终完整 Mac 矩阵](mac-native-final-2026-10-14.md)；旧 JSON 回执不覆盖。
+
 最终测试源码为 `036a5e52e9259620fe6ba804290a574f2398cd99`，工作区干净。后续发布准备增加本回执、文档和发布请求，并将 Unix 测试助手限定为 `cfg(unix)`，避免 Windows 的 unused 警告；运行源码、依赖、桥接与调用器保持该提交的内容。
 
 - 本机二进制 SHA-256：`ebe4ef63c0d288ede5fef80b6c047494bd4315ae18faa77a6188d9829b03c2c4`。
