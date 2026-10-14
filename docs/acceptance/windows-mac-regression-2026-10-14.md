@@ -55,16 +55,25 @@ Full behavioral/performance candidate executable SHA-256:
 `a80c87c2c5e1eda0c0bef51d96e3c731db051ca526d1ff8af4a48c6614e7fe77`.
 Windows native adapter SHA-256:
 `9c9c502a21f73c0eaf60f1f458534d700f769ca7ebf19c7fe61bfdc034247f99`.
-Mac adapter SHA-256:
+Python adapter used by Windows-hosted Mac fixture tests (CRLF checkout), SHA-256:
 `6836a59fab221cb21aedf3c74eecbdfecbd298c4d22acc4306f2aa5541d16054`.
+Committed/Unix Python adapter source (LF), SHA-256:
+`435df7b6597b6456815f42dc807de0278545123068b6431a86aeca3a8f95a01b`.
+The two Python files are byte-identical after LF normalization; their different
+raw hashes reflect checkout line endings. Runtime guards compare exact installed
+bytes, so the Windows fixture hash is not a Mac package identity. The committed
+LF source passed both [Mac SDK and compiled Mac CI](https://github.com/seaworld008/securecrt-mcp/actions/runs/38529507118)
+on `0199a5193d10cb80d151570ab4967e9972100c74`. These are adapter contracts,
+not new Mac desktop acceptance.
 Release builds can have different executable hashes; their checksums and pinned
 source are supplied by the release workflow.
 
 Post-review diagnostic acceptance executable SHA-256:
 `52c04617872c147e7edc036babb1ae78cea8a71a62a8d5daf65ef86706541c82`.
 The additional change is scoped to native diagnostics and acceptance routing;
-both native adapters and the command/capture paths retain the hashes and behavior
-tested above. This executable repeated both clients' two-tab parallel native-log
+the native command/capture paths are unchanged. This Windows executable used the
+exact Windows and Windows-hosted Python fixture hashes above; Unix CI used the
+separately recorded committed LF Python source. This executable repeated both clients' two-tab parallel native-log
 full/modern/isolation matrices, the compiled Node suite, 43 Rust tests and 91 Mac
 adapter assertions. SecureCRT default full suites also passed sequentially with
 separate simultaneous isolation on this executable. Compiled two-instance diagnostics check only the requested

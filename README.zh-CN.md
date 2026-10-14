@@ -156,7 +156,7 @@ SecureCRT 默认 `ReadString` 路径在同一原生线程上混合长输出与�
 
 ## 停止、升级与排障
 
-Windows **0.5.7** 桥接支持正常停止。确认无运行中或结果未明的命令后，打开 `stop-securecrt.cmd` 或 `stop-xshell.cmd`，选择明确实例并确认；输入 `0` 可取消。桥接自然退出并保留 SSH 登录，可避免 SecureCRT 原生强制取消的 `Script Cancelled` 提示。命令行等价入口为 `stop-native-host --backend securecrt|xshell --choose --confirmed-idle`。
+Windows **0.5.7** 桥接支持正常停止。确认无运行中或结果未明的命令后，打开 `stop-securecrt.cmd` 或 `stop-xshell.cmd`，选择明确实例并确认；输入 `0` 可取消。桥接自然退出并保留 SSH 登录，可避免 SecureCRT 原生强制取消的 `Script Cancelled` 提示。命令行等价入口为 `securecrt-mcp stop-native-host --backend securecrt --choose --confirmed-idle`；Xshell 使用 `--backend xshell`。
 
 升级时，先完成或核实已有任务，正常停止桥接并停止 MCP 客户端，安装同版本整包，再在终端加载固定入口、重载客户端并检查。旧桥接不支持正常停止时，须在空闲状态通过终端菜单取消一次；SecureCRT 回到最初启动脚本的 Tab 操作。仅更新磁盘文件不会重载脚本。常规升级保留令牌和策略，不使用 `init --force`。
 

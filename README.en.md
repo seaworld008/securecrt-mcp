@@ -156,7 +156,7 @@ SecureCRT's default `ReadString` path still has concurrency constraints when lon
 
 ## Stop, upgrade and troubleshoot
 
-Windows **0.5.7** bridges support normal stop. Confirm there are no active or unresolved commands, open `stop-securecrt.cmd` or `stop-xshell.cmd`, select the intended instance and confirm; enter `0` to cancel. The bridge exits naturally while preserving SSH logins, avoiding SecureCRT's native forced-cancellation `Script Cancelled` notice. The CLI equivalent is `stop-native-host --backend securecrt|xshell --choose --confirmed-idle`.
+Windows **0.5.7** bridges support normal stop. Confirm there are no active or unresolved commands, open `stop-securecrt.cmd` or `stop-xshell.cmd`, select the intended instance and confirm; enter `0` to cancel. The bridge exits naturally while preserving SSH logins, avoiding SecureCRT's native forced-cancellation `Script Cancelled` notice. The CLI equivalent is `securecrt-mcp stop-native-host --backend securecrt --choose --confirmed-idle`; use `--backend xshell` for Xshell.
 
 For upgrades, finish or inspect existing work, normally stop the bridge and stop the MCP client, install the matching complete package, load the fixed terminal entry, then reload the client and check. Older bridges without normal stop need one idle cancellation through the native menu; in SecureCRT, return to the original launching tab. Updating files does not reload a running script. Ordinary upgrades retain tokens and policy; do not use `init --force`.
 
