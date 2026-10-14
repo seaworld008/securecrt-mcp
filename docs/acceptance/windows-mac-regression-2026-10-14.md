@@ -142,3 +142,28 @@ UI coordination waits are separate from the unchanged command capture budget.
 No Linux desktop, Intel Mac desktop, or new client approval UI is claimed by
 this Windows run. The existing Mac desktop report remains scoped to 0.5.6;
 this run exercised the adapter contracts and OpenSSH behavior on Windows.
+
+## Additional Windows OpenSSH PTY acceptance
+
+A pre-publication real ConPTY run stalled on its initial CSI 6 n cursor query.
+The release workflow was cancelled before publishing. portable-pty 0.9.0
+requests parent cursor inheritance, which a headless MCP cannot provide.
+An opt-in, provenance-checked local feature patch omits that flag. It avoids
+automatic terminal replies or handshake helper processes. The PTY also inherits
+the explicit client environment rather than refreshing its PATH from registry.
+
+Real SSH then passed authenticated PTY output with raw input disabled, default
+raw-policy refusal, and a separate isolated explicitly enabled raw-policy test:
+one Unicode command, incremental cursor reads, remote 40x120 stty size and
+exactly one stream_write audit record. Only those isolated test homes changed
+raw-policy settings. Existing operator policy and SSH connections stayed intact.
+These receipts are separate from the command-session latency comparison.
+
+The final headless/environment candidate executable SHA-256 is
+`b6692c36a391c9cee1bd76d8e0425e562ce6de46559caf12c3e1322f069b29b7`.
+It repeated the real two-tab SecureCRT and Xshell parallel native-log full/modern
+matrices and isolation, the full compiled suite and 91 Mac adapter assertions.
+A fresh real command-session run also passed 100 exact-output commands at
+12 ms p50 / 14 ms p95, 2,500 rows in 36 ms with the same output hash, batches,
+operation de-duplication, deny-rule rejection and exactly 107 dispatch events.
+The native bridge source hashes are unchanged.

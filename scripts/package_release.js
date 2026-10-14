@@ -36,6 +36,7 @@ function manifest(binary, target) {
     "START-HERE.en.md",
   ].map((n) => path.join(root, n));
   files.push(
+    ...walk(path.join(root, "vendor")).filter((n) => /(?:LICENSE|UPSTREAM)\.md$/.test(n)),
     ...walk(path.join(root, "docs")).filter((n) => /\.(md|json)$/.test(n)),
     ...walk(path.join(root, "clients")).filter((n) => /\.(js|ps1)$/.test(n)),
     ...walk(path.join(root, "support")).filter((n) => n.endsWith(".json")),
