@@ -104,7 +104,7 @@ $env:SECURECRT_MCP_HOME = "C:\Tools\securecrt-mcp-home"
 
 使用初始化或 `paths` 打印的路径。Windows 当前包还可能带有自包含 `.js` 入口，可释放其配套 Rust 二进制；这与 `install` 写入 Codex 配置是不同步骤。
 
-目标终端空闲且已获准加载桥接时，选择 **Script → Run**，加载打印出的入口。SecureCRT 每个进程只需一个脚本，覆盖其中已连接的 Tab。重复启动会保留原实例；取消时回到最初启动脚本的 Tab，选择 **Script → Cancel**。取消会保留 SSH 登录，但不能证明远端工作已结束。Xshell 以实际原生发现/实例范围为准，不要假设覆盖所有窗口。
+目标终端空闲且已获准加载桥接时，选择 **Script → Run**，加载打印出的入口。SecureCRT 每个进程只需一个脚本，覆盖其中已连接的 Tab。重复启动会保留原实例。当前 Windows 桥接正常停止使用 `stop-securecrt.cmd` / `stop-xshell.cmd`，先确认没有运行中或未决命令，再选择明确实例；输入 `0` 取消选择。正常停止保留 SSH 登录。旧桥接或 macOS 原生取消须回到最初启动脚本的 Tab，选择 **Script → Cancel**；取消不能证明远端工作已结束。Xshell 以实际原生发现/实例范围为准，不要假设覆盖所有窗口。
 
 macOS SecureCRT 没有 Windows JScript/ActiveX 脚本接口。优先复用已有可加载的 Python 引擎。加载失败时，遵循已安装 SecureCRT 版本支持的 Python 版本/架构要求，安装官方运行时后重启 SecureCRT。无需 `pip`、pywin32 或全局 PATH 修改。能否加载仍由终端加载器决定；桥接在加载与 API/来源检查后不会额外施加任意 Python 版本上限。[厂商脚本平台](https://www.vandyke.com/products/securecrt/scripts.html) · [macOS 引擎加载](https://www.vandyke.com/support/tips/how-to-use-python-scripting-securecrt-on-macos.html)
 
@@ -136,7 +136,7 @@ doctor --backend openssh
 
 Windows `install` 遇到正在运行的二进制被锁定时，会按新二进制 SHA-256 并排安装，并仅将原 `securecrt` MCP 的 command 更新为新绝对路径，保留审批、工具限制和其他配置。正在运行的旧进程保持不动，重新加载客户端后才使用新程序；旧版本不会自动删除。Claude-only 不会自动迁移注册路径，需在核验后自行更新。
 
-替换磁盘文件不会重新加载运行中的脚本。在已授权的空闲边界取消旧脚本，加载固定入口，重启 MCP，运行 doctor 并重新发现/绑定目标。旧句柄失效。未决工作应先检查原 Tab，再考虑取消或恢复。见[排障](troubleshooting.md)和[桌面验收](desktop-acceptance.md)。
+替换磁盘文件不会重新加载运行中的脚本。在已授权的空闲边界正常停止当前 Windows 桥接（旧桥接或 macOS 通过原生菜单取消），加载固定入口，重启 MCP，运行 doctor 并重新发现/绑定目标。旧句柄失效。未决工作应先检查原 Tab，再考虑取消或恢复。见[排障](troubleshooting.md)和[桌面验收](desktop-acceptance.md)。
 
 ## Windows 原生脚本取消与旧锁迁移
 
