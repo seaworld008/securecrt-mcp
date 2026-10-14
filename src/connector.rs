@@ -873,10 +873,13 @@ fn spawn_pty(
     })?;
     let mut command = CommandBuilder::new("ssh");
     #[cfg(windows)]
-    for (key, value) in std::env::vars_os() {
+    {
         // Match exec's inherited client environment instead of letting the
         // terminal library's registry refresh replace explicit client values.
-        command.env(key, value);
+        command.env_clear();
+        for (key, value) in std::env::vars_os() {
+            command.env(key, value);
+        }
     }
     if let Some(path) = config_path {
         command.arg("-F");

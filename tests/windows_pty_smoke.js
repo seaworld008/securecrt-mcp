@@ -5,10 +5,11 @@ async function run(binary){
  if(process.platform!=="win32"){console.log("SKIP: native Windows ConPTY");return;}
  const root=fs.mkdtempSync(path.join(os.tmpdir(),"mcp-conpty-")),fake=path.join(root,"ssh.exe"),source=path.join(root,"ssh.rs");
  const isolated=path.join(root,"securecrt-mcp.exe");fs.copyFileSync(binary,isolated);binary=isolated;
- fs.writeFileSync(source,'use std::io; fn main(){println!("LOCAL_PTY_READY");let mut line=String::new();io::stdin().read_line(&mut line).unwrap();println!("LOCAL_PTY_INPUT:{}",line.trim());}');
+ fs.writeFileSync(source,'use std::io; fn main(){assert!(std::env::var_os("OS").is_none(),"registry environment leaked into child");println!("LOCAL_PTY_READY");let mut line=String::new();io::stdin().read_line(&mut line).unwrap();println!("LOCAL_PTY_INPUT:{}",line.trim());}');
  const built=await command("rustc",["--edition","2021",source,"-o",fake]);assert.equal(built.code,0,built.stderr);
  try{for(const enabled of [false,true]){
   const home=path.join(root,"app-"+enabled),env={...process.env,SECURECRT_MCP_HOME:home,PATH:root+path.delimiter+process.env.PATH};
+  for(const key of Object.keys(env))if(key.toLowerCase()==="os")delete env[key];
   const init=await command(binary,["init"],env);assert.equal(init.code,0,init.stderr);
   if(enabled){const cfg=path.join(home,"config.toml");fs.writeFileSync(cfg,fs.readFileSync(cfg,"utf8").replace("allow_raw_send = false","allow_raw_send = true"));}
   const client=await new MCP(binary,env).start();let sid,cursor=0,text="";
