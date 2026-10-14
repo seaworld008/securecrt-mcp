@@ -10,7 +10,15 @@ async function run(binary){
  const apis=JSON.parse(fs.readFileSync(path.join(ROOT,"support/policy.json"),"utf8")).native_windows_required_apis;
  fs.copyFileSync(path.join(app,"bridge.json"),path.join(app,"xshell_bridge.json"));
  function tick(){for(const [i,id]of ids.entries()){
-  const dir=path.join(root,"instances",id);if(!stopped.has(id)){const pending=path.join(dir,"ready.tmp");fs.writeFileSync(pending,JSON.stringify({bridge_instance:id,protocol_version:2,last_poll_ms:Date.now()}));fs.renameSync(pending,path.join(dir,"ready.json"));}
+  const dir=path.join(root,"instances",id);if(!stopped.has(id)){
+   const pending=path.join(dir,"ready.tmp"),ready=path.join(dir,"ready.json");
+   fs.writeFileSync(pending,JSON.stringify({bridge_instance:id,protocol_version:2,last_poll_ms:Date.now()}));
+   try{fs.renameSync(pending,ready)}catch(e){
+    // Windows readers can briefly deny replacement. Keep the complete old
+    // heartbeat and publish on the next tick instead of tearing it down.
+    if(!["EPERM","EACCES","EBUSY"].includes(e.code)||!fs.existsSync(ready))throw e;
+   }
+  }
   for(const n of fs.readdirSync(dir).filter(n=>n.endsWith(".request.json"))){let q;try{q=JSON.parse(fs.readFileSync(path.join(dir,n)))}catch{continue}
    fs.unlinkSync(path.join(dir,n));assert.equal(q.token,token);let result;
    if(q.method==="ping"){pings.push(id);result={platform:"Windows",script_engine:"JScript",securecrt_version:"9.6.0",xshell_version:"8.0.0.26",bridge_version:version,protocol_version:2,capabilities:["graceful_stop"],adapter_sha256:i===0?source:"outdated-source",api_capabilities:Object.fromEntries([...apis.securecrt,...apis.xshell].map(name=>[name,true]))};}
